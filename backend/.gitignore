@@ -1,0 +1,23 @@
+# .NET build output
+bin/
+obj/
+
+# Frontend
+node_modules/
+dist/
+frontend/dist/
+
+# Secrets — never commit these
+.env
+*.env.local
+appsettings.Local.json
+
+# VS / VS Code / IDE junk
+.vs/
+.vscode/
+*.user
+*.suo
+
+# OS
+.DS_Store
+Thumbs.db
