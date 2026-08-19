@@ -1,5 +1,6 @@
 using Custodian.Workflow.Data;
 using Custodian.Workflow.Repositories;
+using Custodian.Workflow.Services;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -20,8 +21,14 @@ if (!string.IsNullOrWhiteSpace(connectionString))
         options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
 }
 
-// Register Repository Dependencies
+// Register Repository & Audit Services
 builder.Services.AddScoped<IEngagementRepository, EngagementRepository>();
+
+builder.Services.AddHttpClient<IAuditPublisher, AuditPublisher>(client =>
+{
+    var auditBaseUrl = builder.Configuration["Services:AuditUrl"] ?? "http://localhost:5005";
+    client.BaseAddress = new Uri(auditBaseUrl);
+});
 
 builder.Services.AddOpenApi();
 
