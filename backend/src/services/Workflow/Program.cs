@@ -1,4 +1,5 @@
 using Custodian.Workflow.Data;
+using Custodian.Workflow.Repositories;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -13,6 +14,9 @@ if (!string.IsNullOrWhiteSpace(connectionString))
     builder.Services.AddDbContext<WorkflowDbContext>(options =>
         options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
 }
+
+// Register Repository Dependencies
+builder.Services.AddScoped<IEngagementRepository, EngagementRepository>();
 
 builder.Services.AddOpenApi();
 

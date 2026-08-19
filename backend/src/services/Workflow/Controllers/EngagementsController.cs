@@ -1,8 +1,7 @@
-using Custodian.Workflow.Data;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
+using Custodian.Workflow.Repositories;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace Custodian.Workflow.Controllers;
 
@@ -10,11 +9,11 @@ namespace Custodian.Workflow.Controllers;
 [Route("api/[controller]")]
 public class EngagementsController : ControllerBase
 {
-    private readonly WorkflowDbContext _dbContext;
+    private readonly IEngagementRepository _repository;
 
-    public EngagementsController(WorkflowDbContext dbContext)
+    public EngagementsController(IEngagementRepository repository)
     {
-        _dbContext = dbContext;
+        _repository = repository;
     }
 
     [HttpPost]
@@ -35,10 +34,9 @@ public class EngagementsController : ControllerBase
             CreatedAt = DateTime.UtcNow
         };
 
-        _dbContext.Engagements.Add(engagement);
-        await _dbContext.SaveChangesAsync();
+        var created = await _repository.CreateAsync(engagement);
 
-        return CreatedAtAction(nameof(GetEngagementById), new { id = engagement.EngagementId, tenantId = engagement.TenantId }, MapToResponse(engagement));
+        return CreatedAtAction(nameof(GetEngagementById), new { id = created.EngagementId, tenantId = created.TenantId }, MapToResponse(created));
     }
 
     [HttpGet("{id}")]
@@ -49,9 +47,7 @@ public class EngagementsController : ControllerBase
             return BadRequest("tenantId parameter is required for tenant isolation.");
         }
 
-        var engagement = await _dbContext.Engagements
-            .AsNoTracking()
-            .FirstOrDefaultAsync(e => e.EngagementId == id && e.TenantId == tenantId);
+        var engagement = await _repository.GetByIdAsync(id, tenantId);
 
         if (engagement == null)
         {
@@ -69,11 +65,7 @@ public class EngagementsController : ControllerBase
             return BadRequest("tenantId parameter is required for tenant isolation.");
         }
 
-        var engagements = await _dbContext.Engagements
-            .AsNoTracking()
-            .Where(e => e.TenantId == tenantId)
-            .OrderByDescending(e => e.CreatedAt)
-            .ToListAsync();
+        var engagements = await _repository.GetAllByTenantAsync(tenantId);
 
         return Ok(engagements.Select(MapToResponse));
     }
@@ -86,8 +78,7 @@ public class EngagementsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        var engagement = await _dbContext.Engagements
-            .FirstOrDefaultAsync(e => e.EngagementId == id && e.TenantId == request.TenantId);
+        var engagement = await _repository.GetByIdAsync(id, request.TenantId);
 
         if (engagement == null)
         {
@@ -105,8 +96,8 @@ public class EngagementsController : ControllerBase
             engagement.ClosedAt = DateTime.UtcNow;
         }
 
-        await _dbContext.SaveChangesAsync();
-        return Ok(MapToResponse(engagement));
+        var updated = await _repository.UpdateAsync(engagement);
+        return Ok(MapToResponse(updated));
     }
 
     [HttpDelete("{id}")]
@@ -117,8 +108,7 @@ public class EngagementsController : ControllerBase
             return BadRequest("tenantId parameter is required for tenant isolation.");
         }
 
-        var engagement = await _dbContext.Engagements
-            .FirstOrDefaultAsync(e => e.EngagementId == id && e.TenantId == tenantId);
+        var engagement = await _repository.GetByIdAsync(id, tenantId);
 
         if (engagement == null)
         {
@@ -134,8 +124,7 @@ public class EngagementsController : ControllerBase
             });
         }
 
-        _dbContext.Engagements.Remove(engagement);
-        await _dbContext.SaveChangesAsync();
+        await _repository.DeleteAsync(id, tenantId);
 
         return NoContent();
     }
