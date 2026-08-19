@@ -1,6 +1,6 @@
 using Custodian.Workflow.Data;
-using Custodian.Workflow.Domain;
 using Custodian.Workflow.DTOs;
+using Custodian.Workflow.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 

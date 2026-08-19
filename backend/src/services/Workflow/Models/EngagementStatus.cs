@@ -1,4 +1,4 @@
-namespace Custodian.Workflow.Domain;
+namespace Custodian.Workflow.Models;
 
 public enum EngagementStatus
 {

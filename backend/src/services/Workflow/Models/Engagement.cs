@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace Custodian.Workflow.Domain;
+namespace Custodian.Workflow.Models;
 
 public class Engagement
 {

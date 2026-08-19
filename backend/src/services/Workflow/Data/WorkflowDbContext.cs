@@ -1,4 +1,4 @@
-using Custodian.Workflow.Domain;
+using Custodian.Workflow.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace Custodian.Workflow.Data;
