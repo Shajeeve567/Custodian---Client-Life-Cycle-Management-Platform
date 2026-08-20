@@ -1,9 +1,9 @@
 using Custodian.Identity.Domain;
 using Microsoft.EntityFrameworkCore;
 
-namespace Custodian.Identity.Data;
+namespace Identity.Data;
 
-public sealed class UserDbContext(DbContextOptions<UserDbContext> options) : DbContext(options)
+public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> options) : DbContext(options)
 {
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<UserAccount> Users => Set<UserAccount>();
