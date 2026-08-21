@@ -1,6 +1,7 @@
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Repositories;
+using Custodian.Workflow.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Custodian.Workflow.Controllers;
@@ -87,7 +88,16 @@ public class EngagementsController : ControllerBase
 
         if (!Enum.TryParse<EngagementStatus>(request.Status, true, out var newStatus))
         {
-            return BadRequest($"Invalid status: {request.Status}");
+            return BadRequest($"Invalid status: '{request.Status}'. Valid statuses are: Draft, Started, Closed, Cancelled.");
+        }
+
+        // Subtask 3 Lifecycle Validation: Enforce legal status transitions
+        if (!EngagementLifecycleValidator.IsValidTransition(engagement.Status, newStatus))
+        {
+            return BadRequest(new
+            {
+                message = $"Invalid status transition from '{engagement.Status}' to '{newStatus}'."
+            });
         }
 
         engagement.Status = newStatus;
@@ -115,8 +125,8 @@ public class EngagementsController : ControllerBase
             return NotFound();
         }
 
-        // Lifecycle Protection Rule: Started or Closed engagements CANNOT be physically deleted
-        if (engagement.Status == EngagementStatus.Started || engagement.Status == EngagementStatus.Closed)
+        // Subtask 3 Lifecycle Protection Rule: Started and Closed engagements CANNOT be physically deleted
+        if (!EngagementLifecycleValidator.CanDelete(engagement.Status))
         {
             return Conflict(new
             {
