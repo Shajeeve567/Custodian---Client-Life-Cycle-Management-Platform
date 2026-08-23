@@ -25,10 +25,16 @@ public class EngagementsController : ControllerBase
             return BadRequest(ModelState);
         }
 
+        var effectiveTenantId = ResolveTenantId(request.TenantId);
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest("Tenant identification is required.");
+        }
+
         var engagement = new Engagement
         {
             EngagementId = Guid.NewGuid(),
-            TenantId = request.TenantId,
+            TenantId = effectiveTenantId,
             ClientId = request.ClientId,
             StaffId = request.StaffId,
             Status = EngagementStatus.Draft,
@@ -41,14 +47,15 @@ public class EngagementsController : ControllerBase
     }
 
     [HttpGet("{id}")]
-    public async Task<ActionResult<EngagementResponse>> GetEngagementById(Guid id, [FromQuery] string tenantId)
+    public async Task<ActionResult<EngagementResponse>> GetEngagementById(Guid id, [FromQuery] string? tenantId)
     {
-        if (string.IsNullOrWhiteSpace(tenantId))
+        var effectiveTenantId = ResolveTenantId(tenantId);
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest("tenantId parameter is required for tenant isolation.");
+            return BadRequest("tenantId parameter or JWT tenant claim is required for tenant isolation.");
         }
 
-        var engagement = await _repository.GetByIdAsync(id, tenantId);
+        var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
 
         if (engagement == null)
         {
@@ -59,14 +66,15 @@ public class EngagementsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<EngagementResponse>>> GetEngagements([FromQuery] string tenantId)
+    public async Task<ActionResult<IEnumerable<EngagementResponse>>> GetEngagements([FromQuery] string? tenantId)
     {
-        if (string.IsNullOrWhiteSpace(tenantId))
+        var effectiveTenantId = ResolveTenantId(tenantId);
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest("tenantId parameter is required for tenant isolation.");
+            return BadRequest("tenantId parameter or JWT tenant claim is required for tenant isolation.");
         }
 
-        var engagements = await _repository.GetAllByTenantAsync(tenantId);
+        var engagements = await _repository.GetAllByTenantAsync(effectiveTenantId);
 
         return Ok(engagements.Select(MapToResponse));
     }
@@ -79,7 +87,13 @@ public class EngagementsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        var engagement = await _repository.GetByIdAsync(id, request.TenantId);
+        var effectiveTenantId = ResolveTenantId(request.TenantId);
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest("Tenant identification is required.");
+        }
+
+        var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
 
         if (engagement == null)
         {
@@ -111,14 +125,15 @@ public class EngagementsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    public async Task<IActionResult> DeleteEngagement(Guid id, [FromQuery] string tenantId)
+    public async Task<IActionResult> DeleteEngagement(Guid id, [FromQuery] string? tenantId)
     {
-        if (string.IsNullOrWhiteSpace(tenantId))
+        var effectiveTenantId = ResolveTenantId(tenantId);
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest("tenantId parameter is required for tenant isolation.");
+            return BadRequest("tenantId parameter or JWT tenant claim is required for tenant isolation.");
         }
 
-        var engagement = await _repository.GetByIdAsync(id, tenantId);
+        var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
 
         if (engagement == null)
         {
@@ -134,9 +149,25 @@ public class EngagementsController : ControllerBase
             });
         }
 
-        await _repository.DeleteAsync(id, tenantId);
+        await _repository.DeleteAsync(id, effectiveTenantId);
 
         return NoContent();
+    }
+
+    /// <summary>
+    /// Subtask 4: Resolves tenant ID server-side from HttpContext JWT claims if authenticated.
+    /// Falls back to request parameter if claims are not populated.
+    /// </summary>
+    private string? ResolveTenantId(string? requestTenantId)
+    {
+        var jwtTenantId = User.FindFirst("tenant_id")?.Value ?? User.FindFirst("tenantId")?.Value;
+
+        if (!string.IsNullOrWhiteSpace(jwtTenantId))
+        {
+            return jwtTenantId; // Authenticated JWT claim takes precedence
+        }
+
+        return requestTenantId;
     }
 
     private static EngagementResponse MapToResponse(Engagement e) => new()
