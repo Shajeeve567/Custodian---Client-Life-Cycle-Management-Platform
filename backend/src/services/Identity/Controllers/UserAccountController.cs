@@ -71,7 +71,7 @@ public class UserAccountController(IUserAccountRepository repo, TenantContext te
             TenantId = tenantId,
             Email = request.Email
         };
-        user.PasswordHash = new PasswordHasher<UserAccount>().HashPassword(user, request.Password);
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
         user.Role = request.Role;
         user.Status = UserStatus.Active;
         user.CreatedAtUtc = DateTimeOffset.UtcNow;
