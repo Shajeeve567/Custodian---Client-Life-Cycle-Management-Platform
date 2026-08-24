@@ -2,9 +2,12 @@ using Custodian.Identity.Domain;
 using Custodian.Shared.Tenancy;
 using Identity.Data;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+
 
 namespace Identity.Controllers;
 
+[Authorize]
 [Route("api/[controller]")]
 [ApiController]
 public class ClientController(IClientProfileRepository repo, TenantContext tenantContext) : ControllerBase
