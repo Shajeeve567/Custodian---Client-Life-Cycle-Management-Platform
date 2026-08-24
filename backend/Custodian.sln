@@ -21,6 +21,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Audit", "src\services\Audit
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Custodian.Shared.Tests", "tests\Custodian.Shared.Tests\Custodian.Shared.Tests.csproj", "{682C3EF9-43C3-491D-BAC9-CF843231B43E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Custodian.Workflow.Tests", "tests\Custodian.Workflow.Tests\Custodian.Workflow.Tests.csproj", "{9A2B3C4D-5E6F-7A8B-9C0D-1E2F3A4B5C6D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -128,5 +130,6 @@ Global
 		{AE4F2C15-31F0-4C97-B07A-E27C728D7648} = {C8E42992-5E42-0C2B-DBFE-AA848D06431C}
 		{67982B6C-2D9A-4386-B6EF-5CB1D86E98CD} = {C8E42992-5E42-0C2B-DBFE-AA848D06431C}
 		{682C3EF9-43C3-491D-BAC9-CF843231B43E} = {C8E42992-5E42-0C2B-DBFE-AA848D06431C}
+		{9A2B3C4D-5E6F-7A8B-9C0D-1E2F3A4B5C6D} = {C8E42992-5E42-0C2B-DBFE-AA848D06431C}
 	EndGlobalSection
 EndGlobal

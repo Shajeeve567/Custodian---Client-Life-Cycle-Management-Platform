@@ -160,7 +160,7 @@ public class EngagementsController : ControllerBase
     /// </summary>
     private string? ResolveTenantId(string? requestTenantId)
     {
-        var jwtTenantId = User.FindFirst("tenant_id")?.Value ?? User.FindFirst("tenantId")?.Value;
+        var jwtTenantId = User?.FindFirst("tenant_id")?.Value ?? User?.FindFirst("tenantId")?.Value;
 
         if (!string.IsNullOrWhiteSpace(jwtTenantId))
         {
