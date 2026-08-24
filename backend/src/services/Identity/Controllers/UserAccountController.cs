@@ -1,6 +1,7 @@
 using Custodian.Identity.Domain;
 using Custodian.Shared.Tenancy;
 using Identity.Data;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 namespace Identity.Controllers;
 
@@ -8,7 +9,7 @@ namespace Identity.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
-public class UserAccountController(IUserAccountRepository repo, ITenantRepository tenantRepo, TenantContext tenantContext) : ControllerBase
+public class UserAccountController(IUserAccountRepository repo, TenantContext tenantContext) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<List<UserAccount>>> GetUserAccounts(CancellationToken cancellationToken)
@@ -52,7 +53,7 @@ public class UserAccountController(IUserAccountRepository repo, ITenantRepositor
     }
 
 
-    [HttpPost]
+    [HttpPost("register/User")]
     public async Task<ActionResult<UserAccount>> CreateNewUserAccount([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
     {
         var tenantId = Guid.Parse(tenantContext.RequireTenantId());
@@ -67,20 +68,17 @@ public class UserAccountController(IUserAccountRepository repo, ITenantRepositor
         var user = new UserAccount
         {
             Id = Guid.NewGuid(),
-            TenantId = tenantId, 
-            Email = request.Email,
-            // In a real app, you MUST hash the password here (e.g. using BCrypt or ASP.NET Identity)
-            PasswordHash = request.Password, 
-            Role = request.Role,
-            Status = UserStatus.Active,
-            CreatedAtUtc = DateTimeOffset.UtcNow
+            TenantId = tenantId,
+            Email = request.Email
         };
+        user.PasswordHash = new PasswordHasher<UserAccount>().HashPassword(user, request.Password);
+        user.Role = request.Role;
+        user.Status = UserStatus.Active;
+        user.CreatedAtUtc = DateTimeOffset.UtcNow;
 
-        // Saving the UserAccount with the TenantId automatically links it 
-        // to the Tenant in the database via the foreign key!
         await repo.AddAsync(user, cancellationToken);
 
-        return CreatedAtAction(nameof(GetUserAccount), new { id = user.Id }, user);
+        return Ok(CreatedAtAction(nameof(GetUserAccount), new { id = user.Id }, user));
     }
 }
 
