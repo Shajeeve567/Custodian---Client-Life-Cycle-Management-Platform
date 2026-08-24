@@ -9,6 +9,8 @@
 *.exe
 *.pdb
 *.cache
+*.txt
+*.trx
 *.suo
 *.user
 *.userosscache
