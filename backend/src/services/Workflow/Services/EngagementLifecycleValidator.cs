@@ -11,7 +11,7 @@ public static class EngagementLifecycleValidator
     /// </summary>
     public static bool CanDelete(EngagementStatus status)
     {
-        return status == EngagementStatus.Draft || status == EngagementStatus.Cancelled;
+        return status == EngagementStatus.Draft;
     }
 
     /// <summary>
