@@ -13,8 +13,15 @@ builder.Services.AddOpenApi();
 builder.Services.AddEndpointsApiExplorer();
 
 // Add EF Core DbContext
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
-                       ?? "Server=localhost;Database=custodian_audit;Uid=root;Pwd=password;";
+var azureConn = builder.Configuration.GetConnectionString("AzureMySqlConnection");
+var defaultConn = builder.Configuration.GetConnectionString("Default") 
+                  ?? builder.Configuration.GetConnectionString("DefaultConnection")
+                  ?? "Server=localhost;Database=custodian_audit;Uid=root;Pwd=password;";
+
+var connectionString = (!string.IsNullOrWhiteSpace(azureConn) && !azureConn.Contains("YOUR_SECRET_STRING"))
+    ? azureConn
+    : defaultConn;
+
 var serverVersion = new MySqlServerVersion(new Version(8, 0, 30));
 
 builder.Services.AddDbContext<AuditDbContext>(options =>
