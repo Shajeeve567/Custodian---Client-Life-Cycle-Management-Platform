@@ -3,6 +3,7 @@ using Custodian.Workflow.Controllers;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Repositories;
+using Custodian.Workflow.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
@@ -17,12 +18,14 @@ namespace Custodian.Workflow.Tests.Unit;
 public class EngagementsControllerUnitTests
 {
     private readonly Mock<IEngagementRepository> _mockRepo;
+    private readonly Mock<IAuditPublisher> _mockAuditPublisher;
     private readonly EngagementsController _controller;
 
     public EngagementsControllerUnitTests()
     {
         _mockRepo = new Mock<IEngagementRepository>();
-        _controller = new EngagementsController(_mockRepo.Object);
+        _mockAuditPublisher = new Mock<IAuditPublisher>();
+        _controller = new EngagementsController(_mockRepo.Object, _mockAuditPublisher.Object);
     }
 
     /// <summary>
@@ -70,6 +73,33 @@ public class EngagementsControllerUnitTests
         Assert.Equal("tenant-001", response.TenantId);
         Assert.Equal("client-001", response.ClientId);
         Assert.Equal("Draft", response.Status);
+    }
+
+    [Fact]
+    public async Task CreateEngagement_ValidRequest_ShouldPublishGenesisAuditEvent()
+    {
+        // Arrange
+        var request = new CreateEngagementRequest
+        {
+            TenantId = "tenant-001",
+            ClientId = "client-001",
+            StaffId = "staff-001"
+        };
+
+        _mockRepo.Setup(r => r.CreateAsync(It.IsAny<Engagement>()))
+                 .ReturnsAsync((Engagement e) => e);
+
+        // Act
+        await _controller.CreateEngagement(request);
+
+        // Assert: Verify PublishEventAsync was invoked with Genesis event type
+        _mockAuditPublisher.Verify(a => a.PublishEventAsync(
+            It.IsAny<Guid>(),
+            "tenant-001",
+            It.IsAny<string>(),
+            "Genesis",
+            It.IsAny<object>()
+        ), Times.Once);
     }
 
     [Fact]

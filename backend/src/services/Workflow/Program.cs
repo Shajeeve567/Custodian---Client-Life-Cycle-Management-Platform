@@ -26,7 +26,7 @@ builder.Services.AddScoped<IEngagementRepository, EngagementRepository>();
 
 builder.Services.AddHttpClient<IAuditPublisher, AuditPublisher>(client =>
 {
-    var auditBaseUrl = builder.Configuration["Services:AuditUrl"] ?? "http://localhost:5005";
+    var auditBaseUrl = builder.Configuration["Services:AuditUrl"] ?? builder.Configuration["AuditService:BaseUrl"] ?? "http://localhost:5005";
     client.BaseAddress = new Uri(auditBaseUrl);
 });
 
