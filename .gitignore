@@ -14,8 +14,7 @@
 *.pdb
 *.cache
 *.txt
-*.trx
-
+[Tt]est[Rr]esults/
 *.suo
 *.user
 *.userosscache
