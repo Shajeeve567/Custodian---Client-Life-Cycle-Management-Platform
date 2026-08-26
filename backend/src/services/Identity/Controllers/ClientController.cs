@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 
 namespace Identity.Controllers;
 
-[Authorize]
+[Authorize(Roles = "Owner,Staff")]
 [Route("api/[controller]")]
 [ApiController]
 public class ClientController(IClientProfileRepository repo, TenantContext tenantContext) : ControllerBase

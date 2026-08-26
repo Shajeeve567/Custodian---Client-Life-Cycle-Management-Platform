@@ -4,10 +4,11 @@ using Identity.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+
 namespace Identity.Controllers;
 
 
-[Authorize]
+[Authorize(Roles = "Owner")]
 [Route("api/[controller]")]
 [ApiController]
 public class UserAccountController(IUserAccountRepository repo, TenantContext tenantContext) : ControllerBase
