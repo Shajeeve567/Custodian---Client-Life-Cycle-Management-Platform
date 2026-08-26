@@ -1,12 +1,13 @@
 using Custodian.Identity.Domain;
 using Custodian.Shared.Tenancy;
 using Identity.Data;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 namespace Identity.Controllers;
 
 
-
+[Authorize]
 [Route("api/[controller]")]
 [ApiController]
 public class UserAccountController(IUserAccountRepository repo, TenantContext tenantContext) : ControllerBase
@@ -24,7 +25,7 @@ public class UserAccountController(IUserAccountRepository repo, TenantContext te
     {
         var tenantId = Guid.Parse(tenantContext.RequireTenantId());
         var user = await repo.GetByIdAsync(id, cancellationToken);
-        if (user is null || user.TenantId != tenantId)
+        if (user is null || !user.Memberships.Any(m => m.TenantId == tenantId))
         {
             return NotFound();
         }
@@ -37,7 +38,7 @@ public class UserAccountController(IUserAccountRepository repo, TenantContext te
     {
         var tenantId = Guid.Parse(tenantContext.RequireTenantId());
         var user = await repo.GetByIdAsync(id, cancellationToken);
-        if (user is null || user.TenantId != tenantId)
+        if (user is null || !user.Memberships.Any(m => m.TenantId == tenantId))
         {
             return NotFound();
         }
@@ -53,7 +54,7 @@ public class UserAccountController(IUserAccountRepository repo, TenantContext te
     }
 
 
-    [HttpPost("register/User")]
+    [HttpPost("register")]
     public async Task<ActionResult<UserAccount>> CreateNewUserAccount([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
     {
         var tenantId = Guid.Parse(tenantContext.RequireTenantId());
@@ -68,14 +69,19 @@ public class UserAccountController(IUserAccountRepository repo, TenantContext te
         var user = new UserAccount
         {
             Id = Guid.NewGuid(),
-            TenantId = tenantId,
-            Email = request.Email
+            Email = request.Email,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+            Status = UserStatus.Active,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            Memberships = new List<TenantMembership>
+            {
+                new TenantMembership
+                {
+                    TenantId = tenantId,
+                    Role = request.Role
+                }
+            }
         };
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
-        user.Role = request.Role;
-        user.Status = UserStatus.Active;
-        user.CreatedAtUtc = DateTimeOffset.UtcNow;
-
         await repo.AddAsync(user, cancellationToken);
 
         return Ok(CreatedAtAction(nameof(GetUserAccount), new { id = user.Id }, user));

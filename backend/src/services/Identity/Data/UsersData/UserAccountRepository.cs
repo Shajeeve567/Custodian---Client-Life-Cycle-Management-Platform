@@ -6,13 +6,13 @@ namespace Identity.Data;
 public sealed class UserAccountRepository(IdentityDbContext db) : IUserAccountRepository
 {
     public Task<UserAccount?> GetByEmailAsync(string email, CancellationToken cancellationToken = default) =>
-        db.Users.FirstOrDefaultAsync(u => u.Email == email, cancellationToken);
+        db.Users.Include(u => u.Memberships).FirstOrDefaultAsync(u => u.Email == email, cancellationToken);
 
     public Task<UserAccount?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
-        db.Users.FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
+        db.Users.Include(u => u.Memberships).FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
 
     public Task<List<UserAccount>> ListByTenantAsync(Guid tenantId, CancellationToken cancellationToken = default) =>
-        db.Users.Where(u => u.TenantId == tenantId).ToListAsync(cancellationToken);
+        db.Users.Where(u => u.Memberships.Any(m => m.TenantId == tenantId)).ToListAsync(cancellationToken);
 
     public Task AddAsync(UserAccount user, CancellationToken cancellationToken = default)
     {

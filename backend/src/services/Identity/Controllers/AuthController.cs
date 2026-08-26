@@ -3,6 +3,7 @@ using System.Security.Claims;
 using System.Text;
 using Custodian.Shared.Auth;
 using Identity.Data;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
@@ -29,20 +30,16 @@ public class AuthController(IUserAccountRepository userRepo, IConfiguration conf
         var jwtOptions = configuration.GetSection("Jwt").Get<JwtTokenOptions>();
         if (jwtOptions is null) return StatusCode(500, "JWT configuration is missing!");
 
-        // 3. Create the Claims (the data inside the token)
+        // 3. Create the Global Claims (No tenant_id yet!)
         var claims = new List<Claim>
         {
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new Claim(JwtRegisteredClaimNames.Email, user.Email),
-            new Claim("tenant_id", user.TenantId.ToString()), // <-- The TenantContext middleware looks for this exact claim!
-            new Claim(ClaimTypes.Role, user.Role.ToString())
+            new Claim(JwtRegisteredClaimNames.Email, user.Email)
         };
 
-        // 4. Generate the Signature Key
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.SigningKey));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-        // 5. Build the Token
         var token = new JwtSecurityToken(
             issuer: jwtOptions.Issuer,
             audience: jwtOptions.Audience,
@@ -51,9 +48,44 @@ public class AuthController(IUserAccountRepository userRepo, IConfiguration conf
             signingCredentials: creds
         );
 
-        var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
+        return Ok(new LoginResponse(new JwtSecurityTokenHandler().WriteToken(token), jwtOptions.ExpiryMinutes));
+    }
 
-        return Ok(new LoginResponse(tokenString, jwtOptions.ExpiryMinutes));
+    [HttpPost("select-workspace/{tenantId:guid}")]
+    [Authorize] // Require the global token!
+    public async Task<ActionResult<LoginResponse>> SelectWorkspace(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var userIdStr = User.FindFirstValue(JwtRegisteredClaimNames.Sub) ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(userIdStr, out var userId)) return Unauthorized();
+
+        var user = await userRepo.GetByIdAsync(userId, cancellationToken);
+        if (user is null) return Unauthorized();
+
+        // Verify they actually belong to this tenant
+        var membership = user.Memberships.FirstOrDefault(m => m.TenantId == tenantId);
+        if (membership is null) return Forbid("You do not have access to this workspace.");
+
+        var jwtOptions = configuration.GetSection("Jwt").Get<JwtTokenOptions>();
+        
+        // Issue the new Workspace Token
+        var claims = new List<Claim>
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            new Claim(JwtRegisteredClaimNames.Email, user.Email),
+            new Claim("tenant_id", membership.TenantId.ToString()),
+            new Claim(ClaimTypes.Role, membership.Role.ToString())
+        };
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions!.SigningKey));
+        var token = new JwtSecurityToken(
+            issuer: jwtOptions.Issuer,
+            audience: jwtOptions.Audience,
+            claims: claims,
+            expires: DateTime.UtcNow.AddMinutes(jwtOptions.ExpiryMinutes),
+            signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256)
+        );
+
+        return Ok(new LoginResponse(new JwtSecurityTokenHandler().WriteToken(token), jwtOptions.ExpiryMinutes));
     }
 }
 

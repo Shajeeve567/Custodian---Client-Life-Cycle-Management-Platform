@@ -8,6 +8,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<UserAccount> Users => Set<UserAccount>();
     public DbSet<ClientProfile> Clients => Set<ClientProfile>();
+    public DbSet<TenantMembership> TenantMemberships => Set<TenantMembership>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -17,10 +18,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             entity.Property(t => t.Id).ValueGeneratedNever();
             entity.Property(t => t.Name).HasMaxLength(200).IsRequired();
             entity.Property(t => t.CreatedAtUtc).IsRequired();
-            entity.HasMany(t => t.Users)
-                .WithOne(u => u.Tenant)
-                .HasForeignKey(u => u.TenantId)
-                .OnDelete(DeleteBehavior.Restrict);
+            // Client relationship remains the same
             entity.HasMany(t => t.Clients)
                 .WithOne(c => c.Tenant)
                 .HasForeignKey(c => c.TenantId)
@@ -35,7 +33,23 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             entity.Property(u => u.Email).HasMaxLength(320).IsRequired();
             entity.Property(u => u.PasswordHash).HasMaxLength(512).IsRequired();
             entity.Property(u => u.Status).HasConversion<string>().HasMaxLength(20);
-            entity.Property(u => u.Role).HasConversion<string>().HasMaxLength(20);
+        });
+
+        modelBuilder.Entity<TenantMembership>(entity =>
+        {
+            // Composite primary key
+            entity.HasKey(tm => new { tm.UserId, tm.TenantId });
+            entity.Property(tm => tm.Role).HasConversion<string>().HasMaxLength(20);
+
+            entity.HasOne(tm => tm.User)
+                .WithMany(u => u.Memberships)
+                .HasForeignKey(tm => tm.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(tm => tm.Tenant)
+                .WithMany(t => t.Memberships)
+                .HasForeignKey(tm => tm.TenantId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<ClientProfile>(entity =>
