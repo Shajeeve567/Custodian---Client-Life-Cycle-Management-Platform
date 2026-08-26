@@ -115,4 +115,35 @@ desktop.ini
 *.pem
 *.pfx
 *.key
-certs/
+certs/# .NET build output
+[Bb]in/
+[Oo]bj/
+[Bb]uild/
+[Oo]ut/
+[Pp]ublish/
+[Ll]ogs/
+[Ll]og/
+
+# Frontend
+node_modules/
+dist/
+frontend/dist/
+
+# Secrets ΓÇö never commit these
+.env
+*.env.local
+appsettings.Local.json
+
+# VS / VS Code / IDE junk
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Test results
+TestResults/
+*.trx
+
+# OS
+.DS_Store
+Thumbs.db
