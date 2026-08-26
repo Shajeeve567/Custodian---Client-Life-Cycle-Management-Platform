@@ -93,4 +93,53 @@ public class UserAccountControllerTests
         Assert.Equal(_tenantId, user.Memberships.First().TenantId);
         _userRepoMock.Verify(r => r.AddAsync(It.IsAny<UserAccount>(), It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task UpdateUserRole_ReturnsNoContent_AndUpdatesRole()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var user = new UserAccount 
+        { 
+            Id = userId, 
+            Memberships = new List<TenantMembership> 
+            { 
+                new TenantMembership { TenantId = _tenantId, Role = Custodian.Shared.Auth.Role.Staff } 
+            } 
+        };
+        var request = new UpdateUserRoleRequest(Custodian.Shared.Auth.Role.Owner);
+        
+        _userRepoMock.Setup(r => r.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(user);
+
+        // Act
+        var result = await _controller.UpdateUserRole(userId, request, CancellationToken.None);
+
+        // Assert
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(Custodian.Shared.Auth.Role.Owner, user.Memberships.First().Role);
+        _userRepoMock.Verify(r => r.UpdateAsync(user, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateUserRole_ReturnsNotFound_IfMembershipDoesNotExist()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var user = new UserAccount 
+        { 
+            Id = userId, 
+            Memberships = new List<TenantMembership>() // Empty memberships
+        };
+        var request = new UpdateUserRoleRequest(Custodian.Shared.Auth.Role.Owner);
+        
+        _userRepoMock.Setup(r => r.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(user);
+
+        // Act
+        var result = await _controller.UpdateUserRole(userId, request, CancellationToken.None);
+
+        // Assert
+        Assert.IsType<NotFoundResult>(result);
+    }
 }

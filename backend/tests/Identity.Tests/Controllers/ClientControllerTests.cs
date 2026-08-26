@@ -92,4 +92,44 @@ public class ClientControllerTests
         Assert.NotNull(client.DeactivatedAtUtc);
         _clientRepoMock.Verify(r => r.UpdateAsync(client, It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task UpdateClient_ReturnsOk_AndUpdatesClient()
+    {
+        // Arrange
+        var clientId = Guid.NewGuid();
+        var client = new ClientProfile { Id = clientId, TenantId = _tenantId, Name = "Old Name" };
+        var request = new UpdateClientRequest("New Name", "new@test.com", "987654321");
+        
+        _clientRepoMock.Setup(r => r.GetByIdAsync(clientId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(client);
+
+        // Act
+        var result = await _controller.UpdateClient(clientId, request, CancellationToken.None);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var updatedClient = Assert.IsType<ClientProfile>(okResult.Value);
+        Assert.Equal(request.Name, updatedClient.Name);
+        Assert.Equal(request.Email, updatedClient.Email);
+        Assert.Equal(request.Phone, updatedClient.Phone);
+        _clientRepoMock.Verify(r => r.UpdateAsync(client, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateClient_ReturnsNotFound_IfRepoReturnsNull()
+    {
+        // Arrange
+        var clientId = Guid.NewGuid();
+        var request = new UpdateClientRequest("Name", "email@test.com", null);
+        
+        _clientRepoMock.Setup(r => r.GetByIdAsync(clientId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ClientProfile?)null);
+
+        // Act
+        var result = await _controller.UpdateClient(clientId, request, CancellationToken.None);
+
+        // Assert
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
 }
