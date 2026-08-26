@@ -11,10 +11,12 @@ namespace Custodian.Workflow.Controllers;
 public class EngagementsController : ControllerBase
 {
     private readonly IEngagementRepository _repository;
+    private readonly IAuditPublisher _auditPublisher;
 
-    public EngagementsController(IEngagementRepository repository)
+    public EngagementsController(IEngagementRepository repository, IAuditPublisher auditPublisher)
     {
         _repository = repository;
+        _auditPublisher = auditPublisher;
     }
 
     [HttpPost]
@@ -42,6 +44,9 @@ public class EngagementsController : ControllerBase
         };
 
         var created = await _repository.CreateAsync(engagement);
+
+        // Subtask Genesis Event: Publish Genesis Event to Audit Service
+        await _auditPublisher.PublishGenesisEventAsync(created, effectiveTenantId);
 
         return CreatedAtAction(nameof(GetEngagementById), new { id = created.EngagementId, tenantId = created.TenantId }, MapToResponse(created));
     }
@@ -155,7 +160,7 @@ public class EngagementsController : ControllerBase
     }
 
     /// <summary>
-    /// Subtask 4: Resolves tenant ID server-side from HttpContext JWT claims if authenticated.
+    /// Resolves tenant ID server-side from HttpContext JWT claims if authenticated.
     /// Falls back to request parameter if claims are not populated.
     /// </summary>
     private string? ResolveTenantId(string? requestTenantId)

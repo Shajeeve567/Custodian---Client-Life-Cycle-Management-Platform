@@ -37,9 +37,9 @@ public class EngagementLifecycleValidatorTests
         Assert.False(result);
     }
 
-    // ==========================================
+   
     // 2. VALID STATUS TRANSITION TESTS
-    // ==========================================
+    
 
     [Theory]
     [InlineData(EngagementStatus.Draft, EngagementStatus.Started)]

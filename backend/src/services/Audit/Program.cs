@@ -1,41 +1,50 @@
+using Custodian.Audit.Data;
+using Custodian.Audit.Repositories;
+using Custodian.Audit.Services;
+using Microsoft.EntityFrameworkCore;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+// Add Controllers
+builder.Services.AddControllers();
+
+// Add OpenAPI / Swagger
 builder.Services.AddOpenApi();
+builder.Services.AddEndpointsApiExplorer();
+
+// Add EF Core DbContext
+var azureConn = builder.Configuration.GetConnectionString("AzureMySqlConnection");
+var defaultConn = builder.Configuration.GetConnectionString("Default") 
+                  ?? builder.Configuration.GetConnectionString("DefaultConnection")
+                  ?? "Server=localhost;Database=custodian_audit;Uid=root;Pwd=password;";
+
+var connectionString = (!string.IsNullOrWhiteSpace(azureConn) && !azureConn.Contains("YOUR_SECRET_STRING"))
+    ? azureConn
+    : defaultConn;
+
+var serverVersion = new MySqlServerVersion(new Version(8, 0, 30));
+
+builder.Services.AddDbContext<AuditDbContext>(options =>
+    options.UseMySql(connectionString, serverVersion));
+
+// Register Application Services & Repositories
+builder.Services.AddScoped<IAuditEventRepository, AuditEventRepository>();
+builder.Services.AddScoped<IAuditEventService, AuditEventService>();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// Configure HTTP request pipeline
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }
 
 app.UseHttpsRedirection();
+app.UseAuthorization();
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast");
+app.MapControllers();
 
 app.Run();
 
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
+// Make Program class public for WebApplicationFactory in integration testing
+public partial class Program { }
