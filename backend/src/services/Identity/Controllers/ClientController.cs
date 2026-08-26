@@ -72,6 +72,23 @@ public class ClientController(IClientProfileRepository repo, TenantContext tenan
 
         return NoContent();
     }
+    [HttpPut("{id:guid}")]
+    public async Task<ActionResult<ClientProfile>> UpdateClient(Guid id, [FromBody] UpdateClientRequest request, CancellationToken cancellationToken)
+    {
+        var client = await repo.GetByIdAsync(id, cancellationToken);
+        if (client is null)
+        {
+            return NotFound();
+        }
+
+        client.Name = request.Name;
+        client.Email = request.Email;
+        client.Phone = request.Phone;
+
+        await repo.UpdateAsync(client, cancellationToken);
+        return Ok(client);
+    }
 }
 
 public record CreateClientRequest(string Name, string Email, string? Phone);
+public record UpdateClientRequest(string Name, string Email, string? Phone);
