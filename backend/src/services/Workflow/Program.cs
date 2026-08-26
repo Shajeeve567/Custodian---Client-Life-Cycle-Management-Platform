@@ -8,7 +8,12 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 
 // Configure EF Core with MySQL
-var connectionString = builder.Configuration.GetConnectionString("Default");
+var connectionString = builder.Configuration.GetConnectionString("AzureMySqlConnection");
+if (string.IsNullOrWhiteSpace(connectionString) || connectionString.Contains("YOUR_SECRET_STRING"))
+{
+    connectionString = builder.Configuration.GetConnectionString("Default");
+}
+
 if (!string.IsNullOrWhiteSpace(connectionString))
 {
     builder.Services.AddDbContext<WorkflowDbContext>(options =>
