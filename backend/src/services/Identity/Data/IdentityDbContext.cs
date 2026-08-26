@@ -1,10 +1,21 @@
+using Custodian.Shared.Tenancy;
 using Custodian.Identity.Domain;
 using Microsoft.EntityFrameworkCore;
 
 namespace Identity.Data;
 
-public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> options) : DbContext(options)
+public sealed class IdentityDbContext : DbContext
 {
+    private readonly TenantContext? _tenantContext;
+
+    public IdentityDbContext(DbContextOptions<IdentityDbContext> options, TenantContext? tenantContext = null) 
+        : base(options)
+    {
+        _tenantContext = tenantContext;
+    }
+
+    private Guid CurrentTenantId => Guid.TryParse(_tenantContext?.TenantId, out var id) ? id : Guid.Empty;
+
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<UserAccount> Users => Set<UserAccount>();
     public DbSet<ClientProfile> Clients => Set<ClientProfile>();
@@ -33,6 +44,9 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             entity.Property(u => u.Email).HasMaxLength(320).IsRequired();
             entity.Property(u => u.PasswordHash).HasMaxLength(512).IsRequired();
             entity.Property(u => u.Status).HasConversion<string>().HasMaxLength(20);
+            
+            // Global Query Filter for Many-to-Many
+            entity.HasQueryFilter(u => u.Memberships.Any(m => m.TenantId == CurrentTenantId));
         });
 
         modelBuilder.Entity<TenantMembership>(entity =>
@@ -59,6 +73,9 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             entity.HasIndex(c => new { c.TenantId, c.Email });
             entity.Property(c => c.Email).HasMaxLength(320).IsRequired();
             entity.Property(c => c.Status).HasConversion<string>().HasMaxLength(20);
+            
+            // Global Query Filter
+            entity.HasQueryFilter(c => c.TenantId == CurrentTenantId);
         });
     }
 }

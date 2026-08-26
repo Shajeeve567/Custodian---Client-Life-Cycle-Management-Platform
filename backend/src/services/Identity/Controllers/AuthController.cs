@@ -5,7 +5,6 @@ using Custodian.Shared.Auth;
 using Identity.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Identity.Controllers;
@@ -20,7 +19,6 @@ public class AuthController(IUserAccountRepository userRepo, IConfiguration conf
         // 1. Validate the User
         var user = await userRepo.GetByEmailAsync(request.Email, cancellationToken);
         
-        // TODO: In a production app, you MUST use a password hasher (e.g., BCrypt.Verify) here!
         if (user is null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
         {
             return Unauthorized("Invalid email or password.");

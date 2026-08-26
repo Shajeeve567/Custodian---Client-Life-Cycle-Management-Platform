@@ -19,6 +19,15 @@ public class TenantControllerTests
         _tenantRepoMock = new Mock<ITenantRepository>();
         _tenantContext = new TenantContext();
         _controller = new TenantController(_tenantRepoMock.Object, _tenantContext);
+
+        var claims = new[] { new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, Guid.NewGuid().ToString()) };
+        var identity = new System.Security.Claims.ClaimsIdentity(claims, "Test");
+        var claimsPrincipal = new System.Security.Claims.ClaimsPrincipal(identity);
+        
+        _controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext { User = claimsPrincipal }
+        };
     }
 
     [Fact]

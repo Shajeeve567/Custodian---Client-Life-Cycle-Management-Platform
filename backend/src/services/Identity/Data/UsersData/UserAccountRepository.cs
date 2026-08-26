@@ -11,8 +11,8 @@ public sealed class UserAccountRepository(IdentityDbContext db) : IUserAccountRe
     public Task<UserAccount?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
         db.Users.Include(u => u.Memberships).FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
 
-    public Task<List<UserAccount>> ListByTenantAsync(Guid tenantId, CancellationToken cancellationToken = default) =>
-        db.Users.Where(u => u.Memberships.Any(m => m.TenantId == tenantId)).ToListAsync(cancellationToken);
+    public Task<List<UserAccount>> ListAsync(CancellationToken cancellationToken = default) =>
+        db.Users.Include(u => u.Memberships).ToListAsync(cancellationToken);
 
     public Task AddAsync(UserAccount user, CancellationToken cancellationToken = default)
     {

@@ -4,10 +4,11 @@ using Identity.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+
 namespace Identity.Controllers;
 
 
-[Authorize]
+[Authorize(Roles = "Owner")]
 [Route("api/[controller]")]
 [ApiController]
 public class UserAccountController(IUserAccountRepository repo, TenantContext tenantContext) : ControllerBase
@@ -15,17 +16,15 @@ public class UserAccountController(IUserAccountRepository repo, TenantContext te
     [HttpGet]
     public async Task<ActionResult<List<UserAccount>>> GetUserAccounts(CancellationToken cancellationToken)
     {
-        var tenantId = Guid.Parse(tenantContext.RequireTenantId());
-        var users = await repo.ListByTenantAsync(tenantId, cancellationToken);
+        var users = await repo.ListAsync(cancellationToken);
         return Ok(users);
     }
 
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<UserAccount>> GetUserAccount(Guid id, CancellationToken cancellationToken)
     {
-        var tenantId = Guid.Parse(tenantContext.RequireTenantId());
         var user = await repo.GetByIdAsync(id, cancellationToken);
-        if (user is null || !user.Memberships.Any(m => m.TenantId == tenantId))
+        if (user is null)
         {
             return NotFound();
         }
@@ -36,9 +35,8 @@ public class UserAccountController(IUserAccountRepository repo, TenantContext te
     [HttpPatch("{id:guid}/deactivate")]
     public async Task<ActionResult> DeactivateUserAccount(Guid id, CancellationToken cancellationToken)
     {
-        var tenantId = Guid.Parse(tenantContext.RequireTenantId());
         var user = await repo.GetByIdAsync(id, cancellationToken);
-        if (user is null || !user.Memberships.Any(m => m.TenantId == tenantId))
+        if (user is null)
         {
             return NotFound();
         }
