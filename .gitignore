@@ -14,11 +14,18 @@
 *.pdb
 *.cache
 *.txt
-[Tt]est[Rr]esults/
+*.trx
 *.suo
 *.user
 *.userosscache
 *.sln.docstates
+*.userprefs
+*.vcxproj.user
+*.CloudService.user
+*.nuget.props
+*.nuget.targets
+project.lock.json
+project.fragment.lock.json
 
 ## Visual Studio & VS Code
 .vs/
@@ -28,9 +35,6 @@
 !.vscode/launch.json
 !.vscode/extensions.json
 *.code-workspace
-*.userprefs
-*.vcxproj.user
-*.CloudService.user
 
 ## JetBrains / Rider / ReSharper
 .idea/
@@ -41,10 +45,6 @@ _ReSharper*/
 packages/
 *.nupkg
 *.snupkg
-*.nuget.props
-*.nuget.targets
-project.lock.json
-project.fragment.lock.json
 
 ## Secret & Environment Configuration Files
 appsettings*.Development.json
@@ -84,6 +84,9 @@ docker-compose.override.yml
 *.coverage
 *.coveragexml
 coverage/
+
+## Project documentation (local only)
+docs/
 
 ## OS specific files & Certificates
 .DS_Store

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Custodian.Workflow.Models;
 
 namespace Custodian.Workflow.Services;
 
@@ -46,5 +47,21 @@ public class AuditPublisher : IAuditPublisher
             // Per business rules: audit event side effects must not silently corrupt/fail the primary business transaction
             _logger.LogError(ex, "Error publishing audit event '{Type}' for engagement '{EngagementId}'", type, engagementId);
         }
+    }
+
+    public async Task PublishGenesisEventAsync(Engagement engagement, string tenantId)
+    {
+        await PublishEventAsync(
+            engagement.EngagementId,
+            tenantId,
+            "System",
+            "Genesis",
+            new
+            {
+                status = engagement.Status.ToString(),
+                clientId = engagement.ClientId,
+                staffId = engagement.StaffId,
+                createdAt = engagement.CreatedAt
+            });
     }
 }
