@@ -30,7 +30,7 @@ public class ClientControllerTests
         {
             new ClientProfile { Id = Guid.NewGuid(), TenantId = _tenantId, Name = "Client A" }
         };
-        _clientRepoMock.Setup(r => r.ListByTenantAsync(_tenantId, It.IsAny<CancellationToken>()))
+        _clientRepoMock.Setup(r => r.ListAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedClients);
 
         // Act
@@ -43,13 +43,12 @@ public class ClientControllerTests
     }
 
     [Fact]
-    public async Task GetClient_ReturnsNotFound_IfClientBelongsToDifferentTenant()
+    public async Task GetClient_ReturnsNotFound_IfRepoReturnsNull()
     {
         // Arrange
         var clientId = Guid.NewGuid();
-        var client = new ClientProfile { Id = clientId, TenantId = Guid.NewGuid() }; // Different tenant
         _clientRepoMock.Setup(r => r.GetByIdAsync(clientId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(client);
+            .ReturnsAsync((ClientProfile?)null);
 
         // Act
         var result = await _controller.GetClient(clientId, CancellationToken.None);

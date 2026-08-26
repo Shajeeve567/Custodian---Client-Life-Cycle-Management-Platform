@@ -15,19 +15,16 @@ public class ClientController(IClientProfileRepository repo, TenantContext tenan
     [HttpGet]
     public async Task<ActionResult<List<ClientProfile>>> GetClients(CancellationToken cancellationToken)
     {
-        var tenantId = Guid.Parse(tenantContext.RequireTenantId());
-        var clients = await repo.ListByTenantAsync(tenantId, cancellationToken);
+        var clients = await repo.ListAsync(cancellationToken);
         return Ok(clients);
     }
 
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<ClientProfile>> GetClient(Guid id, CancellationToken cancellationToken)
     {
-        var tenantId = Guid.Parse(tenantContext.RequireTenantId());
         var client = await repo.GetByIdAsync(id, cancellationToken);
         
-        // Security check: Make sure this client actually belongs to the requesting tenant!
-        if (client is null || client.TenantId != tenantId)
+        if (client is null)
         {
             return NotFound();
         }
@@ -47,7 +44,7 @@ public class ClientController(IClientProfileRepository repo, TenantContext tenan
             Name = request.Name,
             Email = request.Email,
             Phone = request.Phone,
-            Status = UserStatus.Active, // Assuming Active is a valid enum value
+            Status = UserStatus.Active, 
             CreatedAtUtc = DateTimeOffset.UtcNow
         };
 
@@ -59,10 +56,9 @@ public class ClientController(IClientProfileRepository repo, TenantContext tenan
     [HttpPatch("{id:guid}/deactivate")]
     public async Task<ActionResult> DeactivateClient(Guid id, CancellationToken cancellationToken)
     {
-        var tenantId = Guid.Parse(tenantContext.RequireTenantId());
         var client = await repo.GetByIdAsync(id, cancellationToken);
         
-        if (client is null || client.TenantId != tenantId)
+        if (client is null)
         {
             return NotFound();
         }
@@ -78,5 +74,4 @@ public class ClientController(IClientProfileRepository repo, TenantContext tenan
     }
 }
 
-// Using the C# 9 Positional Record we just talked about!
 public record CreateClientRequest(string Name, string Email, string? Phone);

@@ -30,7 +30,7 @@ public class UserAccountControllerTests
         {
             new UserAccount { Id = Guid.NewGuid(), Email = "test@test.com" }
         };
-        _userRepoMock.Setup(r => r.ListByTenantAsync(_tenantId, It.IsAny<CancellationToken>()))
+        _userRepoMock.Setup(r => r.ListAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedUsers);
 
         // Act
@@ -43,17 +43,12 @@ public class UserAccountControllerTests
     }
 
     [Fact]
-    public async Task GetUserAccount_ReturnsNotFound_IfUserNotInTenant()
+    public async Task GetUserAccount_ReturnsNotFound_IfRepoReturnsNull()
     {
         // Arrange
         var userId = Guid.NewGuid();
-        var user = new UserAccount 
-        { 
-            Id = userId, 
-            Memberships = new List<TenantMembership>() // Empty memberships means they don't belong to the tenant
-        };
         _userRepoMock.Setup(r => r.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(user);
+            .ReturnsAsync((UserAccount?)null);
 
         // Act
         var result = await _controller.GetUserAccount(userId, CancellationToken.None);

@@ -8,8 +8,8 @@ public sealed class ClientProfileRepository(IdentityDbContext db) : IClientProfi
     public Task<ClientProfile?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
         db.Clients.FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
 
-    public Task<List<ClientProfile>> ListByTenantAsync(Guid tenantId, CancellationToken cancellationToken = default) =>
-        db.Clients.Where(c => c.TenantId == tenantId).ToListAsync(cancellationToken);
+    public Task<List<ClientProfile>> ListAsync(CancellationToken cancellationToken = default) =>
+        db.Clients.ToListAsync(cancellationToken);
 
     public Task AddAsync(ClientProfile client, CancellationToken cancellationToken = default)
     {

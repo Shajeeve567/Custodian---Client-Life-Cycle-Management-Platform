@@ -7,7 +7,7 @@ namespace Identity.Controllers;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 
-[Authorize] // <--- Changed from [Authorize(Roles = "Owner")]!
+[Authorize] 
 [Route("api/[controller]")]
 [ApiController]
 public class TenantController(ITenantRepository repo, TenantContext tenantContext) : ControllerBase
@@ -16,7 +16,6 @@ public class TenantController(ITenantRepository repo, TenantContext tenantContex
     [HttpGet("current")]
     public async Task<ActionResult<Tenant>> GetCurrentTenant(CancellationToken cancellationToken)
     {
-        // RequireTenantId ensures they passed the X-Tenant-ID header (or it came from the token)
         var tenantId = Guid.Parse(tenantContext.RequireTenantId());
         
         var tenant = await repo.GetByIdAsync(tenantId, cancellationToken);
@@ -35,7 +34,6 @@ public class TenantController(ITenantRepository repo, TenantContext tenantContex
         return Ok(tenant);
     }
 
-    // Notice there is no Roles="Owner" here! A Global Token can call this.
     [HttpPost]
     public async Task<ActionResult<Tenant>> CreateTenant([FromBody] CreateTenantRequest request, CancellationToken cancellationToken)
     {
