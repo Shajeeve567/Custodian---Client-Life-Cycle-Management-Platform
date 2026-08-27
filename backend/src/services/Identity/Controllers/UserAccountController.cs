@@ -52,8 +52,8 @@ public class UserAccountController(IUserAccountRepository repo, TenantContext te
     }
 
 
-    [HttpPost("register")]
-    public async Task<ActionResult<UserAccount>> CreateNewUserAccount([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
+    [HttpPost("invite")]
+    public async Task<ActionResult<UserAccount>> InviteUserAccount([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
     {
         var tenantId = Guid.Parse(tenantContext.RequireTenantId());
         

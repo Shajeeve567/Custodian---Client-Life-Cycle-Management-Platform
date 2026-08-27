@@ -6,6 +6,7 @@ using Identity.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
+using Custodian.Identity.Domain;
 
 namespace Identity.Controllers;
 
@@ -49,6 +50,29 @@ public class AuthController(IUserAccountRepository userRepo, IConfiguration conf
         return Ok(new LoginResponse(new JwtSecurityTokenHandler().WriteToken(token), jwtOptions.ExpiryMinutes));
     }
 
+    [HttpPost("register")]
+    public async Task<ActionResult> Register([FromBody] RegisterRequest request, CancellationToken cancellationToken)
+    {
+        // 1. Check if email exists
+        var existingUser = await userRepo.GetByEmailAsync(request.Email, cancellationToken);
+        if (existingUser is not null) return Conflict("Email already exists.");
+
+        // 2. Create Global User
+        var user = new UserAccount
+        {
+            Id = Guid.NewGuid(),
+            Email = request.Email,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+            Status = UserStatus.Active,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            Memberships = new List<TenantMembership>() // No workspaces yet!
+        };
+
+        await userRepo.AddAsync(user, cancellationToken);
+
+        return Ok("User registered successfully. You can now login to get a Global Token.");
+    }
+
     [HttpPost("select-workspace/{tenantId:guid}")]
     [Authorize] // Require the global token!
     public async Task<ActionResult<LoginResponse>> SelectWorkspace(Guid tenantId, CancellationToken cancellationToken)
@@ -56,7 +80,7 @@ public class AuthController(IUserAccountRepository userRepo, IConfiguration conf
         var userIdStr = User.FindFirstValue(JwtRegisteredClaimNames.Sub) ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (!Guid.TryParse(userIdStr, out var userId)) return Unauthorized();
 
-        var user = await userRepo.GetByIdAsync(userId, cancellationToken);
+        var user = await userRepo.GetByIdGlobalAsync(userId, cancellationToken);
         if (user is null) return Unauthorized();
 
         // Verify they actually belong to this tenant
@@ -89,3 +113,4 @@ public class AuthController(IUserAccountRepository userRepo, IConfiguration conf
 
 public record LoginRequest(string Email, string Password);
 public record LoginResponse(string Token, int ExpiresInMinutes);
+public record RegisterRequest(string Email, string Password);

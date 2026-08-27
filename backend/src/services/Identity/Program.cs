@@ -18,7 +18,11 @@ builder.Services.AddDbContext<IdentityDbContext>(options =>
 builder.Services.AddScoped<IUserAccountRepository, UserAccountRepository>();
 builder.Services.AddScoped<ITenantRepository, TenantRepository>();
 builder.Services.AddScoped<IClientProfileRepository, ClientProfileRepository>();
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+    });
 builder.Services.AddTenantContext(); 
 builder.Services.AddJwtAuthentication(builder.Configuration);
 

@@ -102,7 +102,7 @@ public class AuthControllerTests
             Id = userId, 
             Memberships = new List<TenantMembership>() // Empty memberships
         };
-        _userRepoMock.Setup(r => r.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
+        _userRepoMock.Setup(r => r.GetByIdGlobalAsync(userId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(user);
 
         // Mock HttpContext User
