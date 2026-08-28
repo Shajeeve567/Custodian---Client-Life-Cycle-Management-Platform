@@ -23,6 +23,7 @@ if (!string.IsNullOrWhiteSpace(connectionString))
 
 // Register Repository & Audit Services
 builder.Services.AddScoped<IEngagementRepository, EngagementRepository>();
+builder.Services.AddScoped<IClientActionService, ClientActionService>();
 
 builder.Services.AddHttpClient<IAuditPublisher, AuditPublisher>(client =>
 {

@@ -92,13 +92,10 @@ public class EngagementsControllerUnitTests
         // Act
         await _controller.CreateEngagement(request);
 
-        // Assert: Verify PublishEventAsync was invoked with Genesis event type
-        _mockAuditPublisher.Verify(a => a.PublishEventAsync(
-            It.IsAny<Guid>(),
-            "tenant-001",
-            It.IsAny<string>(),
-            "Genesis",
-            It.IsAny<object>()
+        // Assert: Verify PublishGenesisEventAsync was invoked with Genesis event
+        _mockAuditPublisher.Verify(a => a.PublishGenesisEventAsync(
+            It.IsAny<Engagement>(),
+            "tenant-001"
         ), Times.Once);
     }
 

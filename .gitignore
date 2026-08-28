@@ -85,8 +85,13 @@ docker-compose.override.yml
 *.coveragexml
 coverage/
 
-## Project documentation (local only)
-docs/
+## Project documentation (tracked)
+!Docs/
+!docs/
+
+## AI Agent Handover Notes & Scratch Files
+AGENT_HANDOVER_KNOWLEDGE.md
+*.handover.md
 
 ## OS specific files & Certificates
 .DS_Store
