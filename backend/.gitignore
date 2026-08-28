@@ -1,6 +1,8 @@
 # .NET build output
 bin/
 obj/
+[Bb]in/
+[Oo]bj/
 
 # Frontend
 node_modules/
@@ -10,7 +12,18 @@ frontend/dist/
 # Secrets — never commit these
 .env
 *.env.local
-appsettings.Local.json
+appsettings*.Development.json
+appsettings*.Local.json
+**/appsettings.Development.json
+**/appsettings.Local.json
+
+# Local Uploads Storage
+uploads/
+**/uploads/
+
+# AI Agent Handover Notes & Scratch Files
+AGENT_HANDOVER_KNOWLEDGE.md
+*.handover.md
 
 # VS / VS Code / IDE junk
 .vs/

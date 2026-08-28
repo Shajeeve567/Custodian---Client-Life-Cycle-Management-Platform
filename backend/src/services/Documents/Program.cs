@@ -33,6 +33,12 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetService<DocumentDbContext>();
+    dbContext?.Database.Migrate();
+}
+
 app.UseHttpsRedirection();
 app.UseAuthorization();
 app.MapControllers();

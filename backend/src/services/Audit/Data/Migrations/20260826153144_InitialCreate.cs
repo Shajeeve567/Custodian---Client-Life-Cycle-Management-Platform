@@ -37,8 +37,15 @@ namespace Audit.Data.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_events", x => x.event_id);
+                    table.UniqueConstraint("AK_events_sequence_number", x => x.sequence_number);
                 })
                 .Annotation("MySql:CharSet", "utf8mb4");
+
+            migrationBuilder.CreateIndex(
+                name: "idx_sequence_number",
+                table: "events",
+                column: "sequence_number",
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "idx_engagement_id",

@@ -63,6 +63,7 @@ public class AuditDbContext : DbContext
                 .HasMaxLength(64);
 
             // Performance Indexes
+            entity.HasIndex(e => e.SequenceNumber, "idx_sequence_number").IsUnique();
             entity.HasIndex(e => e.EngagementId, "idx_engagement_id");
             entity.HasIndex(e => e.TenantId, "idx_tenant_id");
             entity.HasIndex(e => new { e.TenantId, e.EngagementId }, "idx_tenant_engagement");
