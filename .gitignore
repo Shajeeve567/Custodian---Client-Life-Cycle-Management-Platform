@@ -85,9 +85,9 @@ docker-compose.override.yml
 *.coveragexml
 coverage/
 
-## Project documentation (tracked)
-!Docs/
-!docs/
+## Project documentation (ignored)
+[Dd]ocs/
+**/[Dd]ocs/
 
 ## AI Agent Handover Notes & Scratch Files
 AGENT_HANDOVER_KNOWLEDGE.md
