@@ -27,8 +27,9 @@ builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
 builder.Services.AddScoped<INotificationDeliveryStrategy, InAppPortalNotificationStrategy>();
 builder.Services.AddScoped<INotificationDeliveryStrategy, ResendEmailNotificationStrategy>();
 
-// Register Deduplicator & Dispatcher
+// Register Deduplicator, Mapper & Dispatcher
 builder.Services.AddSingleton<IEventDeduplicator, InMemoryEventDeduplicator>();
+builder.Services.AddSingleton<Custodian.Identity.Services.Notifications.Mappers.IEventToMessageMapper, Custodian.Identity.Services.Notifications.Mappers.EventToClientSafeMessageMapper>();
 builder.Services.AddScoped<INotificationDispatcher, ClientNotificationDispatcher>();
 
 // Configure Resend Official SDK Client

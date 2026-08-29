@@ -110,41 +110,21 @@ public sealed class KafkaNotificationConsumer : BackgroundService
 
             using var scope = _scopeFactory.CreateScope();
             var dispatcher = scope.ServiceProvider.GetRequiredService<INotificationDispatcher>();
+            var mapper = scope.ServiceProvider.GetRequiredService<Custodian.Identity.Services.Notifications.Mappers.IEventToMessageMapper>();
 
-            // Extract context from envelope
+            var mapped = mapper.MapToClientSafeMessage(envelope);
             var tenantId = Guid.TryParse(envelope.TenantId, out var parsedTenant) ? parsedTenant : Guid.Empty;
-            var clientId = Guid.Empty;
-            var messageText = $"Event: {envelope.EventType}";
-
-            if (envelope.Payload.ValueKind == JsonValueKind.Object)
-            {
-                if (envelope.Payload.TryGetProperty("clientId", out var clientProp) && clientProp.TryGetGuid(out var parsedClient))
-                {
-                    clientId = parsedClient;
-                }
-                else if (envelope.Payload.TryGetProperty("ClientId", out var clientProp2) && clientProp2.TryGetGuid(out var parsedClient2))
-                {
-                    clientId = parsedClient2;
-                }
-
-                if (envelope.Payload.TryGetProperty("message", out var msgProp))
-                {
-                    messageText = msgProp.GetString() ?? messageText;
-                }
-                else if (envelope.Payload.TryGetProperty("Message", out var msgProp2))
-                {
-                    messageText = msgProp2.GetString() ?? messageText;
-                }
-            }
 
             var context = new NotificationContext
             {
                 EventId = envelope.EventId,
                 TenantId = tenantId,
-                ClientId = clientId,
+                ClientId = mapped.ClientId,
+                ClientEmail = mapped.ClientEmail,
                 SourceEventType = envelope.EventType,
-                Message = messageText,
-                Subject = $"Update: {envelope.EventType}"
+                Message = mapped.Message,
+                Subject = mapped.Subject,
+                Channels = new[] { NotificationChannel.InAppPortal, NotificationChannel.Email }
             };
 
             await dispatcher.DispatchAsync(context, ct);
