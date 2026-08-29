@@ -19,7 +19,7 @@ public class AuditDbContextFactory : IDesignTimeDbContextFactory<AuditDbContext>
         var connectionString = configuration.GetConnectionString("AzureMySqlConnection");
         if (string.IsNullOrWhiteSpace(connectionString) || connectionString.Contains("YOUR_SECRET_STRING"))
         {
-            connectionString = configuration.GetConnectionString("Default") ?? "Server=localhost;Database=custodian_audit;Uid=root;Pwd=password;";
+            connectionString = configuration.GetConnectionString("Default") ?? "Server=localhost;Database=audit_db;Uid=root;Pwd=password;";
         }
 
         var optionsBuilder = new DbContextOptionsBuilder<AuditDbContext>();
