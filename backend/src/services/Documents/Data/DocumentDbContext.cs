@@ -46,6 +46,10 @@ public class DocumentDbContext : DbContext
                 .IsRequired()
                 .HasMaxLength(500);
 
+            entity.Property(e => e.UploadedAt)
+                .HasColumnName("created_at")
+                .IsRequired();
+
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => e.EngagementId);
             entity.HasIndex(e => e.Type);

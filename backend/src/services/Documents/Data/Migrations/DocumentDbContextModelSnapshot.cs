@@ -33,7 +33,7 @@ namespace Custodian.Documents.Data.Migrations
                         .HasColumnType("varchar(100)")
                         .HasColumnName("content_type");
 
-                    b.Property<DateTime>("CreatedAt")
+                    b.Property<DateTime>("UploadedAt")
                         .HasColumnType("datetime(6)")
                         .HasColumnName("created_at");
 
