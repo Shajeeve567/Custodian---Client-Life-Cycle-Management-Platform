@@ -5,6 +5,12 @@ using System.IO;
 
 namespace Custodian.Workflow.Data;
 
+/// <summary>
+/// Design-time DbContext factory for EF Core CLI tooling (dotnet ef database update).
+/// FIX (CSTD-268): Dynamically loads configuration from appsettings.json, appsettings.Development.json,
+/// and environment variables to ensure EF migrations connect to Azure QA/Prod MySQL databases
+/// instead of falling back to hardcoded root@localhost.
+/// </summary>
 public class WorkflowDbContextFactory : IDesignTimeDbContextFactory<WorkflowDbContext>
 {
     public WorkflowDbContext CreateDbContext(string[] args)
