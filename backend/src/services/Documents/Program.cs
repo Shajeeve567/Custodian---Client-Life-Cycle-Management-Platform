@@ -1,5 +1,6 @@
 using Custodian.Documents.Data;
 using Microsoft.EntityFrameworkCore;
+using Scalar.AspNetCore;
 
 using Custodian.Documents.Services;
 
@@ -30,6 +31,7 @@ var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
 {
+    app.MapScalarApiReference();
     app.MapOpenApi();
 }
 
