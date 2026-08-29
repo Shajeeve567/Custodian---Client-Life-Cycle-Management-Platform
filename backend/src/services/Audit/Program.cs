@@ -39,6 +39,12 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetService<AuditDbContext>();
+    dbContext?.Database.Migrate();
+}
+
 app.UseHttpsRedirection();
 app.UseAuthorization();
 
