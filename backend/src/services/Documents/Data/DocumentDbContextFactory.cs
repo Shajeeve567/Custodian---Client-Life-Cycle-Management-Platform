@@ -5,6 +5,12 @@ using System.IO;
 
 namespace Custodian.Documents.Data;
 
+/// <summary>
+/// Design-time DbContext factory for EF Core CLI tooling (dotnet ef database update).
+/// FIX (CSTD-268): Dynamically loads configuration from appsettings.json, appsettings.Development.json,
+/// and environment variables to ensure EF migrations connect to Azure QA/Prod MySQL databases
+/// instead of falling back to hardcoded root@localhost.
+/// </summary>
 public class DocumentDbContextFactory : IDesignTimeDbContextFactory<DocumentDbContext>
 {
     public DocumentDbContext CreateDbContext(string[] args)
