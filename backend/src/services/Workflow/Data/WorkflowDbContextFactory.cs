@@ -19,7 +19,7 @@ public class WorkflowDbContextFactory : IDesignTimeDbContextFactory<WorkflowDbCo
         var connectionString = configuration.GetConnectionString("AzureMySqlConnection");
         if (string.IsNullOrWhiteSpace(connectionString) || connectionString.Contains("YOUR_SECRET_STRING"))
         {
-            connectionString = configuration.GetConnectionString("Default") ?? "Server=localhost;Database=custodian_workflow;Uid=root;Pwd=password;";
+            connectionString = configuration.GetConnectionString("Default") ?? "Server=localhost;Database=workflow_db;Uid=root;Pwd=password;";
         }
 
         var optionsBuilder = new DbContextOptionsBuilder<WorkflowDbContext>();
