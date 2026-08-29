@@ -35,14 +35,27 @@ public sealed class NotificationRepository(IdentityDbContext db) : INotification
             .ToListAsync(ct);
     }
 
+    public async Task<int> GetUnreadCountAsync(Guid clientId, Guid tenantId, CancellationToken ct = default)
+    {
+        return await db.Notifications
+            .CountAsync(n => n.TenantId == tenantId && n.ClientId == clientId && !n.IsRead, ct);
+    }
+
     public async Task<bool> MarkAsReadAsync(
         Guid notificationId, 
         Guid tenantId, 
-        Guid clientId, 
+        Guid? clientId = null, 
         CancellationToken ct = default)
     {
-        var notification = await db.Notifications
-            .FirstOrDefaultAsync(n => n.NotificationId == notificationId && n.TenantId == tenantId && n.ClientId == clientId, ct);
+        var query = db.Notifications
+            .Where(n => n.NotificationId == notificationId && n.TenantId == tenantId);
+
+        if (clientId.HasValue && clientId.Value != Guid.Empty)
+        {
+            query = query.Where(n => n.ClientId == clientId.Value);
+        }
+
+        var notification = await query.FirstOrDefaultAsync(ct);
 
         if (notification == null)
         {
