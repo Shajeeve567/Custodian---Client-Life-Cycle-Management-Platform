@@ -1,0 +1,41 @@
+name: Deploy — Audit Service
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/src/services/Audit/**'
+      - '.github/workflows/deploy-audit.yml'
+
+jobs:
+  deploy:
+    name: Build & Deploy Audit Service
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore backend/src/services/Audit
+
+      - name: Build
+        run: dotnet build backend/src/services/Audit --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test backend/src/services/Audit --no-build --configuration Release --verbosity normal
+
+      - name: Publish
+        run: dotnet publish backend/src/services/Audit --configuration Release --output ./publish/audit
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_AUDIT_APP_NAME }}
+          publish-profile: ${{ secrets.AZURE_AUDIT_PUBLISH_PROFILE }}
+          package: ./publish/audit

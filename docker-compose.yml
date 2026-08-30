@@ -1,0 +1,149 @@
+services:
+
+  mysql:
+    image: mysql:8.0
+    container_name: custodian-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  
+  kafka:
+    image: confluentinc/cp-kafka:7.7.0
+    container_name: custodian-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      # KRaft mode — no Zookeeper needed
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: custodian-kafka-ui
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: custodian-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+
+  identity-service:
+    build:
+      context: ./backend
+      dockerfile: src/services/Identity/Dockerfile
+    container_name: custodian-identity
+    restart: unless-stopped
+    ports:
+      - "5001:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__AzureMySqlConnection=${IDENTITY_DB_CONNECTION}
+      - Jwt__SigningKey=${JWT_KEY}
+      - Jwt__Issuer=${JWT_ISSUER}
+      - Jwt__Audience=${JWT_AUDIENCE}
+      - Jwt__ExpiryMinutes=${JWT_EXPIRY_MINUTES}
+      - Kafka__BootstrapServers=kafka:29092
+      - Kafka__TopicPrefix=custodian
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  workflow-service:
+    build:
+      context: ./backend
+      dockerfile: src/services/Workflow/Dockerfile
+    container_name: custodian-workflow
+    restart: unless-stopped
+    ports:
+      - "5002:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__AzureMySqlConnection=${WORKFLOW_DB_CONNECTION}
+      - Kafka__BootstrapServers=kafka:29092
+      - Kafka__TopicPrefix=custodian
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  document-service:
+    build:
+      context: ./backend
+      dockerfile: src/services/Documents/Dockerfile
+    container_name: custodian-documents
+    restart: unless-stopped
+    ports:
+      - "5003:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__AzureMySqlConnection=${DOCUMENT_DB_CONNECTION}
+      - AzureBlob__ConnectionString=${AZURE_BLOB_CONNECTION_STRING}
+      - AzureBlob__ContainerName=${AZURE_BLOB_CONTAINER_NAME}
+      - Kafka__BootstrapServers=kafka:29092
+      - Kafka__TopicPrefix=custodian
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  audit-service:
+    build:
+      context: ./backend
+      dockerfile: src/services/Audit/Dockerfile
+    container_name: custodian-audit
+    restart: unless-stopped
+    ports:
+      - "5004:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__AzureMySqlConnection=${AUDIT_DB_CONNECTION}
+      - Kafka__BootstrapServers=kafka:29092
+      - Kafka__TopicPrefix=custodian
+      - Kafka__ConsumerGroup=custodian-audit
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+volumes:
+  mysql-data:
+  kafka-data:
