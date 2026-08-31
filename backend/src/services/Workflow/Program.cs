@@ -5,8 +5,17 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add controllers
+// Add controllers & CORS
 builder.Services.AddControllers();
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
 
 // Configure EF Core with MySQL
 var connectionString = builder.Configuration.GetConnectionString("AzureMySqlConnection");
@@ -27,7 +36,7 @@ builder.Services.AddScoped<IClientActionService, ClientActionService>();
 
 builder.Services.AddHttpClient<IAuditPublisher, AuditPublisher>(client =>
 {
-    var auditBaseUrl = builder.Configuration["Services:AuditUrl"] ?? builder.Configuration["AuditService:BaseUrl"] ?? "http://localhost:5005";
+    var auditBaseUrl = builder.Configuration["Services:AuditUrl"] ?? builder.Configuration["AuditService:BaseUrl"] ?? "http://localhost:5051";
     client.BaseAddress = new Uri(auditBaseUrl);
 });
 
@@ -43,9 +52,10 @@ if (app.Environment.IsDevelopment())
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetService<WorkflowDbContext>();
-    dbContext?.Database.Migrate();
+    dbContext?.Database.EnsureCreated();
 }
 
+app.UseCors();
 app.UseHttpsRedirection();
 app.UseAuthorization();
 app.MapControllers();

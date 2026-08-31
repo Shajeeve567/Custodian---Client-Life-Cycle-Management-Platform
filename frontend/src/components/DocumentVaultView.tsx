@@ -5,7 +5,7 @@ import { DocumentsApi } from '../services/api';
 
 export const DocumentVaultView: React.FC = () => {
     const { tenantId, userId } = useAuth();
-    const [engagementId, setEngagementId] = useState<string>('eng-1001');
+    const [engagementId, setEngagementId] = useState<string>('e689ce2c-b694-4860-aa0d-96d946283b71');
     const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
@@ -70,14 +70,13 @@ export const DocumentVaultView: React.FC = () => {
 
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('engagementId', engagementId);
         formData.append('type', docType);
         formData.append('issueDate', issueDate);
         formData.append('expiryDate', expiryDate);
-        formData.append('uploaderId', userId);
+        formData.append('uploaderId', userId || 'user-staff-1');
 
         try {
-            await DocumentsApi.uploadDocument(formData, tenantId);
+            await DocumentsApi.uploadDocument(engagementId, formData, tenantId);
             setUploadMessage('✅ Document uploaded successfully!');
             setFile(null);
             fetchDocuments();
@@ -208,7 +207,7 @@ export const DocumentVaultView: React.FC = () => {
                                             <td className="text-xs text-muted">{new Date(doc.uploadedAt).toLocaleDateString()}</td>
                                             <td>
                                                 <a
-                                                    href={DocumentsApi.getDownloadUrl(doc.documentId)}
+                                                    href={DocumentsApi.getDownloadUrl(engagementId, doc.documentId)}
                                                     target="_blank"
                                                     rel="noreferrer"
                                                     className="btn btn-sm btn-outline-primary"

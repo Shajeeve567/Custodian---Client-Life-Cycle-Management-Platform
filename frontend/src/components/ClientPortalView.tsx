@@ -5,7 +5,7 @@ import { WorkflowApi } from '../services/api';
 
 export const ClientPortalView: React.FC = () => {
     const { tenantId } = useAuth();
-    const [engagementId, setEngagementId] = useState<string>('eng-1001');
+    const [engagementId, setEngagementId] = useState<string>('e689ce2c-b694-4860-aa0d-96d946283b71');
     const [actions, setActions] = useState<ClientAction[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);

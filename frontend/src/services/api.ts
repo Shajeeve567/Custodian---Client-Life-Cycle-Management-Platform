@@ -1,5 +1,6 @@
 import {
     Engagement,
+    EngagementStatus,
     CreateEngagementRequest,
     ClientAction,
     CreateClientActionRequest,
@@ -8,10 +9,10 @@ import {
 } from '../types';
 
 const API_BASE = {
-    IDENTITY: 'http://localhost:5001/api',
-    WORKFLOW: 'http://localhost:5002/api',
-    AUDIT: 'http://localhost:5003/api',
-    DOCUMENTS: 'http://localhost:5004/api',
+    IDENTITY: 'http://localhost:5281/api',
+    WORKFLOW: 'http://localhost:5225/api',
+    AUDIT: 'http://localhost:5051/api',
+    DOCUMENTS: 'http://localhost:5171/api',
 };
 
 function getHeaders(tenantId: string = 'tenant-alpha', token?: string): HeadersInit {
@@ -44,13 +45,16 @@ export const WorkflowApi = {
         return res.json();
     },
 
-    async updateStatus(engagementId: string, status: string, tenantId: string): Promise<Engagement> {
+    async updateStatus(engagementId: string, status: EngagementStatus, tenantId: string): Promise<Engagement> {
         const res = await fetch(`${API_BASE.WORKFLOW}/engagements/${engagementId}/status`, {
             method: 'PUT',
             headers: getHeaders(tenantId),
-            body: JSON.stringify({ status }),
+            body: JSON.stringify({ tenantId, status }),
         });
-        if (!res.ok) throw new Error('Failed to update engagement status');
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(err || 'Failed to update engagement status');
+        }
         return res.json();
     },
 
@@ -120,8 +124,8 @@ export const DocumentsApi = {
         return res.json();
     },
 
-    async uploadDocument(formData: FormData, tenantId: string): Promise<DocumentMetadata> {
-        const res = await fetch(`${API_BASE.DOCUMENTS}/upload`, {
+    async uploadDocument(engagementId: string, formData: FormData, tenantId: string): Promise<DocumentMetadata> {
+        const res = await fetch(`${API_BASE.DOCUMENTS}/engagements/${engagementId}/documents`, {
             method: 'POST',
             headers: {
                 'X-Tenant-Id': tenantId,
@@ -135,7 +139,7 @@ export const DocumentsApi = {
         return res.json();
     },
 
-    getDownloadUrl(documentId: string): string {
-        return `${API_BASE.DOCUMENTS}/${documentId}/download`;
+    getDownloadUrl(engagementId: string, documentId: string): string {
+        return `${API_BASE.DOCUMENTS}/engagements/${engagementId}/documents/${documentId}/download`;
     }
 };

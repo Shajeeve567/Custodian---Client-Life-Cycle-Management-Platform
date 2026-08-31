@@ -8,7 +8,7 @@ export interface UserProfile {
     tenantId: string;
 }
 
-export type EngagementStatus = 'Draft' | 'InProgress' | 'Closed';
+export type EngagementStatus = 'Draft' | 'Started' | 'Closed' | 'Cancelled';
 
 export interface Engagement {
     engagementId: string;

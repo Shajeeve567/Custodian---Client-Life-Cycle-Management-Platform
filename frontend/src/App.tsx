@@ -10,7 +10,7 @@ import './App.css';
 
 const MainAppContent: React.FC = () => {
     const [activeTab, setActiveTab] = useState<string>('engagements');
-    const [engagementId] = useState<string>('eng-1001');
+    const [engagementId] = useState<string>('e689ce2c-b694-4860-aa0d-96d946283b71');
     const { tenantId, role } = useAuth();
 
     return (

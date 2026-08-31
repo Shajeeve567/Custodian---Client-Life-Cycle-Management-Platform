@@ -12,9 +12,12 @@ interface StaffActionHistoryViewProps {
 export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
     engagementId,
     tenantId,
-    baseUrl = 'http://localhost:5001',
+    baseUrl = 'http://localhost:5225',
     isClientViewInitial = false,
 }) => {
+    const [currentEngagementId, setCurrentEngagementId] = useState<string>(
+        engagementId && engagementId !== 'eng-1001' ? engagementId : 'e689ce2c-b694-4860-aa0d-96d946283b71'
+    );
     const [actions, setActions] = useState<ClientActionResponse[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
@@ -24,11 +27,12 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
     const [staffActorName, setStaffActorName] = useState<string>('Staff Admin');
 
     const fetchActionHistory = useCallback(async () => {
+        if (!currentEngagementId) return;
         setLoading(true);
         setError(null);
 
         try {
-            let url = `${baseUrl}/api/engagements/${engagementId}/actions?isClientView=${isClientView}`;
+            let url = `${baseUrl}/api/engagements/${currentEngagementId}/actions?isClientView=${isClientView}`;
             if (statusFilter !== 'All') {
                 url += `&status=${encodeURIComponent(statusFilter)}`;
             }
@@ -42,7 +46,8 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
             });
 
             if (!response.ok) {
-                throw new Error(`Failed to load action history: HTTP ${response.status}`);
+                const text = await response.text();
+                throw new Error(text || `Failed to load action history: HTTP ${response.status}`);
             }
 
             const data: ClientActionResponse[] = await response.json();
@@ -52,7 +57,7 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
         } finally {
             setLoading(false);
         }
-    }, [engagementId, tenantId, baseUrl, isClientView, statusFilter]);
+    }, [currentEngagementId, tenantId, baseUrl, isClientView, statusFilter]);
 
     useEffect(() => {
         fetchActionHistory();
@@ -62,7 +67,7 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
         setCompletingId(actionId);
         try {
             const response = await fetch(
-                `${baseUrl}/api/engagements/${engagementId}/actions/${actionId}/complete`,
+                `${baseUrl}/api/engagements/${currentEngagementId}/actions/${actionId}/complete`,
                 {
                     method: 'PUT',
                     headers: {
@@ -124,6 +129,19 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
                 </div>
 
                 <div className="action-history-controls">
+                    {/* Engagement ID Picker */}
+                    <div className="control-group">
+                        <label htmlFor="engagement-id-input">Engagement ID:</label>
+                        <input
+                            id="engagement-id-input"
+                            type="text"
+                            value={currentEngagementId}
+                            onChange={(e) => setCurrentEngagementId(e.target.value)}
+                            className="filter-select font-mono"
+                            placeholder="e.g. GUID"
+                        />
+                    </div>
+
                     {/* Status Filter */}
                     <div className="control-group">
                         <label htmlFor="status-filter">Filter Status:</label>

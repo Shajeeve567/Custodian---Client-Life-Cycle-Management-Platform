@@ -7,6 +7,15 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add controllers & services
 builder.Services.AddControllers();
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
 builder.Services.AddSingleton<IDocumentValidator, DocumentValidator>();
 builder.Services.AddScoped<IStorageService, LocalStorageService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
@@ -39,7 +48,8 @@ using (var scope = app.Services.CreateScope())
     dbContext?.Database.Migrate();
 }
 
-app.UseHttpsRedirection();
+app.UseCors();
+// app.UseHttpsRedirection();
 app.UseAuthorization();
 app.MapControllers();
 

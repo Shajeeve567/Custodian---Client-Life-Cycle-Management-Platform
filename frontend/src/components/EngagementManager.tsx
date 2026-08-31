@@ -73,8 +73,9 @@ export const EngagementManager: React.FC = () => {
     const getStatusBadge = (status: EngagementStatus) => {
         switch (status) {
             case 'Draft': return <span className="badge badge-draft">📝 Draft</span>;
-            case 'InProgress': return <span className="badge badge-inprogress">⚡ In Progress</span>;
+            case 'Started': return <span className="badge badge-inprogress">⚡ Started</span>;
             case 'Closed': return <span className="badge badge-closed">🔒 Closed</span>;
+            case 'Cancelled': return <span className="badge badge-danger">🚫 Cancelled</span>;
         }
     };
 
@@ -132,12 +133,12 @@ export const EngagementManager: React.FC = () => {
                                         {eng.status === 'Draft' && (
                                             <button
                                                 className="btn btn-sm btn-outline-success"
-                                                onClick={() => handleStatusChange(eng.engagementId, 'InProgress')}
+                                                onClick={() => handleStatusChange(eng.engagementId, 'Started')}
                                             >
                                                 Start Lifecycle
                                             </button>
                                         )}
-                                        {eng.status === 'InProgress' && (
+                                        {eng.status === 'Started' && (
                                             <button
                                                 className="btn btn-sm btn-outline-warning"
                                                 onClick={() => handleStatusChange(eng.engagementId, 'Closed')}
