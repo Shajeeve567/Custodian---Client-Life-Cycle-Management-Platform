@@ -51,6 +51,7 @@ using (var scope = app.Services.CreateScope())
 app.UseCors();
 // app.UseHttpsRedirection();
 app.UseAuthorization();
+app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Documents Service" }));
 app.MapControllers();
 
 app.Run();
