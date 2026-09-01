@@ -1,0 +1,36 @@
+# .NET build output
+bin/
+obj/
+[Bb]in/
+[Oo]bj/
+
+# Frontend
+node_modules/
+dist/
+frontend/dist/
+
+# Secrets — never commit these
+.env
+*.env.local
+appsettings*.Development.json
+appsettings*.Local.json
+**/appsettings.Development.json
+**/appsettings.Local.json
+
+# Local Uploads Storage
+uploads/
+**/uploads/
+
+# AI Agent Handover Notes & Scratch Files
+AGENT_HANDOVER_KNOWLEDGE.md
+*.handover.md
+
+# VS / VS Code / IDE junk
+.vs/
+.vscode/
+*.user
+*.suo
+
+# OS
+.DS_Store
+Thumbs.db
