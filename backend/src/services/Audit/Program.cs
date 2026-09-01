@@ -58,6 +58,7 @@ app.UseCors();
 app.UseHttpsRedirection();
 app.UseAuthorization();
 
+app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Audit Service" }));
 app.MapControllers();
 
 app.Run();
