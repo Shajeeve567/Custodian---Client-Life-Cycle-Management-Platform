@@ -45,7 +45,14 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
                 >
                     📜 Genesis Audit Log
                 </button>
+                <button
+                    className={`nav-btn ${activeTab === 'identity' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('identity')}
+                >
+                    🔐 Identity & Auth
+                </button>
             </nav>
+
 
             <div className="navbar-controls">
                 <div className="control-group">

@@ -6,6 +6,7 @@ import { StaffActionHistoryView } from './components/StaffActionHistoryView';
 import { ClientPortalView } from './components/ClientPortalView';
 import { DocumentVaultView } from './components/DocumentVaultView';
 import { AuditLogView } from './components/AuditLogView';
+import { LoginView } from './components/LoginView';
 import './App.css';
 
 const MainAppContent: React.FC = () => {
@@ -26,10 +27,12 @@ const MainAppContent: React.FC = () => {
                 )}
                 {activeTab === 'documents' && <DocumentVaultView />}
                 {activeTab === 'audit' && <AuditLogView />}
+                {activeTab === 'identity' && <LoginView />}
             </main>
         </div>
     );
 };
+
 
 export const App: React.FC = () => {
     return (

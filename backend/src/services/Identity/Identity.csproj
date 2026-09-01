@@ -4,7 +4,9 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <RollForward>Major</RollForward>
     <UserSecretsId>08abf8af-5636-4e6f-9134-e6e7626e0064</UserSecretsId>
+
   </PropertyGroup>
 
   <ItemGroup>

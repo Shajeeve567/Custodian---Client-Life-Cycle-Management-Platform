@@ -5,7 +5,10 @@ import {
     ClientAction,
     CreateClientActionRequest,
     AuditEvent,
-    DocumentMetadata
+    DocumentMetadata,
+    LoginRequest,
+    LoginResponse,
+    CreateUserRequest
 } from '../types';
 
 const API_BASE = {
@@ -14,6 +17,7 @@ const API_BASE = {
     AUDIT: 'http://localhost:5051/api',
     DOCUMENTS: 'http://localhost:5171/api',
 };
+
 
 function getHeaders(tenantId: string = 'tenant-alpha', token?: string): HeadersInit {
     const headers: Record<string, string> = {
@@ -143,3 +147,44 @@ export const DocumentsApi = {
         return `${API_BASE.DOCUMENTS}/engagements/${engagementId}/documents/${documentId}/download`;
     }
 };
+
+export const IdentityApi = {
+    async login(req: LoginRequest): Promise<LoginResponse> {
+        const res = await fetch(`${API_BASE.IDENTITY}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req),
+        });
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(err || 'Login failed. Invalid email or password.');
+        }
+        return res.json();
+    },
+
+    async selectWorkspace(tenantId: string, token: string): Promise<LoginResponse> {
+        const res = await fetch(`${API_BASE.IDENTITY}/auth/select-workspace/${tenantId}`, {
+            method: 'POST',
+            headers: getHeaders(tenantId, token),
+        });
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(err || 'Workspace selection failed.');
+        }
+        return res.json();
+    },
+
+    async register(req: CreateUserRequest, tenantId: string, token?: string): Promise<any> {
+        const res = await fetch(`${API_BASE.IDENTITY}/UserAccount/register`, {
+            method: 'POST',
+            headers: getHeaders(tenantId, token),
+            body: JSON.stringify(req),
+        });
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(err || 'User registration failed.');
+        }
+        return res.json();
+    }
+};
+

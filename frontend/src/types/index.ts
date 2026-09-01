@@ -8,6 +8,23 @@ export interface UserProfile {
     tenantId: string;
 }
 
+export interface LoginRequest {
+    email: string;
+    password: string;
+}
+
+export interface LoginResponse {
+    token: string;
+    expiresInMinutes: number;
+}
+
+export interface CreateUserRequest {
+    email: string;
+    password: string;
+    role: UserRole;
+}
+
+
 export type EngagementStatus = 'Draft' | 'Started' | 'Closed' | 'Cancelled';
 
 export interface Engagement {
