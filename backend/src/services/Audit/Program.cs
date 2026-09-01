@@ -57,7 +57,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.UseCors();
-app.UseHttpsRedirection();
+// app.UseHttpsRedirection();
 app.UseAuthorization();
 
 app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Audit Service" }));
