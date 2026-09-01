@@ -102,7 +102,7 @@ public class AuthControllerTests
             Id = userId, 
             Memberships = new List<TenantMembership>() // Empty memberships
         };
-        _userRepoMock.Setup(r => r.GetByIdGlobalAsync(userId, It.IsAny<CancellationToken>()))
+        _userRepoMock.Setup(r => r.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(user);
 
         // Mock HttpContext User
@@ -116,7 +116,7 @@ public class AuthControllerTests
         };
 
         // Act
-        var result = await _controller.SelectWorkspace(tenantId, CancellationToken.None);
+        var result = await _controller.SelectWorkspace(tenantId.ToString(), CancellationToken.None);
 
         // Assert
         Assert.IsType<ForbidResult>(result.Result);

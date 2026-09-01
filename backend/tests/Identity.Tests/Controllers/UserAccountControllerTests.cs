@@ -11,6 +11,7 @@ namespace Identity.Tests.Controllers;
 public class UserAccountControllerTests
 {
     private readonly Mock<IUserAccountRepository> _userRepoMock;
+    private readonly Mock<ITenantRepository> _tenantRepoMock;
     private readonly TenantContext _tenantContext;
     private readonly UserAccountController _controller;
     private readonly Guid _tenantId = Guid.NewGuid();
@@ -18,8 +19,9 @@ public class UserAccountControllerTests
     public UserAccountControllerTests()
     {
         _userRepoMock = new Mock<IUserAccountRepository>();
+        _tenantRepoMock = new Mock<ITenantRepository>();
         _tenantContext = new TenantContext { TenantId = _tenantId.ToString() };
-        _controller = new UserAccountController(_userRepoMock.Object, _tenantContext);
+        _controller = new UserAccountController(_userRepoMock.Object, _tenantRepoMock.Object, _tenantContext);
     }
 
     [Fact]
