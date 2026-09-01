@@ -1,0 +1,41 @@
+name: Deploy — Workflow Service
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/src/services/Workflow/**'
+      - '.github/workflows/deploy-workflow.yml'
+
+jobs:
+  deploy:
+    name: Build & Deploy Workflow Service
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore backend/src/services/Workflow
+
+      - name: Build
+        run: dotnet build backend/src/services/Workflow --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test backend/src/services/Workflow --no-build --configuration Release --verbosity normal
+
+      - name: Publish
+        run: dotnet publish backend/src/services/Workflow --configuration Release --output ./publish/workflow
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WORKFLOW_APP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WORKFLOW_PUBLISH_PROFILE }}
+          package: ./publish/workflow

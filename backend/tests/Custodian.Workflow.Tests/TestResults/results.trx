@@ -1,0 +1,421 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="58bc21c5-529c-4cd8-b711-1c1e8fed2de6" name="lap.lk@DESKTOP-0EIUHJG 2026-08-24 20:42:10" runUser="DESKTOP-0EIUHJG\lap.lk" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-08-24T20:42:10.0709066+05:30" queuing="2026-08-24T20:42:10.0709075+05:30" start="2026-08-24T20:42:09.1894242+05:30" finish="2026-08-24T20:42:10.9887092+05:30" />
+  <TestSettings name="default" id="a7de4bec-2c6e-4617-8b2b-3e601ca1177d">
+    <Deployment runDeploymentRoot="lap.lk_DESKTOP-0EIUHJG_2026-08-24_20_42_10" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="5c8a9c03-85b2-459b-a5b7-423c26af4920" testId="8d7da0cd-fb06-d0c1-2431-7cf68a7a0d53" testName="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.CanDelete_NonDraftEngagements_ShouldReturnFalse(status: Started)" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0000160" startTime="2026-08-24T20:42:09.9722810+05:30" endTime="2026-08-24T20:42:09.9722810+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5c8a9c03-85b2-459b-a5b7-423c26af4920" />
+    <UnitTestResult executionId="c9b69383-ba1c-4dc0-9552-33e5430b6b04" testId="0752859b-dbef-7b5f-2dfb-bbad5bb4f9a3" testName="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_IllegalTransitions_ShouldReturnFalse(current: Cancelled, newStatus: Closed)" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0001147" startTime="2026-08-24T20:42:10.0200372+05:30" endTime="2026-08-24T20:42:10.0200373+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c9b69383-ba1c-4dc0-9552-33e5430b6b04" />
+    <UnitTestResult executionId="e89873d1-8283-4916-bf10-2aede79762a4" testId="8432688f-5eaa-bf10-9905-82ff6d7c6a0a" testName="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_StartedOrClosedStatus_ShouldReturn409Conflict(status: Started)" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0010875" startTime="2026-08-24T20:42:10.0537036+05:30" endTime="2026-08-24T20:42:10.0537039+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e89873d1-8283-4916-bf10-2aede79762a4">
+      <Output>
+        <ErrorInfo>
+          <Message>System.NullReferenceException : Object reference not set to an instance of an object.</Message>
+          <StackTrace>   at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 163&#xD;
+   at Custodian.Workflow.Controllers.EngagementsController.DeleteEngagement(Guid id, String tenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 130&#xD;
+   at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_StartedOrClosedStatus_ShouldReturn409Conflict(EngagementStatus status) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs:line 270&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="57b6b55b-ed72-4bdf-91d8-c41580d6737e" testId="a4f8afe3-f0e8-0fdb-2283-b899a026c07f" testName="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.UpdateStatus_IllegalTransition_ShouldReturn400BadRequest" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0042339" startTime="2026-08-24T20:42:10.0388514+05:30" endTime="2026-08-24T20:42:10.0388517+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="57b6b55b-ed72-4bdf-91d8-c41580d6737e">
+      <Output>
+        <ErrorInfo>
+          <Message>System.NullReferenceException : Object reference not set to an instance of an object.</Message>
+          <StackTrace>   at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 163&#xD;
+   at Custodian.Workflow.Controllers.EngagementsController.UpdateStatus(Guid id, UpdateEngagementStatusRequest request) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 90&#xD;
+   at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.UpdateStatus_IllegalTransition_ShouldReturn400BadRequest() in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs:line 219&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="bfbc6ded-8cf5-48ff-9de0-88a3245c2755" testId="b8f6c56d-ef1c-cef9-59f6-a25e7aa8b6cb" testName="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagementById_NonExistentOrCrossTenant_ShouldReturn404NotFound" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0264038" startTime="2026-08-24T20:42:10.0326634+05:30" endTime="2026-08-24T20:42:10.0326638+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="bfbc6ded-8cf5-48ff-9de0-88a3245c2755">
+      <Output>
+        <ErrorInfo>
+          <Message>System.NullReferenceException : Object reference not set to an instance of an object.</Message>
+          <StackTrace>   at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 163&#xD;
+   at Custodian.Workflow.Controllers.EngagementsController.GetEngagementById(Guid id, String tenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 52&#xD;
+   at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagementById_NonExistentOrCrossTenant_ShouldReturn404NotFound() in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs:line 135&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="dda90203-e05f-40a3-8108-2758233ea4fc" testId="55eb6a63-837e-3385-d433-d0041d33b431" testName="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagements_ValidTenant_ShouldReturn200OKWithList" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0014628" startTime="2026-08-24T20:42:10.0845490+05:30" endTime="2026-08-24T20:42:10.0845492+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="dda90203-e05f-40a3-8108-2758233ea4fc">
+      <Output>
+        <ErrorInfo>
+          <Message>System.NullReferenceException : Object reference not set to an instance of an object.</Message>
+          <StackTrace>   at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 163&#xD;
+   at Custodian.Workflow.Controllers.EngagementsController.GetEngagements(String tenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 71&#xD;
+   at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagements_ValidTenant_ShouldReturn200OKWithList() in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs:line 160&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="f244acf8-8f6d-4bbc-9e69-c13111a0c884" testId="552a7a31-f363-e37c-9f46-ea71d92635af" testName="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_IllegalTransitions_ShouldReturnFalse(current: Cancelled, newStatus: Started)" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0000069" startTime="2026-08-24T20:42:10.0207154+05:30" endTime="2026-08-24T20:42:10.0207155+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f244acf8-8f6d-4bbc-9e69-c13111a0c884" />
+    <UnitTestResult executionId="3f9db440-14ca-447a-ad60-63ac4b91029f" testId="723bd3e1-5bfd-4b81-0507-29ba01199eef" testName="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_IllegalTransitions_ShouldReturnFalse(current: Closed, newStatus: Started)" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0002575" startTime="2026-08-24T20:42:10.0206679+05:30" endTime="2026-08-24T20:42:10.0206680+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3f9db440-14ca-447a-ad60-63ac4b91029f" />
+    <UnitTestResult executionId="1c3f8c0e-c86d-4db1-a984-c57d35f31a39" testId="a8ae9c1c-d70c-6e1e-0f44-510358535a11" testName="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_StartedOrClosedStatus_ShouldReturn409Conflict(status: Closed)" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0032166" startTime="2026-08-24T20:42:10.0516383+05:30" endTime="2026-08-24T20:42:10.0516386+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1c3f8c0e-c86d-4db1-a984-c57d35f31a39">
+      <Output>
+        <ErrorInfo>
+          <Message>System.NullReferenceException : Object reference not set to an instance of an object.</Message>
+          <StackTrace>   at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 163&#xD;
+   at Custodian.Workflow.Controllers.EngagementsController.DeleteEngagement(Guid id, String tenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 130&#xD;
+   at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_StartedOrClosedStatus_ShouldReturn409Conflict(EngagementStatus status) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs:line 270&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="5cdf4761-2923-48d9-bccf-cae90371f657" testId="6ce59c83-9208-665a-d5b9-4a4a918e5c1e" testName="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.UpdateStatus_ValidTransition_ShouldReturn200OK" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0101301" startTime="2026-08-24T20:42:10.0479562+05:30" endTime="2026-08-24T20:42:10.0479565+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5cdf4761-2923-48d9-bccf-cae90371f657">
+      <Output>
+        <ErrorInfo>
+          <Message>System.NullReferenceException : Object reference not set to an instance of an object.</Message>
+          <StackTrace>   at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 163&#xD;
+   at Custodian.Workflow.Controllers.EngagementsController.UpdateStatus(Guid id, UpdateEngagementStatusRequest request) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 90&#xD;
+   at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.UpdateStatus_ValidTransition_ShouldReturn200OK() in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs:line 192&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="f4709b2c-b32b-4977-86a7-8c69ec8cccd2" testId="8ad6a7a1-04db-f733-a02a-81e2ba2106a4" testName="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests.UpdateAsync_ValidChanges_ShouldUpdateDatabase" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0069438" startTime="2026-08-24T20:42:10.8670298+05:30" endTime="2026-08-24T20:42:10.8670302+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f4709b2c-b32b-4977-86a7-8c69ec8cccd2" />
+    <UnitTestResult executionId="f760ac14-44b9-4685-8f13-286c1c554b50" testId="06f188c9-ce6d-160e-7f80-b35e2c752e3a" testName="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_AllowedTransitions_ShouldReturnTrue(current: Draft, newStatus: Cancelled)" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0000087" startTime="2026-08-24T20:42:09.9726142+05:30" endTime="2026-08-24T20:42:09.9726142+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f760ac14-44b9-4685-8f13-286c1c554b50" />
+    <UnitTestResult executionId="d00da9bd-ccf5-4f54-aba3-016ed618dad8" testId="9385805b-7c57-313a-84fb-fb3b81fa6e90" testName="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.CanDelete_NonDraftEngagements_ShouldReturnFalse(status: Cancelled)" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0247894" startTime="2026-08-24T20:42:09.9625836+05:30" endTime="2026-08-24T20:42:09.9626181+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d00da9bd-ccf5-4f54-aba3-016ed618dad8">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.False() Failure&#xD;
+Expected: False&#xD;
+Actual:   True</Message>
+          <StackTrace>   at Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.CanDelete_NonDraftEngagements_ShouldReturnFalse(EngagementStatus status) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementLifecycleValidatorTests.cs:line 37&#xD;
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="a44dbfcb-45ff-4391-81ec-5d8514894b96" testId="25f1eb8f-425f-6afd-3919-a14b00724e95" testName="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests.CreateAsync_ValidEngagement_ShouldPersistInDatabase" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0083044" startTime="2026-08-24T20:42:10.8599570+05:30" endTime="2026-08-24T20:42:10.8599574+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a44dbfcb-45ff-4391-81ec-5d8514894b96" />
+    <UnitTestResult executionId="3b39b1cf-0011-4524-8412-636c2b08545d" testId="0dd33a1b-1183-38b5-2c38-ca772f58e153" testName="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_AllowedTransitions_ShouldReturnTrue(current: Started, newStatus: Closed)" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0004732" startTime="2026-08-24T20:42:09.9725431+05:30" endTime="2026-08-24T20:42:09.9725432+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3b39b1cf-0011-4524-8412-636c2b08545d" />
+    <UnitTestResult executionId="aecb95bd-897f-48f2-af1d-e9c7219b352f" testId="17cd1d80-d580-d29e-4247-2ab0fd687aaa" testName="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_IllegalTransitions_ShouldReturnFalse(current: Closed, newStatus: Draft)" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0000280" startTime="2026-08-24T20:42:10.0207448+05:30" endTime="2026-08-24T20:42:10.0207448+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="aecb95bd-897f-48f2-af1d-e9c7219b352f" />
+    <UnitTestResult executionId="cff0f6fd-b9bb-481a-aa53-759bae5f00d0" testId="9c74c540-8acb-cdac-fc39-cdef52567e81" testName="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests.GetByIdAsync_SameTenant_ShouldReturnEngagement" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0320280" startTime="2026-08-24T20:42:10.8515103+05:30" endTime="2026-08-24T20:42:10.8515105+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="cff0f6fd-b9bb-481a-aa53-759bae5f00d0" />
+    <UnitTestResult executionId="989face8-0a4c-4575-8bb8-597c3aeb4d82" testId="4d041839-9a69-9b2d-3cb3-942a719f4815" testName="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_AllowedTransitions_ShouldReturnTrue(current: Draft, newStatus: Started)" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0003809" startTime="2026-08-24T20:42:09.9725775+05:30" endTime="2026-08-24T20:42:09.9725775+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="989face8-0a4c-4575-8bb8-597c3aeb4d82" />
+    <UnitTestResult executionId="920785f4-00f0-48a9-8f86-bd6eecf3c3d2" testId="ba32b526-d296-6274-3181-6a1674e60179" testName="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.CanDelete_NonDraftEngagements_ShouldReturnFalse(status: Closed)" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0015870" startTime="2026-08-24T20:42:09.9715613+05:30" endTime="2026-08-24T20:42:09.9715616+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="920785f4-00f0-48a9-8f86-bd6eecf3c3d2" />
+    <UnitTestResult executionId="bb91a49e-4128-4a9c-a363-591ae60b6380" testId="409dd6e5-9c19-995f-1571-1c0f4e339142" testName="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.CanDelete_DraftEngagement_ShouldReturnTrue" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0001875" startTime="2026-08-24T20:42:10.0207913+05:30" endTime="2026-08-24T20:42:10.0207913+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="bb91a49e-4128-4a9c-a363-591ae60b6380" />
+    <UnitTestResult executionId="7c633a58-4577-4741-ade6-274ce55d195d" testId="f1aadba8-e0ab-3e2e-3855-812d9c4f9b0b" testName="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_AllowedTransitions_ShouldReturnTrue(current: Started, newStatus: Cancelled)" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0000024" startTime="2026-08-24T20:42:09.9726415+05:30" endTime="2026-08-24T20:42:09.9726415+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7c633a58-4577-4741-ade6-274ce55d195d" />
+    <UnitTestResult executionId="e14a036c-24d9-4b16-bc8c-1c41dbb7dbed" testId="2499b539-b3bb-2939-1ede-3e7ec8e0faa3" testName="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests.GetByIdAsync_DifferentTenant_ShouldReturnNull_RejectsCrossTenantAccess" computerName="DESKTOP-0EIUHJG" duration="00:00:00.8545132" startTime="2026-08-24T20:42:10.7303875+05:30" endTime="2026-08-24T20:42:10.7303881+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e14a036c-24d9-4b16-bc8c-1c41dbb7dbed" />
+    <UnitTestResult executionId="0c240ebe-0d61-4c3c-a6ec-6924f508d65b" testId="aa95e7b6-0681-f2ee-0aa3-313736230896" testName="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.CreateEngagement_ValidRequest_ShouldReturn201Created" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0026993" startTime="2026-08-24T20:42:10.0823770+05:30" endTime="2026-08-24T20:42:10.0823773+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="0c240ebe-0d61-4c3c-a6ec-6924f508d65b">
+      <Output>
+        <ErrorInfo>
+          <Message>System.NullReferenceException : Object reference not set to an instance of an object.</Message>
+          <StackTrace>   at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 163&#xD;
+   at Custodian.Workflow.Controllers.EngagementsController.CreateEngagement(CreateEngagementRequest request) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 28&#xD;
+   at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.CreateEngagement_ValidRequest_ShouldReturn201Created() in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs:line 63&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="7454af2f-ab86-443f-8979-507632d628b3" testId="61a820b7-5f25-a184-00e3-7adc7588d324" testName="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests.DeleteAsync_DraftEngagement_ShouldRemoveFromDatabase" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0428266" startTime="2026-08-24T20:42:10.9099522+05:30" endTime="2026-08-24T20:42:10.9099535+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7454af2f-ab86-443f-8979-507632d628b3" />
+    <UnitTestResult executionId="73e1933c-9b23-4241-a3ef-baebf8dc8470" testId="186fb495-1369-48d0-7995-4a1bfbedb54e" testName="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests.GetAllByTenantAsync_ShouldOnlyReturnRecordsForSpecificTenant" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0887660" startTime="2026-08-24T20:42:10.8194914+05:30" endTime="2026-08-24T20:42:10.8194919+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="73e1933c-9b23-4241-a3ef-baebf8dc8470" />
+    <UnitTestResult executionId="8b4404ab-c45b-4b09-bace-c33b02952298" testId="d5cfa975-4630-cd0c-e9e8-c177a438e3cf" testName="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagementById_ExistingId_ShouldReturn200OK" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0024088" startTime="2026-08-24T20:42:10.0872549+05:30" endTime="2026-08-24T20:42:10.0872552+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="8b4404ab-c45b-4b09-bace-c33b02952298">
+      <Output>
+        <ErrorInfo>
+          <Message>System.NullReferenceException : Object reference not set to an instance of an object.</Message>
+          <StackTrace>   at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 163&#xD;
+   at Custodian.Workflow.Controllers.EngagementsController.GetEngagementById(Guid id, String tenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 52&#xD;
+   at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagementById_ExistingId_ShouldReturn200OK() in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs:line 116&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="f2843413-6409-419d-9522-f489edebf3f2" testId="da501e4e-c1e9-2762-a7c1-fc1440c4b376" testName="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_SameStatus_ShouldReturnTrue" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0001262" startTime="2026-08-24T20:42:10.0208275+05:30" endTime="2026-08-24T20:42:10.0208276+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f2843413-6409-419d-9522-f489edebf3f2" />
+    <UnitTestResult executionId="ea24043d-99b4-470d-8cf4-67d37a9f4de7" testId="160d7e7b-d92c-cdfe-2fd8-1e02d769843f" testName="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.ResolveTenantId_JwtClaimPresent_ShouldOverrideQueryParameter" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0213793" startTime="2026-08-24T20:42:10.0786957+05:30" endTime="2026-08-24T20:42:10.0786962+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ea24043d-99b4-470d-8cf4-67d37a9f4de7" />
+    <UnitTestResult executionId="07da6d32-7db5-405f-bfe7-7d1368dbf215" testId="f26bd9f2-fd01-96c3-baeb-aa0299bffc93" testName="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.CreateEngagement_MissingTenantId_ShouldReturn400BadRequest" computerName="DESKTOP-0EIUHJG" duration="00:00:00.1385428" startTime="2026-08-24T20:42:10.0217426+05:30" endTime="2026-08-24T20:42:10.0217429+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="07da6d32-7db5-405f-bfe7-7d1368dbf215">
+      <Output>
+        <ErrorInfo>
+          <Message>System.NullReferenceException : Object reference not set to an instance of an object.</Message>
+          <StackTrace>   at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 163&#xD;
+   at Custodian.Workflow.Controllers.EngagementsController.CreateEngagement(CreateEngagementRequest request) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 28&#xD;
+   at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.CreateEngagement_MissingTenantId_ShouldReturn400BadRequest() in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs:line 87&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="96b9ab1b-18c4-47dd-877e-4ac0f636723d" testId="b7ea4cfc-caf2-8ecc-2fff-40a9087f704e" testName="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_DraftStatus_ShouldReturn24NoContent" computerName="DESKTOP-0EIUHJG" duration="00:00:00.0042778" startTime="2026-08-24T20:42:10.0577269+05:30" endTime="2026-08-24T20:42:10.0577270+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="96b9ab1b-18c4-47dd-877e-4ac0f636723d">
+      <Output>
+        <ErrorInfo>
+          <Message>System.NullReferenceException : Object reference not set to an instance of an object.</Message>
+          <StackTrace>   at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 163&#xD;
+   at Custodian.Workflow.Controllers.EngagementsController.DeleteEngagement(Guid id, String tenantId) in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs:line 130&#xD;
+   at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_DraftStatus_ShouldReturn24NoContent() in C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs:line 246&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.CanDelete_NonDraftEngagements_ShouldReturnFalse(status: Started)" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="8d7da0cd-fb06-d0c1-2431-7cf68a7a0d53">
+      <Execution id="5c8a9c03-85b2-459b-a5b7-423c26af4920" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests" name="CanDelete_NonDraftEngagements_ShouldReturnFalse" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.CreateEngagement_ValidRequest_ShouldReturn201Created" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="aa95e7b6-0681-f2ee-0aa3-313736230896">
+      <Execution id="0c240ebe-0d61-4c3c-a6ec-6924f508d65b" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests" name="CreateEngagement_ValidRequest_ShouldReturn201Created" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_AllowedTransitions_ShouldReturnTrue(current: Started, newStatus: Cancelled)" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="f1aadba8-e0ab-3e2e-3855-812d9c4f9b0b">
+      <Execution id="7c633a58-4577-4741-ade6-274ce55d195d" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests" name="IsValidTransition_AllowedTransitions_ShouldReturnTrue" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests.GetAllByTenantAsync_ShouldOnlyReturnRecordsForSpecificTenant" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="186fb495-1369-48d0-7995-4a1bfbedb54e">
+      <Execution id="73e1933c-9b23-4241-a3ef-baebf8dc8470" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests" name="GetAllByTenantAsync_ShouldOnlyReturnRecordsForSpecificTenant" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_AllowedTransitions_ShouldReturnTrue(current: Draft, newStatus: Cancelled)" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="06f188c9-ce6d-160e-7f80-b35e2c752e3a">
+      <Execution id="f760ac14-44b9-4685-8f13-286c1c554b50" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests" name="IsValidTransition_AllowedTransitions_ShouldReturnTrue" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.CanDelete_NonDraftEngagements_ShouldReturnFalse(status: Closed)" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="ba32b526-d296-6274-3181-6a1674e60179">
+      <Execution id="920785f4-00f0-48a9-8f86-bd6eecf3c3d2" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests" name="CanDelete_NonDraftEngagements_ShouldReturnFalse" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_StartedOrClosedStatus_ShouldReturn409Conflict(status: Closed)" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="a8ae9c1c-d70c-6e1e-0f44-510358535a11">
+      <Execution id="1c3f8c0e-c86d-4db1-a984-c57d35f31a39" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests" name="DeleteEngagement_StartedOrClosedStatus_ShouldReturn409Conflict" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests.UpdateAsync_ValidChanges_ShouldUpdateDatabase" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="8ad6a7a1-04db-f733-a02a-81e2ba2106a4">
+      <Execution id="f4709b2c-b32b-4977-86a7-8c69ec8cccd2" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests" name="UpdateAsync_ValidChanges_ShouldUpdateDatabase" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_IllegalTransitions_ShouldReturnFalse(current: Closed, newStatus: Started)" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="723bd3e1-5bfd-4b81-0507-29ba01199eef">
+      <Execution id="3f9db440-14ca-447a-ad60-63ac4b91029f" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests" name="IsValidTransition_IllegalTransitions_ShouldReturnFalse" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.UpdateStatus_ValidTransition_ShouldReturn200OK" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="6ce59c83-9208-665a-d5b9-4a4a918e5c1e">
+      <Execution id="5cdf4761-2923-48d9-bccf-cae90371f657" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests" name="UpdateStatus_ValidTransition_ShouldReturn200OK" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests.GetByIdAsync_DifferentTenant_ShouldReturnNull_RejectsCrossTenantAccess" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="2499b539-b3bb-2939-1ede-3e7ec8e0faa3">
+      <Execution id="e14a036c-24d9-4b16-bc8c-1c41dbb7dbed" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests" name="GetByIdAsync_DifferentTenant_ShouldReturnNull_RejectsCrossTenantAccess" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.ResolveTenantId_JwtClaimPresent_ShouldOverrideQueryParameter" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="160d7e7b-d92c-cdfe-2fd8-1e02d769843f">
+      <Execution id="ea24043d-99b4-470d-8cf4-67d37a9f4de7" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests" name="ResolveTenantId_JwtClaimPresent_ShouldOverrideQueryParameter" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.CanDelete_NonDraftEngagements_ShouldReturnFalse(status: Cancelled)" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="9385805b-7c57-313a-84fb-fb3b81fa6e90">
+      <Execution id="d00da9bd-ccf5-4f54-aba3-016ed618dad8" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests" name="CanDelete_NonDraftEngagements_ShouldReturnFalse" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_IllegalTransitions_ShouldReturnFalse(current: Cancelled, newStatus: Started)" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="552a7a31-f363-e37c-9f46-ea71d92635af">
+      <Execution id="f244acf8-8f6d-4bbc-9e69-c13111a0c884" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests" name="IsValidTransition_IllegalTransitions_ShouldReturnFalse" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_AllowedTransitions_ShouldReturnTrue(current: Draft, newStatus: Started)" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="4d041839-9a69-9b2d-3cb3-942a719f4815">
+      <Execution id="989face8-0a4c-4575-8bb8-597c3aeb4d82" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests" name="IsValidTransition_AllowedTransitions_ShouldReturnTrue" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagementById_ExistingId_ShouldReturn200OK" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="d5cfa975-4630-cd0c-e9e8-c177a438e3cf">
+      <Execution id="8b4404ab-c45b-4b09-bace-c33b02952298" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests" name="GetEngagementById_ExistingId_ShouldReturn200OK" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_IllegalTransitions_ShouldReturnFalse(current: Cancelled, newStatus: Closed)" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="0752859b-dbef-7b5f-2dfb-bbad5bb4f9a3">
+      <Execution id="c9b69383-ba1c-4dc0-9552-33e5430b6b04" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests" name="IsValidTransition_IllegalTransitions_ShouldReturnFalse" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests.DeleteAsync_DraftEngagement_ShouldRemoveFromDatabase" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="61a820b7-5f25-a184-00e3-7adc7588d324">
+      <Execution id="7454af2f-ab86-443f-8979-507632d628b3" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests" name="DeleteAsync_DraftEngagement_ShouldRemoveFromDatabase" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_StartedOrClosedStatus_ShouldReturn409Conflict(status: Started)" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="8432688f-5eaa-bf10-9905-82ff6d7c6a0a">
+      <Execution id="e89873d1-8283-4916-bf10-2aede79762a4" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests" name="DeleteEngagement_StartedOrClosedStatus_ShouldReturn409Conflict" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagementById_NonExistentOrCrossTenant_ShouldReturn404NotFound" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="b8f6c56d-ef1c-cef9-59f6-a25e7aa8b6cb">
+      <Execution id="bfbc6ded-8cf5-48ff-9de0-88a3245c2755" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests" name="GetEngagementById_NonExistentOrCrossTenant_ShouldReturn404NotFound" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_DraftStatus_ShouldReturn24NoContent" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="b7ea4cfc-caf2-8ecc-2fff-40a9087f704e">
+      <Execution id="96b9ab1b-18c4-47dd-877e-4ac0f636723d" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests" name="DeleteEngagement_DraftStatus_ShouldReturn24NoContent" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_IllegalTransitions_ShouldReturnFalse(current: Closed, newStatus: Draft)" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="17cd1d80-d580-d29e-4247-2ab0fd687aaa">
+      <Execution id="aecb95bd-897f-48f2-af1d-e9c7219b352f" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests" name="IsValidTransition_IllegalTransitions_ShouldReturnFalse" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests.GetByIdAsync_SameTenant_ShouldReturnEngagement" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="9c74c540-8acb-cdac-fc39-cdef52567e81">
+      <Execution id="cff0f6fd-b9bb-481a-aa53-759bae5f00d0" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests" name="GetByIdAsync_SameTenant_ShouldReturnEngagement" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests.CreateAsync_ValidEngagement_ShouldPersistInDatabase" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="25f1eb8f-425f-6afd-3919-a14b00724e95">
+      <Execution id="a44dbfcb-45ff-4391-81ec-5d8514894b96" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Integration.EngagementRepositoryTests" name="CreateAsync_ValidEngagement_ShouldPersistInDatabase" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.UpdateStatus_IllegalTransition_ShouldReturn400BadRequest" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="a4f8afe3-f0e8-0fdb-2283-b899a026c07f">
+      <Execution id="57b6b55b-ed72-4bdf-91d8-c41580d6737e" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests" name="UpdateStatus_IllegalTransition_ShouldReturn400BadRequest" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.CreateEngagement_MissingTenantId_ShouldReturn400BadRequest" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="f26bd9f2-fd01-96c3-baeb-aa0299bffc93">
+      <Execution id="07da6d32-7db5-405f-bfe7-7d1368dbf215" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests" name="CreateEngagement_MissingTenantId_ShouldReturn400BadRequest" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_SameStatus_ShouldReturnTrue" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="da501e4e-c1e9-2762-a7c1-fc1440c4b376">
+      <Execution id="f2843413-6409-419d-9522-f489edebf3f2" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests" name="IsValidTransition_SameStatus_ShouldReturnTrue" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagements_ValidTenant_ShouldReturn200OKWithList" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="55eb6a63-837e-3385-d433-d0041d33b431">
+      <Execution id="dda90203-e05f-40a3-8108-2758233ea4fc" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests" name="GetEngagements_ValidTenant_ShouldReturn200OKWithList" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.IsValidTransition_AllowedTransitions_ShouldReturnTrue(current: Started, newStatus: Closed)" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="0dd33a1b-1183-38b5-2c38-ca772f58e153">
+      <Execution id="3b39b1cf-0011-4524-8412-636c2b08545d" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests" name="IsValidTransition_AllowedTransitions_ShouldReturnTrue" />
+    </UnitTest>
+    <UnitTest name="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.CanDelete_DraftEngagement_ShouldReturnTrue" storage="c:\cs\y3s1\csp\project\custodian---client-life-cycle-management-platform\backend\tests\custodian.workflow.tests\bin\debug\net9.0\custodian.workflow.tests.dll" id="409dd6e5-9c19-995f-1571-1c0f4e339142">
+      <Execution id="bb91a49e-4128-4a9c-a363-591ae60b6380" />
+      <TestMethod codeBase="C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\bin\Debug\net9.0\Custodian.Workflow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests" name="CanDelete_DraftEngagement_ShouldReturnTrue" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="8d7da0cd-fb06-d0c1-2431-7cf68a7a0d53" executionId="5c8a9c03-85b2-459b-a5b7-423c26af4920" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="0752859b-dbef-7b5f-2dfb-bbad5bb4f9a3" executionId="c9b69383-ba1c-4dc0-9552-33e5430b6b04" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8432688f-5eaa-bf10-9905-82ff6d7c6a0a" executionId="e89873d1-8283-4916-bf10-2aede79762a4" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a4f8afe3-f0e8-0fdb-2283-b899a026c07f" executionId="57b6b55b-ed72-4bdf-91d8-c41580d6737e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b8f6c56d-ef1c-cef9-59f6-a25e7aa8b6cb" executionId="bfbc6ded-8cf5-48ff-9de0-88a3245c2755" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="55eb6a63-837e-3385-d433-d0041d33b431" executionId="dda90203-e05f-40a3-8108-2758233ea4fc" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="552a7a31-f363-e37c-9f46-ea71d92635af" executionId="f244acf8-8f6d-4bbc-9e69-c13111a0c884" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="723bd3e1-5bfd-4b81-0507-29ba01199eef" executionId="3f9db440-14ca-447a-ad60-63ac4b91029f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a8ae9c1c-d70c-6e1e-0f44-510358535a11" executionId="1c3f8c0e-c86d-4db1-a984-c57d35f31a39" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6ce59c83-9208-665a-d5b9-4a4a918e5c1e" executionId="5cdf4761-2923-48d9-bccf-cae90371f657" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8ad6a7a1-04db-f733-a02a-81e2ba2106a4" executionId="f4709b2c-b32b-4977-86a7-8c69ec8cccd2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="06f188c9-ce6d-160e-7f80-b35e2c752e3a" executionId="f760ac14-44b9-4685-8f13-286c1c554b50" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="9385805b-7c57-313a-84fb-fb3b81fa6e90" executionId="d00da9bd-ccf5-4f54-aba3-016ed618dad8" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="25f1eb8f-425f-6afd-3919-a14b00724e95" executionId="a44dbfcb-45ff-4391-81ec-5d8514894b96" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="0dd33a1b-1183-38b5-2c38-ca772f58e153" executionId="3b39b1cf-0011-4524-8412-636c2b08545d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="17cd1d80-d580-d29e-4247-2ab0fd687aaa" executionId="aecb95bd-897f-48f2-af1d-e9c7219b352f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="9c74c540-8acb-cdac-fc39-cdef52567e81" executionId="cff0f6fd-b9bb-481a-aa53-759bae5f00d0" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4d041839-9a69-9b2d-3cb3-942a719f4815" executionId="989face8-0a4c-4575-8bb8-597c3aeb4d82" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="ba32b526-d296-6274-3181-6a1674e60179" executionId="920785f4-00f0-48a9-8f86-bd6eecf3c3d2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="409dd6e5-9c19-995f-1571-1c0f4e339142" executionId="bb91a49e-4128-4a9c-a363-591ae60b6380" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f1aadba8-e0ab-3e2e-3855-812d9c4f9b0b" executionId="7c633a58-4577-4741-ade6-274ce55d195d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2499b539-b3bb-2939-1ede-3e7ec8e0faa3" executionId="e14a036c-24d9-4b16-bc8c-1c41dbb7dbed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="aa95e7b6-0681-f2ee-0aa3-313736230896" executionId="0c240ebe-0d61-4c3c-a6ec-6924f508d65b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="61a820b7-5f25-a184-00e3-7adc7588d324" executionId="7454af2f-ab86-443f-8979-507632d628b3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="186fb495-1369-48d0-7995-4a1bfbedb54e" executionId="73e1933c-9b23-4241-a3ef-baebf8dc8470" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d5cfa975-4630-cd0c-e9e8-c177a438e3cf" executionId="8b4404ab-c45b-4b09-bace-c33b02952298" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="da501e4e-c1e9-2762-a7c1-fc1440c4b376" executionId="f2843413-6409-419d-9522-f489edebf3f2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="160d7e7b-d92c-cdfe-2fd8-1e02d769843f" executionId="ea24043d-99b4-470d-8cf4-67d37a9f4de7" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f26bd9f2-fd01-96c3-baeb-aa0299bffc93" executionId="07da6d32-7db5-405f-bfe7-7d1368dbf215" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b7ea4cfc-caf2-8ecc-2fff-40a9087f704e" executionId="96b9ab1b-18c4-47dd-877e-4ac0f636723d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="30" executed="30" passed="19" failed="11" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 10.0.10)&#xD;
+[xUnit.net 00:00:00.08]   Discovering: Custodian.Workflow.Tests&#xD;
+[xUnit.net 00:00:00.13]   Discovered:  Custodian.Workflow.Tests&#xD;
+[xUnit.net 00:00:00.13]   Starting:    Custodian.Workflow.Tests&#xD;
+[xUnit.net 00:00:00.28]       Assert.False() Failure&#xD;
+[xUnit.net 00:00:00.28]       Expected: False&#xD;
+[xUnit.net 00:00:00.28]       Actual:   True&#xD;
+[xUnit.net 00:00:00.28]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.28]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementLifecycleValidatorTests.cs(37,0): at Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.CanDelete_NonDraftEngagements_ShouldReturnFalse(EngagementStatus status)&#xD;
+[xUnit.net 00:00:00.28]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+[xUnit.net 00:00:00.28]            at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)&#xD;
+[xUnit.net 00:00:00.34]       System.NullReferenceException : Object reference not set to an instance of an object.&#xD;
+[xUnit.net 00:00:00.34]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.34]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(163,0): at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId)&#xD;
+[xUnit.net 00:00:00.34]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(28,0): at Custodian.Workflow.Controllers.EngagementsController.CreateEngagement(CreateEngagementRequest request)&#xD;
+[xUnit.net 00:00:00.34]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs(87,0): at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.CreateEngagement_MissingTenantId_ShouldReturn400BadRequest()&#xD;
+[xUnit.net 00:00:00.34]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:00.35]       System.NullReferenceException : Object reference not set to an instance of an object.&#xD;
+[xUnit.net 00:00:00.35]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.35]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(163,0): at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId)&#xD;
+[xUnit.net 00:00:00.35]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(52,0): at Custodian.Workflow.Controllers.EngagementsController.GetEngagementById(Guid id, String tenantId)&#xD;
+[xUnit.net 00:00:00.35]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs(135,0): at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagementById_NonExistentOrCrossTenant_ShouldReturn404NotFound()&#xD;
+[xUnit.net 00:00:00.35]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:00.36]       System.NullReferenceException : Object reference not set to an instance of an object.&#xD;
+[xUnit.net 00:00:00.36]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.36]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(163,0): at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId)&#xD;
+[xUnit.net 00:00:00.36]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(90,0): at Custodian.Workflow.Controllers.EngagementsController.UpdateStatus(Guid id, UpdateEngagementStatusRequest request)&#xD;
+[xUnit.net 00:00:00.36]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs(219,0): at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.UpdateStatus_IllegalTransition_ShouldReturn400BadRequest()&#xD;
+[xUnit.net 00:00:00.36]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:00.37]       System.NullReferenceException : Object reference not set to an instance of an object.&#xD;
+[xUnit.net 00:00:00.37]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.37]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(163,0): at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId)&#xD;
+[xUnit.net 00:00:00.37]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(90,0): at Custodian.Workflow.Controllers.EngagementsController.UpdateStatus(Guid id, UpdateEngagementStatusRequest request)&#xD;
+[xUnit.net 00:00:00.37]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs(192,0): at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.UpdateStatus_ValidTransition_ShouldReturn200OK()&#xD;
+[xUnit.net 00:00:00.37]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:00.37]       System.NullReferenceException : Object reference not set to an instance of an object.&#xD;
+[xUnit.net 00:00:00.37]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.37]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(163,0): at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId)&#xD;
+[xUnit.net 00:00:00.37]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(130,0): at Custodian.Workflow.Controllers.EngagementsController.DeleteEngagement(Guid id, String tenantId)&#xD;
+[xUnit.net 00:00:00.37]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs(270,0): at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_StartedOrClosedStatus_ShouldReturn409Conflict(EngagementStatus status)&#xD;
+[xUnit.net 00:00:00.37]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:00.37]       System.NullReferenceException : Object reference not set to an instance of an object.&#xD;
+[xUnit.net 00:00:00.37]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.37]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(163,0): at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId)&#xD;
+[xUnit.net 00:00:00.37]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(130,0): at Custodian.Workflow.Controllers.EngagementsController.DeleteEngagement(Guid id, String tenantId)&#xD;
+[xUnit.net 00:00:00.37]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs(270,0): at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_StartedOrClosedStatus_ShouldReturn409Conflict(EngagementStatus status)&#xD;
+[xUnit.net 00:00:00.37]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:00.37]       System.NullReferenceException : Object reference not set to an instance of an object.&#xD;
+[xUnit.net 00:00:00.37]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.38]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(163,0): at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId)&#xD;
+[xUnit.net 00:00:00.38]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(130,0): at Custodian.Workflow.Controllers.EngagementsController.DeleteEngagement(Guid id, String tenantId)&#xD;
+[xUnit.net 00:00:00.38]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs(246,0): at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_DraftStatus_ShouldReturn24NoContent()&#xD;
+[xUnit.net 00:00:00.38]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:00.40]       System.NullReferenceException : Object reference not set to an instance of an object.&#xD;
+[xUnit.net 00:00:00.40]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.40]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(163,0): at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId)&#xD;
+[xUnit.net 00:00:00.40]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(28,0): at Custodian.Workflow.Controllers.EngagementsController.CreateEngagement(CreateEngagementRequest request)&#xD;
+[xUnit.net 00:00:00.40]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs(63,0): at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.CreateEngagement_ValidRequest_ShouldReturn201Created()&#xD;
+[xUnit.net 00:00:00.40]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:00.40]       System.NullReferenceException : Object reference not set to an instance of an object.&#xD;
+[xUnit.net 00:00:00.40]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.40]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(163,0): at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId)&#xD;
+[xUnit.net 00:00:00.40]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(71,0): at Custodian.Workflow.Controllers.EngagementsController.GetEngagements(String tenantId)&#xD;
+[xUnit.net 00:00:00.40]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs(160,0): at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagements_ValidTenant_ShouldReturn200OKWithList()&#xD;
+[xUnit.net 00:00:00.40]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:00.40]       System.NullReferenceException : Object reference not set to an instance of an object.&#xD;
+[xUnit.net 00:00:00.40]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.40]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(163,0): at Custodian.Workflow.Controllers.EngagementsController.ResolveTenantId(String requestTenantId)&#xD;
+[xUnit.net 00:00:00.40]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\src\services\Workflow\Controllers\EngagementsController.cs(52,0): at Custodian.Workflow.Controllers.EngagementsController.GetEngagementById(Guid id, String tenantId)&#xD;
+[xUnit.net 00:00:00.40]         C:\CS\Y3S1\CSP\project\Custodian---Client-Life-Cycle-Management-Platform\backend\tests\Custodian.Workflow.Tests\Unit\EngagementsControllerUnitTests.cs(116,0): at Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagementById_ExistingId_ShouldReturn200OK()&#xD;
+[xUnit.net 00:00:00.40]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:01.23]   Finished:    Custodian.Workflow.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="DESKTOP-0EIUHJG" outcome="Error" timestamp="2026-08-24T20:42:09.9581494+05:30">
+        <Text>[xUnit.net 00:00:00.27]     Custodian.Workflow.Tests.Unit.EngagementLifecycleValidatorTests.CanDelete_NonDraftEngagements_ShouldReturnFalse(status: Cancelled) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="DESKTOP-0EIUHJG" outcome="Error" timestamp="2026-08-24T20:42:10.0999858+05:30">
+        <Text>[xUnit.net 00:00:00.34]     Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.CreateEngagement_MissingTenantId_ShouldReturn400BadRequest [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="DESKTOP-0EIUHJG" outcome="Error" timestamp="2026-08-24T20:42:10.1002076+05:30">
+        <Text>[xUnit.net 00:00:00.35]     Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagementById_NonExistentOrCrossTenant_ShouldReturn404NotFound [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="DESKTOP-0EIUHJG" outcome="Error" timestamp="2026-08-24T20:42:10.1005294+05:30">
+        <Text>[xUnit.net 00:00:00.36]     Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.UpdateStatus_IllegalTransition_ShouldReturn400BadRequest [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="DESKTOP-0EIUHJG" outcome="Error" timestamp="2026-08-24T20:42:10.1044911+05:30">
+        <Text>[xUnit.net 00:00:00.36]     Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.UpdateStatus_ValidTransition_ShouldReturn200OK [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="DESKTOP-0EIUHJG" outcome="Error" timestamp="2026-08-24T20:42:10.1050035+05:30">
+        <Text>[xUnit.net 00:00:00.37]     Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_StartedOrClosedStatus_ShouldReturn409Conflict(status: Closed) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="DESKTOP-0EIUHJG" outcome="Error" timestamp="2026-08-24T20:42:10.1053126+05:30">
+        <Text>[xUnit.net 00:00:00.37]     Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_StartedOrClosedStatus_ShouldReturn409Conflict(status: Started) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="DESKTOP-0EIUHJG" outcome="Error" timestamp="2026-08-24T20:42:10.1056355+05:30">
+        <Text>[xUnit.net 00:00:00.37]     Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.DeleteEngagement_DraftStatus_ShouldReturn24NoContent [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="DESKTOP-0EIUHJG" outcome="Error" timestamp="2026-08-24T20:42:10.1061498+05:30">
+        <Text>[xUnit.net 00:00:00.40]     Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.CreateEngagement_ValidRequest_ShouldReturn201Created [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="DESKTOP-0EIUHJG" outcome="Error" timestamp="2026-08-24T20:42:10.1064949+05:30">
+        <Text>[xUnit.net 00:00:00.40]     Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagements_ValidTenant_ShouldReturn200OKWithList [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="DESKTOP-0EIUHJG" outcome="Error" timestamp="2026-08-24T20:42:10.1067537+05:30">
+        <Text>[xUnit.net 00:00:00.40]     Custodian.Workflow.Tests.Unit.EngagementsControllerUnitTests.GetEngagementById_ExistingId_ShouldReturn200OK [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>
