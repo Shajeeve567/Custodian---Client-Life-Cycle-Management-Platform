@@ -66,7 +66,7 @@ public class UserAccountControllerTests
             .ReturnsAsync(new UserAccount());
 
         // Act
-        var result = await _controller.CreateNewUserAccount(request, CancellationToken.None);
+        var result = await _controller.InviteUserAccount(request, CancellationToken.None);
 
         // Assert
         var conflictResult = Assert.IsType<ConflictObjectResult>(result.Result);
@@ -82,7 +82,7 @@ public class UserAccountControllerTests
             .ReturnsAsync((UserAccount?)null);
 
         // Act
-        var result = await _controller.CreateNewUserAccount(request, CancellationToken.None);
+        var result = await _controller.InviteUserAccount(request, CancellationToken.None);
 
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
