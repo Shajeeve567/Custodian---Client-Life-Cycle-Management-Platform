@@ -60,6 +60,44 @@ namespace Identity.Migrations
                     b.ToTable("Clients");
                 });
 
+            modelBuilder.Entity("Custodian.Identity.Domain.Notification", b =>
+                {
+                    b.Property<Guid>("NotificationId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<Guid>("ClientId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<bool>("IsRead")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("varchar(2000)");
+
+                    b.Property<string>("SourceEventType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("NotificationId");
+
+                    b.HasIndex("ClientId");
+
+                    b.HasIndex("TenantId", "ClientId", "IsRead");
+
+                    b.ToTable("Notifications");
+                });
+
             modelBuilder.Entity("Custodian.Identity.Domain.Tenant", b =>
                 {
                     b.Property<Guid>("Id")
@@ -141,6 +179,17 @@ namespace Identity.Migrations
                         .IsRequired();
 
                     b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("Custodian.Identity.Domain.Notification", b =>
+                {
+                    b.HasOne("Custodian.Identity.Domain.ClientProfile", "Client")
+                        .WithMany()
+                        .HasForeignKey("ClientId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Client");
                 });
 
             modelBuilder.Entity("Custodian.Identity.Domain.TenantMembership", b =>

@@ -20,6 +20,7 @@ public sealed class IdentityDbContext : DbContext
     public DbSet<UserAccount> Users => Set<UserAccount>();
     public DbSet<ClientProfile> Clients => Set<ClientProfile>();
     public DbSet<TenantMembership> TenantMemberships => Set<TenantMembership>();
+    public DbSet<Notification> Notifications => Set<Notification>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -76,6 +77,28 @@ public sealed class IdentityDbContext : DbContext
             
             // Global Query Filter
             entity.HasQueryFilter(c => c.TenantId == CurrentTenantId);
+        });
+
+        modelBuilder.Entity<Notification>(entity =>
+        {
+            entity.HasKey(n => n.NotificationId);
+            entity.Property(n => n.NotificationId).ValueGeneratedNever();
+            entity.Property(n => n.TenantId).IsRequired();
+            entity.Property(n => n.ClientId).IsRequired();
+            entity.Property(n => n.Message).HasMaxLength(2000).IsRequired();
+            entity.Property(n => n.SourceEventType).HasMaxLength(100).IsRequired();
+            entity.Property(n => n.IsRead).IsRequired().HasDefaultValue(false);
+            entity.Property(n => n.CreatedAt).IsRequired();
+
+            entity.HasOne(n => n.Client)
+                .WithMany()
+                .HasForeignKey(n => n.ClientId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(n => new { n.TenantId, n.ClientId, n.IsRead });
+
+            // Global Query Filter
+            entity.HasQueryFilter(n => n.TenantId == CurrentTenantId);
         });
     }
 }

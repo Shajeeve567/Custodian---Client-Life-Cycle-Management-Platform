@@ -67,7 +67,7 @@ appsettings*.Staging.json
 !**/appsettings.Development.json.example
 
 ## Frontend / Node
-node_modules/
+**/node_modules/
 dist/
 frontend/dist/
 npm-debug.log*

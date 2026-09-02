@@ -3,6 +3,9 @@ using Identity.Data;
 using Scalar.AspNetCore;
 using Custodian.Shared.Tenancy;
 using Custodian.Shared.Auth;
+using Custodian.Identity.Services.Notifications;
+using Custodian.Identity.Services.Notifications.Strategies;
+using Custodian.Identity.Services.Kafka;
 
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("AzureMySqlConnection");
@@ -18,6 +21,31 @@ builder.Services.AddDbContext<IdentityDbContext>(options =>
 builder.Services.AddScoped<IUserAccountRepository, UserAccountRepository>();
 builder.Services.AddScoped<ITenantRepository, TenantRepository>();
 builder.Services.AddScoped<IClientProfileRepository, ClientProfileRepository>();
+builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
+
+// Register Notification Delivery Strategies (Strategy Pattern)
+builder.Services.AddScoped<INotificationDeliveryStrategy, InAppPortalNotificationStrategy>();
+builder.Services.AddScoped<INotificationDeliveryStrategy, ResendEmailNotificationStrategy>();
+
+// Register Deduplicator, Mapper & Dispatcher
+builder.Services.AddSingleton<IEventDeduplicator, InMemoryEventDeduplicator>();
+builder.Services.AddSingleton<Custodian.Identity.Services.Notifications.Mappers.IEventToMessageMapper, Custodian.Identity.Services.Notifications.Mappers.EventToClientSafeMessageMapper>();
+builder.Services.AddScoped<INotificationDispatcher, ClientNotificationDispatcher>();
+
+// Configure Resend Official SDK Client
+builder.Services.AddOptions();
+builder.Services.AddHttpClient<Resend.ResendClient>();
+builder.Services.Configure<Resend.ResendClientOptions>(options =>
+{
+    options.ApiToken = builder.Configuration["Resend:ApiKey"] ?? "";
+});
+builder.Services.AddTransient<Resend.IResend, Resend.ResendClient>();
+builder.Services.Configure<ResendOptions>(builder.Configuration.GetSection(ResendOptions.SectionName));
+
+// Configure Kafka Background Consumer
+builder.Services.Configure<KafkaOptions>(builder.Configuration.GetSection(KafkaOptions.SectionName));
+builder.Services.AddHostedService<KafkaNotificationConsumer>();
+
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
@@ -36,7 +64,7 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-app.UseHttpsRedirection();
+// app.UseHttpsRedirection();
 
 app.UseAuthentication();
 app.UseAuthorization();

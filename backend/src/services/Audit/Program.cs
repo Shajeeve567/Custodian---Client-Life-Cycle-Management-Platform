@@ -6,8 +6,17 @@ using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add Controllers
+// Add Controllers & CORS
 builder.Services.AddControllers();
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
 
 // Add OpenAPI / Swagger
 builder.Services.AddOpenApi();
@@ -44,12 +53,14 @@ if (app.Environment.IsDevelopment())
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetService<AuditDbContext>();
-    dbContext?.Database.Migrate();
+    dbContext?.Database.EnsureCreated();
 }
 
-app.UseHttpsRedirection();
+app.UseCors();
+// app.UseHttpsRedirection();
 app.UseAuthorization();
 
+app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Audit Service" }));
 app.MapControllers();
 
 app.Run();
