@@ -84,6 +84,9 @@ docker-compose.override.yml
 *.coverage
 *.coveragexml
 coverage/
+*.jtl
+jmeter-report/
+jmeter_report/
 
 ## Project documentation (ignored)
 [Dd]ocs/

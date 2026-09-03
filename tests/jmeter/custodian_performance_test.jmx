@@ -33,6 +33,16 @@
             <stringProp name="Argument.value">tenant-alpha</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
+          <elementProp name="AUTH_EMAIL" elementType="Argument">
+            <stringProp name="Argument.name">AUTH_EMAIL</stringProp>
+            <stringProp name="Argument.value">${__P(auth_email,${__groovy(System.getenv('QA_AUTH_EMAIL') ?: 'admin@example.com')})}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="AUTH_PASSWORD" elementType="Argument">
+            <stringProp name="Argument.name">AUTH_PASSWORD</stringProp>
+            <stringProp name="Argument.value">${__P(auth_password,${__groovy(System.getenv('QA_AUTH_PASSWORD') ?: 'Password123!')})}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
         </collectionProp>
       </elementProp>
     </TestPlan>
@@ -58,8 +68,8 @@
               <elementProp name="" elementType="HTTPArgument">
                 <boolProp name="HTTPArgument.always_encode">false</boolProp>
                 <stringProp name="Argument.value">{&#xd;
-  &quot;email&quot;: &quot;admin@example.com&quot;,&#xd;
-  &quot;password&quot;: &quot;Password123!&quot;&#xd;
+  &quot;email&quot;: &quot;${AUTH_EMAIL}&quot;,&#xd;
+  &quot;password&quot;: &quot;${AUTH_PASSWORD}&quot;&#xd;
 }</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
