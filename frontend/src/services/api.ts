@@ -8,11 +8,11 @@ import {
     DocumentMetadata
 } from '../types';
 
-const API_BASE = {
-    IDENTITY: 'http://localhost:5281/api',
-    WORKFLOW: 'http://localhost:5225/api',
-    AUDIT: 'http://localhost:5051/api',
-    DOCUMENTS: 'http://localhost:5171/api',
+export const API_BASE = {
+    IDENTITY: import.meta.env.VITE_IDENTITY_API_URL,
+    WORKFLOW: import.meta.env.VITE_WORKFLOW_API_URL,
+    AUDIT: import.meta.env.VITE_AUDIT_API_URL,
+    DOCUMENTS: import.meta.env.VITE_DOCUMENTS_API_URL,
 };
 
 function getHeaders(tenantId: string = 'tenant-alpha', token?: string): HeadersInit {
