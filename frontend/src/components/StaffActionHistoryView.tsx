@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ClientActionResponse } from '../types/clientAction';
 import './StaffActionHistoryView.css';
+import { API_BASE } from '../services/api';
 
 interface StaffActionHistoryViewProps {
     engagementId: string;
@@ -12,7 +13,7 @@ interface StaffActionHistoryViewProps {
 export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
     engagementId,
     tenantId,
-    baseUrl = 'http://localhost:5225',
+    baseUrl = API_BASE.WORKFLOW,
     isClientViewInitial = false,
 }) => {
     const [currentEngagementId, setCurrentEngagementId] = useState<string>(
