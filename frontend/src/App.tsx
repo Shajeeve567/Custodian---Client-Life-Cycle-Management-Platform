@@ -1,40 +1,44 @@
-import React, { useState } from 'react';
-import { AuthProvider, useAuth } from './context/AuthContext';
-import { Navbar } from './components/Navbar';
-import { EngagementManager } from './components/EngagementManager';
-import { StaffActionHistoryView } from './components/StaffActionHistoryView';
-import { ClientPortalView } from './components/ClientPortalView';
-import { DocumentVaultView } from './components/DocumentVaultView';
-import { AuditLogView } from './components/AuditLogView';
+import React from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext';
+import { ProtectedRoute } from './components/ProtectedRoute';
+import { LandingPage } from './pages/LandingPage';
+import { AuthPage } from './pages/AuthPage';
+import { EngagementsPage } from './pages/EngagementsPage';
+import { WorkflowsPage } from './pages/WorkflowsPage';
+import { DocumentsPage } from './pages/DocumentsPage';
+import { AuditPage } from './pages/AuditPage';
+import { PortalPage } from './pages/PortalPage';
+import { WorkspacePage } from './pages/WorkspacePage';
 import './App.css';
-
-const MainAppContent: React.FC = () => {
-    const [activeTab, setActiveTab] = useState<string>('engagements');
-    const [engagementId] = useState<string>('e689ce2c-b694-4860-aa0d-96d946283b71');
-    const { tenantId, role } = useAuth();
-
-    return (
-        <div className="app-layout">
-            <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
-
-            <main className="main-content">
-                {activeTab === 'engagements' && <EngagementManager />}
-                {activeTab === 'actions' && (
-                    role === 'Client'
-                        ? <ClientPortalView />
-                        : <StaffActionHistoryView engagementId={engagementId} tenantId={tenantId} />
-                )}
-                {activeTab === 'documents' && <DocumentVaultView />}
-                {activeTab === 'audit' && <AuditLogView />}
-            </main>
-        </div>
-    );
-};
 
 export const App: React.FC = () => {
     return (
         <AuthProvider>
-            <MainAppContent />
+            <BrowserRouter>
+                <Routes>
+                    {/* Public Home / Landing Page (Figma Node 9:862) */}
+                    <Route path="/" element={<LandingPage />} />
+
+                    {/* Authentication Flows (Figma Node 44:2) */}
+                    <Route path="/login" element={<AuthPage initialMode="login" />} />
+                    <Route path="/register" element={<AuthPage initialMode="register" />} />
+
+                    {/* Protected Operational Routes (Figma Node 9:1350) */}
+                    <Route element={<ProtectedRoute />}>
+                        <Route path="/engagements" element={<EngagementsPage />} />
+                        <Route path="/workspace/:engagementId" element={<WorkspacePage />} />
+                        <Route path="/actions" element={<WorkflowsPage />} />
+                        <Route path="/workflows" element={<Navigate to="/actions" replace />} />
+                        <Route path="/documents" element={<DocumentsPage />} />
+                        <Route path="/audit" element={<AuditPage />} />
+                        <Route path="/portal" element={<PortalPage />} />
+                    </Route>
+
+                    {/* Fallback */}
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+            </BrowserRouter>
         </AuthProvider>
     );
 };

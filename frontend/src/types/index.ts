@@ -1,11 +1,72 @@
-export type UserRole = 'Staff' | 'Client' | 'Admin';
+export type UserRole = 'Owner' | 'Staff' | 'Client' | 'Admin';
 
 export interface UserProfile {
     userId: string;
-    username: string;
+    username?: string;
     email: string;
     role: UserRole;
+    tenantId?: string;
+    tenantName?: string;
+}
+
+export interface JwtPayload {
+    sub: string;
+    email?: string;
+    tenant_id?: string;
+    'http://schemas.microsoft.com/ws/2008/06/identity/claims/role'?: string;
+    role?: string;
+    exp?: number;
+    iss?: string;
+    aud?: string;
+}
+
+export interface LoginResponse {
+    token: string;
+    expiresInMinutes: number;
+}
+
+export interface TenantMembership {
     tenantId: string;
+    name: string;
+    role: string | number;
+    createdAtUtc: string;
+}
+
+export interface Tenant {
+    id: string;
+    name: string;
+    createdAtUtc: string;
+    memberships?: any[];
+}
+
+export interface ClientProfile {
+    id: string;
+    tenantId: string;
+    name: string;
+    email: string;
+    phone?: string;
+    status: string | number;
+    createdAtUtc: string;
+}
+
+export interface CreateClientRequest {
+    name: string;
+    email: string;
+    phone?: string;
+}
+
+export interface UserAccountResponse {
+    id: string;
+    email: string;
+    status: string | number;
+    createdAtUtc: string;
+    memberships?: Array<{ tenantId: string; role: string | number }>;
+}
+
+export interface InviteUserRequest {
+    email: string;
+    password: string;
+    role: UserRole;
 }
 
 export type EngagementStatus = 'Draft' | 'Started' | 'Closed' | 'Cancelled';

@@ -5,141 +5,288 @@ import {
     ClientAction,
     CreateClientActionRequest,
     AuditEvent,
-    DocumentMetadata
+    DocumentMetadata,
+    LoginResponse,
+    TenantMembership,
+    Tenant,
+    ClientProfile,
+    CreateClientRequest,
+    UserAccountResponse,
+    InviteUserRequest,
 } from '../types';
 
 export const API_BASE = {
-    IDENTITY: import.meta.env.VITE_IDENTITY_API_URL,
-    WORKFLOW: import.meta.env.VITE_WORKFLOW_API_URL,
-    AUDIT: import.meta.env.VITE_AUDIT_API_URL,
-    DOCUMENTS: import.meta.env.VITE_DOCUMENTS_API_URL,
+    IDENTITY: (import.meta.env.VITE_IDENTITY_URL || import.meta.env.VITE_IDENTITY_API_URL || 'http://localhost:5281').replace(/\/$/, ''),
+    WORKFLOW: (import.meta.env.VITE_WORKFLOW_URL || import.meta.env.VITE_WORKFLOW_API_URL || 'http://localhost:5225').replace(/\/$/, ''),
+    AUDIT: (import.meta.env.VITE_AUDIT_API_URL || 'http://localhost:5227').replace(/\/$/, ''),
+    DOCUMENTS: (import.meta.env.VITE_DOCUMENTS_API_URL || 'http://localhost:5282').replace(/\/$/, ''),
 };
 
-function getHeaders(tenantId: string = 'tenant-alpha', token?: string): HeadersInit {
-    const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'X-Tenant-Id': tenantId,
-    };
-    if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
+export class ApiError extends Error {
+    status: number;
+    data: any;
+
+    constructor(status: number, message: string, data?: any) {
+        super(message);
+        this.name = 'ApiError';
+        this.status = status;
+        this.data = data;
     }
-    return headers;
 }
 
-export const WorkflowApi = {
-    async getEngagements(tenantId: string): Promise<Engagement[]> {
-        const res = await fetch(`${API_BASE.WORKFLOW}/engagements?tenantId=${tenantId}`, {
-            headers: getHeaders(tenantId),
+type OnUnauthorizedCallback = () => void;
+let unauthorizedHandler: OnUnauthorizedCallback | null = null;
+
+export function setUnauthorizedHandler(handler: OnUnauthorizedCallback | null) {
+    unauthorizedHandler = handler;
+}
+
+export async function request<T = any>(
+    url: string,
+    options: RequestInit & { token?: string; skipAuthHeader?: boolean } = {}
+): Promise<T> {
+    const { token, skipAuthHeader = false, headers: customHeaders, ...rest } = options;
+
+    const headers = new Headers(customHeaders || {});
+
+    // Default Content-Type to application/json unless body is FormData
+    if (!(rest.body instanceof FormData) && !headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/json');
+    }
+
+    // Determine auth token
+    if (!skipAuthHeader) {
+        const effectiveToken = token || localStorage.getItem('custodian_token');
+        if (effectiveToken) {
+            headers.set('Authorization', `Bearer ${effectiveToken}`);
+        }
+    }
+
+    const response = await fetch(url, {
+        ...rest,
+        headers,
+    });
+
+    // Check status
+    if (!response.ok) {
+        let errorMessage = response.statusText || 'Request failed';
+        let errorData: any = null;
+
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            try {
+                errorData = await response.json();
+                if (errorData?.errors && typeof errorData.errors === 'object') {
+                    const messages = Object.values(errorData.errors).flat();
+                    errorMessage = messages.join(' ') || errorData.title || errorMessage;
+                } else {
+                    errorMessage = errorData?.message || errorData?.title || JSON.stringify(errorData);
+                }
+            } catch {
+                errorMessage = await response.text();
+            }
+        } else {
+            errorMessage = await response.text();
+        }
+
+        if (response.status === 401 && unauthorizedHandler) {
+            unauthorizedHandler();
+        }
+
+        throw new ApiError(response.status, errorMessage || `HTTP Error ${response.status}`, errorData);
+    }
+
+    // Parse successful response
+    const contentType = response.headers.get('content-type') || '';
+    if (response.status === 204 || response.headers.get('content-length') === '0') {
+        return null as unknown as T;
+    }
+
+    if (contentType.includes('application/json')) {
+        return (await response.json()) as T;
+    }
+
+    // plain text response
+    return (await response.text()) as unknown as T;
+}
+
+/* ==========================================================================
+   Identity Service API
+   ========================================================================== */
+
+export const IdentityApi = {
+    // 1. Register new user: POST /api/Auth/register -> text/plain 200 or 409
+    async register(email: string, password: string): Promise<string> {
+        return request<string>(`${API_BASE.IDENTITY}/api/Auth/register`, {
+            method: 'POST',
+            skipAuthHeader: true,
+            body: JSON.stringify({ email, password }),
         });
-        if (!res.ok) throw new Error('Failed to fetch engagements');
-        return res.json();
     },
 
-    async createEngagement(req: CreateEngagementRequest): Promise<Engagement> {
-        const res = await fetch(`${API_BASE.WORKFLOW}/engagements`, {
+    // 2. Login: POST /api/Auth/login -> { token, expiresInMinutes } (Global Token)
+    async login(email: string, password: string): Promise<LoginResponse> {
+        return request<LoginResponse>(`${API_BASE.IDENTITY}/api/Auth/login`, {
             method: 'POST',
-            headers: getHeaders(req.tenantId),
+            skipAuthHeader: true,
+            body: JSON.stringify({ email, password }),
+        });
+    },
+
+    // 3. Select workspace: POST /api/Auth/select-workspace/{tenantId} -> { token, expiresInMinutes } (Workspace Token)
+    async selectWorkspace(tenantId: string, globalToken?: string): Promise<LoginResponse> {
+        return request<LoginResponse>(`${API_BASE.IDENTITY}/api/Auth/select-workspace/${tenantId}`, {
+            method: 'POST',
+            token: globalToken,
+        });
+    },
+
+    // 4. Create Tenant: POST /api/Tenant (Requires Bearer global token) -> 201 Tenant
+    async createTenant(name: string, globalToken?: string): Promise<Tenant> {
+        return request<Tenant>(`${API_BASE.IDENTITY}/api/Tenant`, {
+            method: 'POST',
+            token: globalToken,
+            body: JSON.stringify({ name }),
+        });
+    },
+
+    // 5. Get user's workspaces: GET /api/Tenant/mine (Requires Bearer global token)
+    async getMyTenants(globalToken?: string): Promise<TenantMembership[]> {
+        return request<TenantMembership[]>(`${API_BASE.IDENTITY}/api/Tenant/mine`, {
+            method: 'GET',
+            token: globalToken,
+        });
+    },
+
+    // 6. Get clients: GET /api/Client (Requires Bearer workspace token)
+    async getClients(workspaceToken?: string): Promise<ClientProfile[]> {
+        return request<ClientProfile[]>(`${API_BASE.IDENTITY}/api/Client`, {
+            method: 'GET',
+            token: workspaceToken,
+        });
+    },
+
+    // 7. Create client: POST /api/Client (Requires Bearer workspace token)
+    async createClient(data: CreateClientRequest, workspaceToken?: string): Promise<ClientProfile> {
+        return request<ClientProfile>(`${API_BASE.IDENTITY}/api/Client`, {
+            method: 'POST',
+            token: workspaceToken,
+            body: JSON.stringify(data),
+        });
+    },
+
+    // 8. Get team roster: GET /api/UserAccount (Owner only)
+    async getUsers(workspaceToken?: string): Promise<UserAccountResponse[]> {
+        return request<UserAccountResponse[]>(`${API_BASE.IDENTITY}/api/UserAccount`, {
+            method: 'GET',
+            token: workspaceToken,
+        });
+    },
+
+    // 9. Invite staff user: POST /api/UserAccount/invite (Owner only)
+    async inviteUser(data: InviteUserRequest, workspaceToken?: string): Promise<UserAccountResponse> {
+        const roleMap: Record<string, number> = { 'Owner': 0, 'Staff': 1, 'Client': 2 };
+        const roleVal = typeof data.role === 'string' && data.role in roleMap ? roleMap[data.role] : data.role;
+        return request<UserAccountResponse>(`${API_BASE.IDENTITY}/api/UserAccount/invite`, {
+            method: 'POST',
+            token: workspaceToken,
+            body: JSON.stringify({
+                ...data,
+                role: roleVal,
+            }),
+        });
+    },
+};
+
+/* ==========================================================================
+   Workflow Service API (No auth middleware - tenant passed in body/query)
+   ========================================================================== */
+
+export const WorkflowApi = {
+    // 1. Create Engagement: POST /api/Engagements { tenantId, clientId, staffId }
+    async createEngagement(req: CreateEngagementRequest): Promise<Engagement> {
+        return request<Engagement>(`${API_BASE.WORKFLOW}/api/Engagements`, {
+            method: 'POST',
+            skipAuthHeader: true,
             body: JSON.stringify(req),
         });
-        if (!res.ok) throw new Error('Failed to create engagement');
-        return res.json();
+    },
+
+    // 2. List Engagements: GET /api/Engagements?tenantId=<tenantId>
+    async getEngagements(tenantId: string): Promise<Engagement[]> {
+        return request<Engagement[]>(`${API_BASE.WORKFLOW}/api/Engagements?tenantId=${encodeURIComponent(tenantId)}`, {
+            method: 'GET',
+            skipAuthHeader: true,
+        });
     },
 
     async updateStatus(engagementId: string, status: EngagementStatus, tenantId: string): Promise<Engagement> {
-        const res = await fetch(`${API_BASE.WORKFLOW}/engagements/${engagementId}/status`, {
+        return request<Engagement>(`${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/status`, {
             method: 'PUT',
-            headers: getHeaders(tenantId),
+            skipAuthHeader: true,
             body: JSON.stringify({ tenantId, status }),
         });
-        if (!res.ok) {
-            const err = await res.text();
-            throw new Error(err || 'Failed to update engagement status');
-        }
-        return res.json();
     },
 
     async deleteEngagement(engagementId: string, tenantId: string): Promise<void> {
-        const res = await fetch(`${API_BASE.WORKFLOW}/engagements/${engagementId}`, {
+        return request<void>(`${API_BASE.WORKFLOW}/api/Engagements/${engagementId}`, {
             method: 'DELETE',
-            headers: getHeaders(tenantId),
+            skipAuthHeader: true,
         });
-        if (!res.ok) {
-            const err = await res.text();
-            throw new Error(err || 'Failed to delete engagement');
-        }
     },
 
     async getActions(engagementId: string, tenantId: string): Promise<ClientAction[]> {
-        const res = await fetch(`${API_BASE.WORKFLOW}/engagements/${engagementId}/actions`, {
-            headers: getHeaders(tenantId),
+        return request<ClientAction[]>(`${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/actions`, {
+            method: 'GET',
+            skipAuthHeader: true,
         });
-        if (!res.ok) throw new Error('Failed to fetch actions');
-        return res.json();
     },
 
     async createAction(req: CreateClientActionRequest, tenantId: string): Promise<ClientAction> {
-        const res = await fetch(`${API_BASE.WORKFLOW}/engagements/${req.engagementId}/actions`, {
+        return request<ClientAction>(`${API_BASE.WORKFLOW}/api/Engagements/${req.engagementId}/actions`, {
             method: 'POST',
-            headers: getHeaders(tenantId),
+            skipAuthHeader: true,
             body: JSON.stringify(req),
         });
-        if (!res.ok) throw new Error('Failed to create action');
-        return res.json();
     },
 
     async completeAction(actionId: string, tenantId: string): Promise<ClientAction> {
-        const res = await fetch(`${API_BASE.WORKFLOW}/actions/${actionId}/complete`, {
+        return request<ClientAction>(`${API_BASE.WORKFLOW}/api/Actions/${actionId}/complete`, {
             method: 'PUT',
-            headers: getHeaders(tenantId),
+            skipAuthHeader: true,
         });
-        if (!res.ok) throw new Error('Failed to complete action');
-        return res.json();
-    }
+    },
 };
+
+/* ==========================================================================
+   Audit & Documents Service APIs (Preserved for existing views)
+   ========================================================================== */
 
 export const AuditApi = {
     async getEvents(tenantId: string, engagementId?: string): Promise<AuditEvent[]> {
         let url = `${API_BASE.AUDIT}/events?tenantId=${tenantId}`;
         if (engagementId) url += `&engagementId=${engagementId}`;
-        const res = await fetch(url, { headers: getHeaders(tenantId) });
-        if (!res.ok) throw new Error('Failed to fetch audit events');
-        return res.json();
+        return request<AuditEvent[]>(url);
     },
 
     async verifyChain(tenantId: string): Promise<{ isVerified: boolean; count: number }> {
-        const res = await fetch(`${API_BASE.AUDIT}/events/verify?tenantId=${tenantId}`, {
-            headers: getHeaders(tenantId),
-        });
-        if (!res.ok) throw new Error('Failed to verify audit log');
-        return res.json();
-    }
+        return request<{ isVerified: boolean; count: number }>(`${API_BASE.AUDIT}/events/verify?tenantId=${tenantId}`);
+    },
 };
 
 export const DocumentsApi = {
     async getDocuments(engagementId: string, tenantId: string): Promise<DocumentMetadata[]> {
-        const res = await fetch(`${API_BASE.DOCUMENTS}/engagements/${engagementId}/documents`, {
-            headers: getHeaders(tenantId),
-        });
-        if (!res.ok) throw new Error('Failed to fetch documents');
-        return res.json();
+        return request<DocumentMetadata[]>(`${API_BASE.DOCUMENTS}/engagements/${engagementId}/documents`);
     },
 
     async uploadDocument(engagementId: string, formData: FormData, tenantId: string): Promise<DocumentMetadata> {
-        const res = await fetch(`${API_BASE.DOCUMENTS}/engagements/${engagementId}/documents`, {
+        return request<DocumentMetadata>(`${API_BASE.DOCUMENTS}/engagements/${engagementId}/documents`, {
             method: 'POST',
-            headers: {
-                'X-Tenant-Id': tenantId,
-            },
             body: formData,
         });
-        if (!res.ok) {
-            const err = await res.text();
-            throw new Error(err || 'Failed to upload PDF document');
-        }
-        return res.json();
     },
 
     getDownloadUrl(engagementId: string, documentId: string): string {
         return `${API_BASE.DOCUMENTS}/engagements/${engagementId}/documents/${documentId}/download`;
-    }
+    },
 };

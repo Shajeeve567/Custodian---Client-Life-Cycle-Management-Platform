@@ -16,9 +16,7 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
     baseUrl = API_BASE.WORKFLOW,
     isClientViewInitial = false,
 }) => {
-    const [currentEngagementId, setCurrentEngagementId] = useState<string>(
-        engagementId && engagementId !== 'eng-1001' ? engagementId : 'e689ce2c-b694-4860-aa0d-96d946283b71'
-    );
+    const [currentEngagementId, setCurrentEngagementId] = useState<string>(engagementId);
     const [actions, setActions] = useState<ClientActionResponse[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);

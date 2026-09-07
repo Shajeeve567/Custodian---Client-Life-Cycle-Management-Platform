@@ -58,19 +58,52 @@ public class UserAccountControllerTests
     }
 
     [Fact]
-    public async Task CreateNewUserAccount_ReturnsConflict_IfEmailExists()
+    public async Task CreateNewUserAccount_ReturnsConflict_IfUserAlreadyInWorkspace()
     {
         // Arrange
         var request = new CreateUserRequest("test@test.com", "password", Custodian.Shared.Auth.Role.Staff);
+        var existingUser = new UserAccount
+        {
+            Email = request.Email,
+            Memberships = new List<TenantMembership>
+            {
+                new TenantMembership { TenantId = _tenantId, Role = Custodian.Shared.Auth.Role.Staff }
+            }
+        };
         _userRepoMock.Setup(r => r.GetByEmailAsync(request.Email, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UserAccount());
+            .ReturnsAsync(existingUser);
 
         // Act
         var result = await _controller.InviteUserAccount(request, CancellationToken.None);
 
         // Assert
         var conflictResult = Assert.IsType<ConflictObjectResult>(result.Result);
-        Assert.Equal("A user with this email already exists.", conflictResult.Value);
+        Assert.Equal("This user is already a member of this workspace.", conflictResult.Value);
+    }
+
+    [Fact]
+    public async Task CreateNewUserAccount_AddsMembership_IfUserExistsGlobally()
+    {
+        // Arrange
+        var request = new CreateUserRequest("existing@test.com", "password", Custodian.Shared.Auth.Role.Staff);
+        var existingUser = new UserAccount
+        {
+            Id = Guid.NewGuid(),
+            Email = request.Email,
+            Memberships = new List<TenantMembership>()
+        };
+        _userRepoMock.Setup(r => r.GetByEmailAsync(request.Email, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingUser);
+
+        // Act
+        var result = await _controller.InviteUserAccount(request, CancellationToken.None);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var user = Assert.IsType<UserAccount>(okResult.Value);
+        Assert.Single(user.Memberships);
+        Assert.Equal(_tenantId, user.Memberships.First().TenantId);
+        _userRepoMock.Verify(r => r.UpdateAsync(existingUser, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -86,8 +119,7 @@ public class UserAccountControllerTests
 
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
-        var createdResult = Assert.IsType<CreatedAtActionResult>(okResult.Value);
-        var user = Assert.IsType<UserAccount>(createdResult.Value);
+        var user = Assert.IsType<UserAccount>(okResult.Value);
         Assert.Equal(request.Email, user.Email);
         Assert.Single(user.Memberships);
         Assert.Equal(_tenantId, user.Memberships.First().TenantId);
