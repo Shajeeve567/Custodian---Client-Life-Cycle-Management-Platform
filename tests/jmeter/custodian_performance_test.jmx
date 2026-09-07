@@ -8,9 +8,29 @@
       <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
       <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
         <collectionProp name="Arguments.arguments">
-          <elementProp name="HOST" elementType="Argument">
-            <stringProp name="Argument.name">HOST</stringProp>
-            <stringProp name="Argument.value">${__P(host,localhost)}</stringProp>
+          <elementProp name="PROTOCOL" elementType="Argument">
+            <stringProp name="Argument.name">PROTOCOL</stringProp>
+            <stringProp name="Argument.value">${__P(protocol,http)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="IDENTITY_HOST" elementType="Argument">
+            <stringProp name="Argument.name">IDENTITY_HOST</stringProp>
+            <stringProp name="Argument.value">${__P(identity_host,${__P(host,localhost)})}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="WORKFLOW_HOST" elementType="Argument">
+            <stringProp name="Argument.name">WORKFLOW_HOST</stringProp>
+            <stringProp name="Argument.value">${__P(workflow_host,${__P(host,localhost)})}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="AUDIT_HOST" elementType="Argument">
+            <stringProp name="Argument.name">AUDIT_HOST</stringProp>
+            <stringProp name="Argument.value">${__P(audit_host,${__P(host,localhost)})}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="DOCUMENTS_HOST" elementType="Argument">
+            <stringProp name="Argument.name">DOCUMENTS_HOST</stringProp>
+            <stringProp name="Argument.value">${__P(documents_host,${__P(host,localhost)})}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="IDENTITY_PORT" elementType="Argument">
@@ -28,9 +48,19 @@
             <stringProp name="Argument.value">${__P(audit_port,5004)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
+          <elementProp name="DOCUMENTS_PORT" elementType="Argument">
+            <stringProp name="Argument.name">DOCUMENTS_PORT</stringProp>
+            <stringProp name="Argument.value">${__P(documents_port,5003)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
           <elementProp name="TENANT_ID" elementType="Argument">
             <stringProp name="Argument.name">TENANT_ID</stringProp>
-            <stringProp name="Argument.value">tenant-alpha</stringProp>
+            <stringProp name="Argument.value">${__P(tenant_id,tenant-alpha)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="ENGAGEMENT_ID" elementType="Argument">
+            <stringProp name="Argument.name">ENGAGEMENT_ID</stringProp>
+            <stringProp name="Argument.value">${__P(engagement_id,e689ce2c-b694-4860-aa0d-96d946283b71)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="AUTH_EMAIL" elementType="Argument">
@@ -75,9 +105,9 @@
               </elementProp>
             </collectionProp>
           </elementProp>
-          <stringProp name="HTTPSampler.domain">${HOST}</stringProp>
+          <stringProp name="HTTPSampler.domain">${IDENTITY_HOST}</stringProp>
           <stringProp name="HTTPSampler.port">${IDENTITY_PORT}</stringProp>
-          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -109,9 +139,9 @@
           <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" enabled="true">
             <collectionProp name="Arguments.arguments"/>
           </elementProp>
-          <stringProp name="HTTPSampler.domain">${HOST}</stringProp>
+          <stringProp name="HTTPSampler.domain">${IDENTITY_HOST}</stringProp>
           <stringProp name="HTTPSampler.port">${IDENTITY_PORT}</stringProp>
-          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.path">/api/notifications</stringProp>
           <stringProp name="HTTPSampler.method">GET</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -148,9 +178,9 @@
               </elementProp>
             </collectionProp>
           </elementProp>
-          <stringProp name="HTTPSampler.domain">${HOST}</stringProp>
+          <stringProp name="HTTPSampler.domain">${WORKFLOW_HOST}</stringProp>
           <stringProp name="HTTPSampler.port">${WORKFLOW_PORT}</stringProp>
-          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.path">/api/engagements</stringProp>
           <stringProp name="HTTPSampler.method">GET</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -187,9 +217,9 @@
               </elementProp>
             </collectionProp>
           </elementProp>
-          <stringProp name="HTTPSampler.domain">${HOST}</stringProp>
+          <stringProp name="HTTPSampler.domain">${AUDIT_HOST}</stringProp>
           <stringProp name="HTTPSampler.port">${AUDIT_PORT}</stringProp>
-          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.path">/api/audit-events</stringProp>
           <stringProp name="HTTPSampler.method">GET</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
@@ -200,6 +230,45 @@
         <hashTree>
           <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Header: Tenant ID" enabled="true">
             <collectionProp name="HeaderManager.headers">
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Tenant-Id</stringProp>
+                <stringProp name="Header.value">${TENANT_ID}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+        </hashTree>
+
+        <!-- 5. DOCUMENTS SERVICE SAMPLER -->
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="05 - Documents: GET /api/engagements/{id}/documents" enabled="true">
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" enabled="true">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="tenantId" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.name">tenantId</stringProp>
+                <stringProp name="Argument.value">${TENANT_ID}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+          <stringProp name="HTTPSampler.domain">${DOCUMENTS_HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${DOCUMENTS_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
+          <stringProp name="HTTPSampler.path">/api/engagements/${ENGAGEMENT_ID}/documents</stringProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Header: Auth &amp; Tenant" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${bearer_token}</stringProp>
+              </elementProp>
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">X-Tenant-Id</stringProp>
                 <stringProp name="Header.value">${TENANT_ID}</stringProp>

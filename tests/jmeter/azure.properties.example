@@ -1,0 +1,33 @@
+# Azure Microservices Performance Test Configuration
+
+# Usage:
+# 1. Fill in your Azure hostnames below (without https:// or trailing slashes).
+# 2. Run:
+#    jmeter -n -t tests/jmeter/custodian_performance_test.jmx \
+#              -q tests/jmeter/azure.properties \
+#              -l tests/jmeter/azure_results.jtl \
+#              -e -o tests/jmeter/azure_report
+
+protocol=https
+
+# Replace with your actual Azure hostnames (e.g. *.azurewebsites.net or *.azurecontainerapps.io)
+identity_host=custodian-identity.azurewebsites.net
+workflow_host=custodian-workflow.azurewebsites.net
+audit_host=custodian-audit.azurewebsites.net
+documents_host=custodian-documents.azurewebsites.net
+
+identity_port=443
+workflow_port=443
+audit_port=443
+documents_port=443
+
+tenant_id=tenant-alpha
+
+# Load parameters
+threads=50
+rampup=10
+loops=5
+
+# Optional credentials if your Azure Identity service requires specific accounts
+auth_email=admin@example.com
+auth_password=Password123!
