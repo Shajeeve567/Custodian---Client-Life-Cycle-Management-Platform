@@ -57,11 +57,26 @@ public class UserAccountController(IUserAccountRepository repo, TenantContext te
     {
         var tenantId = Guid.Parse(tenantContext.RequireTenantId());
         
-        // Check if email is already taken
+        // Check if user already exists
         var existingUser = await repo.GetByEmailAsync(request.Email, cancellationToken);
         if (existingUser is not null)
         {
-            return Conflict("A user with this email already exists.");
+            // If user is already a member of this workspace:
+            if (existingUser.Memberships.Any(m => m.TenantId == tenantId))
+            {
+                return Conflict("This user is already a member of this workspace.");
+            }
+
+            // User exists globally (e.g. self-registered), attach them to this tenant!
+            existingUser.Memberships.Add(new TenantMembership
+            {
+                UserId = existingUser.Id,
+                TenantId = tenantId,
+                Role = request.Role
+            });
+            await repo.UpdateAsync(existingUser, cancellationToken);
+
+            return Ok(existingUser);
         }
 
         var user = new UserAccount
@@ -82,7 +97,7 @@ public class UserAccountController(IUserAccountRepository repo, TenantContext te
         };
         await repo.AddAsync(user, cancellationToken);
 
-        return Ok(CreatedAtAction(nameof(GetUserAccount), new { id = user.Id }, user));
+        return Ok(user);
     }
 
     [HttpPut("{id:guid}/role")]

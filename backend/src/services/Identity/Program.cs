@@ -6,6 +6,7 @@ using Custodian.Shared.Auth;
 using Custodian.Identity.Services.Notifications;
 using Custodian.Identity.Services.Notifications.Strategies;
 using Custodian.Identity.Services.Kafka;
+using Custodian.Shared.Http;
 
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("AzureMySqlConnection");
@@ -46,20 +47,13 @@ builder.Services.Configure<ResendOptions>(builder.Configuration.GetSection(Resen
 builder.Services.Configure<KafkaOptions>(builder.Configuration.GetSection(KafkaOptions.SectionName));
 builder.Services.AddHostedService<KafkaNotificationConsumer>();
 
-builder.Services.AddCors(options =>
-{
-    options.AddDefaultPolicy(policy =>
-    {
-        policy.AllowAnyOrigin()
-              .AllowAnyHeader()
-              .AllowAnyMethod();
-    });
-});
+builder.Services.AddCustodianCors(builder.Configuration);
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+        options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
     });
 builder.Services.AddTenantContext(); 
 builder.Services.AddJwtAuthentication(builder.Configuration);

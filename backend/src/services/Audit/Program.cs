@@ -1,6 +1,7 @@
 using Custodian.Audit.Data;
 using Custodian.Audit.Repositories;
 using Custodian.Audit.Services;
+using Custodian.Shared.Http;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
@@ -8,15 +9,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add Controllers & CORS
 builder.Services.AddControllers();
-builder.Services.AddCors(options =>
-{
-    options.AddDefaultPolicy(policy =>
-    {
-        policy.AllowAnyOrigin()
-              .AllowAnyHeader()
-              .AllowAnyMethod();
-    });
-});
+builder.Services.AddCustodianCors(builder.Configuration);
 
 // Add OpenAPI / Swagger
 builder.Services.AddOpenApi();
