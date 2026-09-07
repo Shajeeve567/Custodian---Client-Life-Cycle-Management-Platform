@@ -8,6 +8,12 @@ public sealed class TenantRepository(IdentityDbContext db) : ITenantRepository
     public Task<Tenant?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
         db.Tenants.FirstOrDefaultAsync(t => t.Id == id, cancellationToken);
 
+    public Task<List<TenantMembership>> ListMembershipsByUserAsync(Guid userId, CancellationToken cancellationToken = default) =>
+        db.TenantMemberships
+            .Include(m => m.Tenant)
+            .Where(m => m.UserId == userId)
+            .ToListAsync(cancellationToken);
+
     public Task AddAsync(Tenant tenant, CancellationToken cancellationToken = default)
     {
         db.Tenants.Add(tenant);

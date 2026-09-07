@@ -1,6 +1,5 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
-import { UserRole } from '../types';
 
 interface NavbarProps {
     activeTab: string;
@@ -8,7 +7,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
-    const { tenantId, setTenantId, role, setRole } = useAuth();
+    const { tenantId, tenantName, role, email, logout } = useAuth();
 
     return (
         <header className="navbar">
@@ -49,30 +48,22 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
 
             <div className="navbar-controls">
                 <div className="control-group">
-                    <label className="control-label">Tenant:</label>
-                    <select
-                        value={tenantId}
-                        onChange={(e) => setTenantId(e.target.value)}
-                        className="select-input"
-                    >
-                        <option value="tenant-alpha">Tenant Alpha</option>
-                        <option value="tenant-beta">Tenant Beta</option>
-                        <option value="qa-environment">QA Environment</option>
-                    </select>
+                    <span className="control-label">Tenant:</span>
+                    <span className="font-semibold text-xs text-slate-800 bg-white px-2 py-1 rounded border">
+                        {tenantName || tenantId || 'None'}
+                    </span>
                 </div>
 
                 <div className="control-group">
-                    <label className="control-label">Persona:</label>
-                    <select
-                        value={role}
-                        onChange={(e) => setRole(e.target.value as UserRole)}
-                        className="select-input role-select"
-                    >
-                        <option value="Staff">👨‍💼 Staff</option>
-                        <option value="Client">👤 Client</option>
-                        <option value="Admin">🛡️ Admin</option>
-                    </select>
+                    <span className="control-label">Role:</span>
+                    <span className="font-semibold text-xs text-indigo-700 bg-indigo-50 px-2 py-1 rounded border border-indigo-200">
+                        {role}
+                    </span>
                 </div>
+
+                <button onClick={logout} className="logout-button ml-2">
+                    Sign Out
+                </button>
             </div>
         </header>
     );
