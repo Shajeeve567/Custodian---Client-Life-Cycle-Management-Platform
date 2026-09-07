@@ -9,10 +9,14 @@ Create a `.env` file in the `frontend/` directory (or use default dev fallbacks)
 ```env
 VITE_IDENTITY_URL=http://localhost:5281
 VITE_WORKFLOW_URL=http://localhost:5225
+VITE_AUDIT_URL=http://localhost:5051
+VITE_DOCUMENTS_URL=http://localhost:5171
 ```
 
-- **`VITE_IDENTITY_URL`**: URL of the Identity microservice (Authentication, Tenants, Clients).
-- **`VITE_WORKFLOW_URL`**: URL of the Workflow microservice (Engagements orchestration).
+- **`VITE_IDENTITY_URL`**: URL of the Identity microservice (Authentication, Tenants, Clients, Team).
+- **`VITE_WORKFLOW_URL`**: URL of the Workflow microservice (Engagements orchestration & stage transitions).
+- **`VITE_AUDIT_URL`**: URL of the Audit microservice (Immutable event logs & cryptographic verification).
+- **`VITE_DOCUMENTS_URL`**: URL of the Documents microservice (Evidence uploads & document metadata).
 
 ## Installation & Running
 

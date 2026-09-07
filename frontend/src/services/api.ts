@@ -18,8 +18,8 @@ import {
 export const API_BASE = {
     IDENTITY: (import.meta.env.VITE_IDENTITY_URL || import.meta.env.VITE_IDENTITY_API_URL || 'http://localhost:5281').replace(/\/$/, ''),
     WORKFLOW: (import.meta.env.VITE_WORKFLOW_URL || import.meta.env.VITE_WORKFLOW_API_URL || 'http://localhost:5225').replace(/\/$/, ''),
-    AUDIT: (import.meta.env.VITE_AUDIT_API_URL || 'http://localhost:5227').replace(/\/$/, ''),
-    DOCUMENTS: (import.meta.env.VITE_DOCUMENTS_API_URL || 'http://localhost:5282').replace(/\/$/, ''),
+    AUDIT: (import.meta.env.VITE_AUDIT_URL || import.meta.env.VITE_AUDIT_API_URL || 'http://localhost:5051').replace(/\/$/, ''),
+    DOCUMENTS: (import.meta.env.VITE_DOCUMENTS_URL || import.meta.env.VITE_DOCUMENTS_API_URL || 'http://localhost:5171').replace(/\/$/, ''),
 };
 
 export class ApiError extends Error {

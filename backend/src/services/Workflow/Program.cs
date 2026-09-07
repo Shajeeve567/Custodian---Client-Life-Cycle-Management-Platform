@@ -1,6 +1,7 @@
 using Custodian.Workflow.Data;
 using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
+using Custodian.Shared.Http;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
@@ -8,15 +9,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add controllers & CORS
 builder.Services.AddControllers();
-builder.Services.AddCors(options =>
-{
-    options.AddDefaultPolicy(policy =>
-    {
-        policy.AllowAnyOrigin()
-              .AllowAnyHeader()
-              .AllowAnyMethod();
-    });
-});
+builder.Services.AddCustodianCors(builder.Configuration);
 
 // Configure EF Core with MySQL
 var connectionString = builder.Configuration.GetConnectionString("AzureMySqlConnection");
