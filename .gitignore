@@ -59,6 +59,7 @@ appsettings*.Staging.json
 !.env.example
 *.env.local
 *.env.production
+*.properties
 
 # Keep base config templates
 !appsettings.json
