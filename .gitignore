@@ -89,10 +89,6 @@ coverage/
 jmeter-report/
 jmeter_report/
 
-## Project documentation (ignored)
-[Dd]ocs/
-**/[Dd]ocs/
-
 ## AI Agent Handover Notes & Scratch Files
 AGENT_HANDOVER_KNOWLEDGE.md
 *.handover.md
