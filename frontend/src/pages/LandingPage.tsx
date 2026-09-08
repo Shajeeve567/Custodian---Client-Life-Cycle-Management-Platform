@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 export const LandingPage: React.FC = () => {
-    const { isAuthenticated } = useAuth();
+    const { isAuthenticated, role } = useAuth();
 
     return (
         <div className="landing-wrapper">
@@ -36,13 +36,17 @@ export const LandingPage: React.FC = () => {
                         <a href="#problem">The Problem</a>
                         <a href="#engine">Next Action Engine</a>
                         <a href="#security">Cryptographic Audit</a>
-                        <Link to="/documents">Document Vault</Link>
+                        {isAuthenticated && role === 'Client' ? (
+                            <Link to="/portal">Client Portal</Link>
+                        ) : (
+                            <Link to="/documents">Document Vault</Link>
+                        )}
                     </nav>
 
                     <div className="landing-cta-group">
                         {isAuthenticated ? (
-                            <Link to="/engagements" className="landing-primary-btn">
-                                <span>Go to Dashboard</span>
+                            <Link to={role === 'Client' ? '/portal' : '/engagements'} className="landing-primary-btn">
+                                <span>{role === 'Client' ? 'Go to Client Portal' : 'Go to Dashboard'}</span>
                                 <ArrowRight className="w-4 h-4 ml-1.5" />
                             </Link>
                         ) : (
@@ -174,8 +178,8 @@ export const LandingPage: React.FC = () => {
                             <p className="feature-text">
                                 Computes the single pending action blocking an engagement from advancing, assigning clear ownership to either the agency staff lead or client stakeholder.
                             </p>
-                            <Link to="/engagements" className="feature-link">
-                                <span>Explore Engagements</span>
+                            <Link to={role === 'Client' ? '/portal' : '/engagements'} className="feature-link">
+                                <span>{role === 'Client' ? 'View Next Action' : 'Explore Engagements'}</span>
                                 <ChevronRight className="w-4 h-4" />
                             </Link>
                         </div>
@@ -188,8 +192,8 @@ export const LandingPage: React.FC = () => {
                             <p className="feature-text">
                                 Secure storage for onboarding documentation, contracts, and regulatory certificates, isolated per tenant boundary.
                             </p>
-                            <Link to="/documents" className="feature-link">
-                                <span>View Document Vault</span>
+                            <Link to={role === 'Client' ? '/portal' : '/documents'} className="feature-link">
+                                <span>{role === 'Client' ? 'Upload Documents' : 'View Document Vault'}</span>
                                 <ChevronRight className="w-4 h-4" />
                             </Link>
                         </div>
@@ -202,8 +206,8 @@ export const LandingPage: React.FC = () => {
                             <p className="feature-text">
                                 Cryptographically chained SHA-256 audit log that permanently records state transitions, signoffs, and verification events.
                             </p>
-                            <Link to="/audit" className="feature-link">
-                                <span>Inspect Audit Chain</span>
+                            <Link to={role === 'Client' ? '/portal' : '/audit'} className="feature-link">
+                                <span>{role === 'Client' ? 'Verification Status' : 'Inspect Audit Chain'}</span>
                                 <ChevronRight className="w-4 h-4" />
                             </Link>
                         </div>
@@ -232,11 +236,11 @@ export const LandingPage: React.FC = () => {
                     <div className="footer-links-col">
                         <h4 className="footer-col-title">PRODUCT</h4>
                         <ul className="footer-links-list">
-                            <li><Link to="/engagements">Next Action Engine</Link></li>
-                            <li><Link to="/actions">Gate Enforcement</Link></li>
-                            <li><Link to="/actions">Client Portal</Link></li>
-                            <li><Link to="/documents">Encrypted Vault</Link></li>
-                            <li><Link to="/audit">SLA Radar</Link></li>
+                            <li><Link to={role === 'Client' ? '/portal' : '/engagements'}>Next Action Engine</Link></li>
+                            <li><Link to={role === 'Client' ? '/portal' : '/actions'}>Gate Enforcement</Link></li>
+                            <li><Link to="/portal">Client Portal</Link></li>
+                            <li><Link to={role === 'Client' ? '/portal' : '/documents'}>Encrypted Vault</Link></li>
+                            <li><Link to={role === 'Client' ? '/portal' : '/audit'}>SLA Radar</Link></li>
                         </ul>
                     </div>
 
