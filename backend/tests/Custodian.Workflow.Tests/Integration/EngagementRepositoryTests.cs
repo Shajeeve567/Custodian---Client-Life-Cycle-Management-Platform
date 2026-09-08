@@ -49,6 +49,62 @@ public class EngagementRepositoryTests
     }
 
     [Fact]
+    public async Task CreateAsync_ValidEngagement_ShouldPersistDefaultStage()
+    {
+        // Arrange: Setup unique database for this test run
+        using var context = CreateDbContext(Guid.NewGuid().ToString());
+        var repository = new EngagementRepository(context);
+
+        var engagement = new Engagement
+        {
+            EngagementId = Guid.NewGuid(),
+            TenantId = "tenant-001",
+            ClientId = "client-001",
+            StaffId = "staff-001",
+            Status = EngagementStatus.Draft,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act: Save engagement using repository, without explicitly setting Stage
+        await repository.CreateAsync(engagement);
+
+        // Assert: New engagement persists at the initial stage (CSTD-17 AC1/AC2)
+        var savedInDb = await context.Engagements.FindAsync(engagement.EngagementId);
+        Assert.NotNull(savedInDb);
+        Assert.Equal(EngagementStage.Onboarding, savedInDb.Stage);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_StageChange_ShouldPersistNonDefaultStage()
+    {
+        // Arrange
+        using var context = CreateDbContext(Guid.NewGuid().ToString());
+        var repository = new EngagementRepository(context);
+
+        var engagementId = Guid.NewGuid();
+        var engagement = new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = "tenant-001",
+            ClientId = "c1",
+            StaffId = "s1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
+        };
+        context.Engagements.Add(engagement);
+        await context.SaveChangesAsync();
+
+        // Act: Advance stage and persist
+        engagement.Stage = EngagementStage.DocumentCollection;
+        await repository.UpdateAsync(engagement);
+
+        // Assert: Reloading from the DB reflects the real, persisted stage (CSTD-17 AC2)
+        var reloaded = await repository.GetByIdAsync(engagementId, "tenant-001");
+        Assert.NotNull(reloaded);
+        Assert.Equal(EngagementStage.DocumentCollection, reloaded.Stage);
+    }
+
+    [Fact]
     public async Task GetByIdAsync_SameTenant_ShouldReturnEngagement()
     {
         // Arrange

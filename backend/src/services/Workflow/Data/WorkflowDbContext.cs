@@ -47,6 +47,13 @@ public class WorkflowDbContext : DbContext
                 .HasMaxLength(20)
                 .IsRequired();
 
+            entity.Property(e => e.Stage)
+                .HasColumnName("stage")
+                .HasConversion<string>()
+                .HasMaxLength(40)
+                .HasDefaultValue(EngagementStage.Onboarding)
+                .IsRequired();
+
             entity.Property(e => e.CreatedAt)
                 .HasColumnName("created_at")
                 .IsRequired();

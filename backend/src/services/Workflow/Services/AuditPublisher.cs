@@ -59,6 +59,7 @@ public class AuditPublisher : IAuditPublisher
             new
             {
                 status = engagement.Status.ToString(),
+                stage = engagement.Stage.ToString(),
                 clientId = engagement.ClientId,
                 staffId = engagement.StaffId,
                 createdAt = engagement.CreatedAt

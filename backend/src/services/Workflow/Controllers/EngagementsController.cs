@@ -40,6 +40,7 @@ public class EngagementsController : ControllerBase
             ClientId = request.ClientId,
             StaffId = request.StaffId,
             Status = EngagementStatus.Draft,
+            Stage = EngagementStage.Onboarding,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -129,6 +130,71 @@ public class EngagementsController : ControllerBase
         return Ok(MapToResponse(updated));
     }
 
+    [HttpPut("{id}/stage")]
+    public async Task<ActionResult<EngagementResponse>> UpdateStage(Guid id, [FromBody] UpdateEngagementStageRequest request)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var effectiveTenantId = ResolveTenantId(request.TenantId);
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest("Tenant identification is required.");
+        }
+
+        var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
+
+        if (engagement == null)
+        {
+            return NotFound();
+        }
+
+        // Stage/Status guard: a Closed or Cancelled engagement is terminal and its stage cannot move.
+        if (engagement.Status is EngagementStatus.Closed or EngagementStatus.Cancelled)
+        {
+            return Conflict(new
+            {
+                message = $"Engagement in status '{engagement.Status}' cannot advance stage."
+            });
+        }
+
+        if (!Enum.TryParse<EngagementStage>(request.Stage, true, out var newStage))
+        {
+            return BadRequest($"Invalid stage: '{request.Stage}'. Valid stages are: {string.Join(", ", Enum.GetNames<EngagementStage>())}.");
+        }
+
+        // Subtask Lifecycle Validation: Enforce sequential, forward-only stage transitions
+        if (!EngagementStageValidator.IsValidTransition(engagement.Stage, newStage))
+        {
+            return BadRequest(new
+            {
+                message = $"Invalid stage transition from '{engagement.Stage}' to '{newStage}'."
+            });
+        }
+
+        var previousStage = engagement.Stage;
+        engagement.Stage = newStage;
+
+        var updated = await _repository.UpdateAsync(engagement);
+
+        // Subtask Audit: Publish Stage Change Event to Audit Service
+        await _auditPublisher.PublishEventAsync(
+            updated.EngagementId,
+            effectiveTenantId,
+            "System",
+            "StageChange",
+            new
+            {
+                fromStage = previousStage.ToString(),
+                toStage = newStage.ToString(),
+                changedAt = DateTime.UtcNow
+            });
+
+        return Ok(MapToResponse(updated));
+    }
+
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteEngagement(Guid id, [FromQuery] string? tenantId)
     {
@@ -182,6 +248,8 @@ public class EngagementsController : ControllerBase
         ClientId = e.ClientId,
         StaffId = e.StaffId,
         Status = e.Status.ToString(),
+        Stage = e.Stage.ToString(),
+        StageProgressPercentage = EngagementStageValidator.GetProgressPercentage(e.Stage),
         CreatedAt = e.CreatedAt,
         ClosedAt = e.ClosedAt
     };

@@ -27,6 +27,16 @@ public class UpdateEngagementStatusRequest
     public string Status { get; set; } = string.Empty;
 }
 
+public class UpdateEngagementStageRequest
+{
+    [Required]
+    [MaxLength(36)]
+    public string TenantId { get; set; } = string.Empty;
+
+    [Required]
+    public string Stage { get; set; } = string.Empty;
+}
+
 public class EngagementResponse
 {
     public Guid EngagementId { get; set; }
@@ -34,6 +44,8 @@ public class EngagementResponse
     public string ClientId { get; set; } = string.Empty;
     public string StaffId { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+    public string Stage { get; set; } = string.Empty;
+    public int StageProgressPercentage { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? ClosedAt { get; set; }
 }
