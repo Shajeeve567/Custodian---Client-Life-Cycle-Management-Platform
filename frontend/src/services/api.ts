@@ -13,6 +13,11 @@ import {
     CreateClientRequest,
     UserAccountResponse,
     InviteUserRequest,
+    ClientPortalDashboard,
+    ClientSafeAction,
+    ClientPortalStage,
+    UploadActionEvidenceRequest,
+    ReviewActionRequest,
 } from '../types';
 
 export const API_BASE = {
@@ -250,10 +255,90 @@ export const WorkflowApi = {
         });
     },
 
-    async completeAction(actionId: string, tenantId: string): Promise<ClientAction> {
-        return request<ClientAction>(`${API_BASE.WORKFLOW}/api/Actions/${actionId}/complete`, {
+    async completeAction(actionId: string, tenantId: string, engagementId?: string, actor?: string): Promise<ClientAction> {
+        const url = engagementId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/${actionId}/complete?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/00000000-0000-0000-0000-000000000000/actions/${actionId}/complete?tenantId=${encodeURIComponent(tenantId)}`;
+        return request<ClientAction>(url, {
             method: 'PUT',
-            skipAuthHeader: true,
+            headers: { 'X-Tenant-ID': tenantId },
+            body: JSON.stringify({ completedByActor: actor || 'client-user' }),
+        });
+    },
+
+    async uploadEvidence(
+        engagementId: string,
+        actionId: string,
+        data: UploadActionEvidenceRequest,
+        tenantId: string
+    ): Promise<ClientAction> {
+        return request<ClientAction>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/${actionId}/upload?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'PUT',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify(data),
+            }
+        );
+    },
+
+    async reviewAction(
+        engagementId: string,
+        actionId: string,
+        data: ReviewActionRequest,
+        tenantId: string
+    ): Promise<ClientAction> {
+        return request<ClientAction>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/${actionId}/review?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'PUT',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify(data),
+            }
+        );
+    },
+};
+
+/* ==========================================================================
+   Client Portal BFF API (Client-Safe Aggregation)
+   ========================================================================== */
+
+export const PortalApi = {
+    // 1. Automatically fetch the authenticated client's active engagement dashboard
+    async getMyEngagement(tenantId?: string | null, clientId?: string | null): Promise<ClientPortalDashboard> {
+        let url = `${API_BASE.WORKFLOW}/api/portal/my-engagement`;
+        const params = new URLSearchParams();
+        if (tenantId) params.append('tenantId', tenantId);
+        if (clientId) params.append('clientId', clientId);
+        const query = params.toString();
+        if (query) url += `?${query}`;
+
+        const headers: Record<string, string> = {};
+        if (tenantId) headers['X-Tenant-ID'] = tenantId;
+        if (clientId) headers['X-Client-ID'] = clientId;
+
+        return request<ClientPortalDashboard>(url, {
+            method: 'GET',
+            headers,
+        });
+    },
+
+    // 2. Fetch client-safe dashboard for a specific engagement GUID (enforcing IDOR isolation)
+    async getEngagementDashboard(engagementId: string, tenantId?: string | null, clientId?: string | null): Promise<ClientPortalDashboard> {
+        let url = `${API_BASE.WORKFLOW}/api/portal/engagements/${engagementId}`;
+        const params = new URLSearchParams();
+        if (tenantId) params.append('tenantId', tenantId);
+        if (clientId) params.append('clientId', clientId);
+        const query = params.toString();
+        if (query) url += `?${query}`;
+
+        const headers: Record<string, string> = {};
+        if (tenantId) headers['X-Tenant-ID'] = tenantId;
+        if (clientId) headers['X-Client-ID'] = clientId;
+
+        return request<ClientPortalDashboard>(url, {
+            method: 'GET',
+            headers,
         });
     },
 };
