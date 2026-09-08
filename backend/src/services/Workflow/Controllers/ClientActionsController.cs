@@ -112,6 +112,73 @@ public class ClientActionsController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// Client evidence upload endpoint: Automatically transitions action from Pending/Rejected to Uploaded (awaiting staff review).
+    /// </summary>
+    [HttpPut("{actionId:guid}/upload")]
+    public async Task<ActionResult<ClientActionResponseDto>> UploadEvidence(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid actionId,
+        [FromBody] UploadActionEvidenceDto dto,
+        [FromQuery] string? tenantId)
+    {
+        var effectiveTenantId = ResolveTenantId(tenantId);
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var result = await _actionService.UploadEvidenceAsync(engagementId, actionId, effectiveTenantId, dto);
+        if (result == null)
+        {
+            return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+        }
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Staff review endpoint: Marks an action as Completed (verified/accepted) or Rejected (revision required).
+    /// </summary>
+    [HttpPut("{actionId:guid}/review")]
+    public async Task<ActionResult<ClientActionResponseDto>> ReviewAction(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid actionId,
+        [FromBody] ReviewActionDto dto,
+        [FromQuery] string? tenantId)
+    {
+        var effectiveTenantId = ResolveTenantId(tenantId);
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        try
+        {
+            var result = await _actionService.ReviewActionAsync(engagementId, actionId, effectiveTenantId, dto);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     private string? ResolveTenantId(string? queryTenantId)
     {
         // 1. Check HTTP header X-Tenant-ID

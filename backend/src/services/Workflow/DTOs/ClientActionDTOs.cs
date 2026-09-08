@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Custodian.Workflow.Models;
 
 namespace Custodian.Workflow.DTOs;
 
@@ -57,3 +58,25 @@ public class CompleteClientActionDto
     [MaxLength(100)]
     public string CompletedByActor { get; set; } = string.Empty;
 }
+
+public class UploadActionEvidenceDto
+{
+    [Required]
+    [MaxLength(100)]
+    public string UploaderActor { get; set; } = string.Empty;
+
+    public Guid? DocumentId { get; set; }
+}
+
+public class ReviewActionDto
+{
+    [Required]
+    public string Status { get; set; } = ClientActionStatus.Completed; // Completed or Rejected
+
+    [Required]
+    [MaxLength(100)]
+    public string ReviewerActor { get; set; } = string.Empty;
+
+    public string? ReviewNote { get; set; }
+}
+

@@ -1,5 +1,6 @@
 using Custodian.Workflow.Controllers;
 using Custodian.Workflow.DTOs;
+using Custodian.Workflow.Models;
 using Custodian.Workflow.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -159,5 +160,51 @@ public class ClientActionsControllerTests
         // Assert
         var notFoundResult = Assert.IsType<NotFoundObjectResult>(result.Result);
         Assert.Equal(404, notFoundResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task UploadEvidence_ValidRequest_Returns200OK()
+    {
+        // Arrange
+        SetupTenantHeader("tenant-001");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var dto = new UploadActionEvidenceDto { UploaderActor = "client-user-1", DocumentId = Guid.NewGuid() };
+        var expectedResponse = new ClientActionResponseDto { ActionId = actionId, Status = ClientActionStatus.Uploaded };
+
+        _mockService.Setup(s => s.UploadEvidenceAsync(engagementId, actionId, "tenant-001", dto))
+                    .ReturnsAsync(expectedResponse);
+
+        // Act
+        var result = await _controller.UploadEvidence(engagementId, actionId, dto, tenantId: null);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        var response = Assert.IsType<ClientActionResponseDto>(okResult.Value);
+        Assert.Equal(ClientActionStatus.Uploaded, response.Status);
+    }
+
+    [Fact]
+    public async Task ReviewAction_ValidRequest_Returns200OK()
+    {
+        // Arrange
+        SetupTenantHeader("tenant-001");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var dto = new ReviewActionDto { Status = ClientActionStatus.Completed, ReviewerActor = "staff-reviewer" };
+        var expectedResponse = new ClientActionResponseDto { ActionId = actionId, Status = ClientActionStatus.Completed };
+
+        _mockService.Setup(s => s.ReviewActionAsync(engagementId, actionId, "tenant-001", dto))
+                    .ReturnsAsync(expectedResponse);
+
+        // Act
+        var result = await _controller.ReviewAction(engagementId, actionId, dto, tenantId: null);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        var response = Assert.IsType<ClientActionResponseDto>(okResult.Value);
+        Assert.Equal(ClientActionStatus.Completed, response.Status);
     }
 }
