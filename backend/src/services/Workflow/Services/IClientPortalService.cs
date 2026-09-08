@@ -14,4 +14,10 @@ public interface IClientPortalService
     /// Automatically resolves the active engagement for the given client and aggregates the dashboard data.
     /// </summary>
     Task<ClientPortalDashboardDto?> GetActiveDashboardForClientAsync(string tenantId, string clientId);
+
+    /// <summary>
+    /// Resolves the latest active engagement in the tenant (used for staff previewing client portals).
+    /// </summary>
+    Task<ClientPortalDashboardDto?> GetActiveDashboardForTenantAsync(string tenantId);
 }
+

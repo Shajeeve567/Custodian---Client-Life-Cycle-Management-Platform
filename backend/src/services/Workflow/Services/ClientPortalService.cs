@@ -71,6 +71,30 @@ public class ClientPortalService : IClientPortalService
         return await BuildDashboardDtoAsync(engagement);
     }
 
+    public async Task<ClientPortalDashboardDto?> GetActiveDashboardForTenantAsync(string tenantId)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return null;
+        }
+
+        // Fallback for staff preview: find latest active (or recent) engagement in the workspace
+        var engagement = await _dbContext.Engagements
+            .AsNoTracking()
+            .Where(e => e.TenantId == tenantId)
+            .OrderByDescending(e => e.Status == EngagementStatus.Started)
+            .ThenByDescending(e => e.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        if (engagement == null)
+        {
+            return null;
+        }
+
+        return await BuildDashboardDtoAsync(engagement);
+    }
+
+
     private async Task<ClientPortalDashboardDto> BuildDashboardDtoAsync(Engagement engagement)
     {
         var allActions = await _dbContext.ClientActions

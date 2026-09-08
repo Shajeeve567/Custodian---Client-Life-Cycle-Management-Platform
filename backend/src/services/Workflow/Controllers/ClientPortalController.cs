@@ -42,9 +42,15 @@ public class ClientPortalController : ControllerBase
         }
 
         var dashboard = await _portalService.GetActiveDashboardForClientAsync(effectiveTenantId, effectiveClientId);
+        if (dashboard == null && !User.IsInRole("Client"))
+        {
+            // If caller is Staff/Owner previewing the portal, fallback to the latest active engagement in this workspace
+            dashboard = await _portalService.GetActiveDashboardForTenantAsync(effectiveTenantId);
+        }
+
         if (dashboard == null)
         {
-            return NotFound(new { message = $"No active onboarding engagement found for client '{effectiveClientId}' in tenant '{effectiveTenantId}'." });
+            return NotFound(new { message = $"No active onboarding engagement found in workspace '{effectiveTenantId}'." });
         }
 
         return Ok(dashboard);

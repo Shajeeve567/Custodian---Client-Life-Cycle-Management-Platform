@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { ClientPortalDashboard, ClientSafeAction } from '../types';
 import { PortalApi, WorkflowApi } from '../services/api';
@@ -25,7 +26,7 @@ interface ClientPortalViewProps {
 }
 
 export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId: initialEngagementId }) => {
-    const { tenantId, userId, tenantName } = useAuth();
+    const { tenantId, userId, tenantName, role } = useAuth();
     const [dashboard, setDashboard] = useState<ClientPortalDashboard | null>(null);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
@@ -156,21 +157,37 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
     if (error || !dashboard) {
         return (
             <div className="p-8 bg-white/90 backdrop-blur-md rounded-2xl border border-slate-200 shadow-xs text-center space-y-4">
-                <div className="w-12 h-12 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center mx-auto text-amber-600">
-                    <AlertCircle className="w-6 h-6" />
+                <div className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center mx-auto text-indigo-600">
+                    <Layers className="w-6 h-6" />
                 </div>
                 <div>
-                    <h3 className="text-base font-bold text-slate-900">Unable to Load Client Portal</h3>
-                    <p className="text-xs text-slate-600 mt-1 max-w-md mx-auto">
-                        {error || 'No active engagement was found for your client account in this workspace.'}
+                    <h3 className="text-base font-bold text-slate-900">
+                        {role !== 'Client' ? 'No Engagements to Preview' : 'Unable to Load Client Portal'}
+                    </h3>
+                    <p className="text-xs text-slate-600 mt-1 max-w-md mx-auto leading-relaxed">
+                        {role !== 'Client'
+                            ? 'You are in Staff Preview Mode, but no client onboarding engagements exist in this workspace yet. Create an engagement from the agency dashboard first.'
+                            : error || 'No active engagement was found for your client account in this workspace.'}
                     </p>
                 </div>
-                <button
-                    onClick={fetchDashboard}
-                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#635bff] to-[#712ae2] text-white text-xs font-semibold hover:opacity-95 transition"
-                >
-                    Retry Connection
-                </button>
+                <div className="flex items-center justify-center gap-3">
+                    {role !== 'Client' ? (
+                        <Link
+                            to="/engagements"
+                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#635bff] to-[#712ae2] text-white text-xs font-semibold hover:opacity-95 transition shadow-sm flex items-center gap-1.5"
+                        >
+                            <span>Go to Engagements Dashboard</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                        </Link>
+                    ) : (
+                        <button
+                            onClick={fetchDashboard}
+                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#635bff] to-[#712ae2] text-white text-xs font-semibold hover:opacity-95 transition"
+                        >
+                            Retry Connection
+                        </button>
+                    )}
+                </div>
             </div>
         );
     }
@@ -193,6 +210,26 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
 
     return (
         <div className="space-y-6">
+            {/* Staff Preview Mode Banner */}
+            {role !== 'Client' && (
+                <div className="bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-200 p-3.5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-indigo-950 shadow-xs">
+                    <div className="flex items-center gap-2.5">
+                        <span className="font-bold uppercase tracking-wider bg-gradient-to-r from-[#635bff] to-[#712ae2] text-white px-2.5 py-0.5 rounded-full text-[10px] shadow-xs">
+                            Staff Preview Mode
+                        </span>
+                        <span>
+                            You are previewing how client stakeholders see this onboarding portal for <strong>ENG-{engagementId.slice(0, 6).toUpperCase()}</strong>.
+                        </span>
+                    </div>
+                    <Link
+                        to="/engagements"
+                        className="font-semibold text-indigo-700 hover:text-indigo-900 transition flex items-center gap-1 shrink-0"
+                    >
+                        <span>← Back to All Engagements</span>
+                    </Link>
+                </div>
+            )}
+
             {/* Master Header Card */}
             <div className="bg-white/90 backdrop-blur-md p-6 rounded-2xl border border-slate-200/90 shadow-xs">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
