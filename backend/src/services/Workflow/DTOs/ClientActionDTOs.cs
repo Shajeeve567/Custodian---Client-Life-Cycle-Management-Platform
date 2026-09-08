@@ -11,6 +11,8 @@ public class ClientActionResponseDto
     public string? Description { get; set; }
     public string Type { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+    public int StageNumber { get; set; } = 1;
+    public DateTime? DeadlineUtc { get; set; }
     public string Source { get; set; } = string.Empty;
     public bool IsInternalOnly { get; set; }
     public string AssignedToRole { get; set; } = string.Empty;
@@ -31,6 +33,11 @@ public class CreateClientActionDto
     [Required]
     [MaxLength(50)]
     public string Type { get; set; } = "DocumentUpload";
+
+    [Range(1, 5)]
+    public int StageNumber { get; set; } = 1;
+
+    public DateTime? DeadlineUtc { get; set; }
 
     [Required]
     [MaxLength(100)]

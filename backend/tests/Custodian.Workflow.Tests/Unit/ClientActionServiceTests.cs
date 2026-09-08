@@ -255,4 +255,40 @@ public class ClientActionServiceTests
         var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
         Assert.Equal("Completed", dbAction!.Status);
     }
+
+    [Fact]
+    public async Task CreateActionAsync_WithStageAndDeadline_PersistsAndMapsFieldsCorrectly()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var deadline = DateTime.UtcNow.AddDays(3);
+
+        var service = new ClientActionService(db);
+        var createDto = new CreateClientActionDto
+        {
+            Title = "Submit Proof of Address",
+            Type = "DocumentUpload",
+            StageNumber = 2,
+            DeadlineUtc = deadline,
+            Source = "Stage2Compliance",
+            IsInternalOnly = false,
+            AssignedToRole = "Client"
+        };
+
+        // Act
+        var created = await service.CreateActionAsync(engagementId, tenantId, createDto);
+
+        // Assert
+        Assert.NotNull(created);
+        Assert.Equal(2, created.StageNumber);
+        Assert.Equal(deadline, created.DeadlineUtc);
+        Assert.Equal(ClientActionStatus.Pending, created.Status);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == created.ActionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(2, dbAction.StageNumber);
+        Assert.Equal(deadline, dbAction.DeadlineUtc);
+    }
 }

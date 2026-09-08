@@ -73,6 +73,8 @@ public class WorkflowDbContext : DbContext
             entity.Property(a => a.Description).HasColumnName("description");
             entity.Property(a => a.Type).HasColumnName("type").HasMaxLength(50).IsRequired();
             entity.Property(a => a.Status).HasColumnName("status").HasMaxLength(30).IsRequired();
+            entity.Property(a => a.StageNumber).HasColumnName("stage_number").HasDefaultValue(1).IsRequired();
+            entity.Property(a => a.DeadlineUtc).HasColumnName("deadline_utc");
             entity.Property(a => a.Source).HasColumnName("source").HasMaxLength(100).IsRequired();
             entity.Property(a => a.IsInternalOnly).HasColumnName("is_internal_only").IsRequired();
             entity.Property(a => a.AssignedToRole).HasColumnName("assigned_to_role").HasMaxLength(50);
@@ -84,6 +86,7 @@ public class WorkflowDbContext : DbContext
             entity.HasIndex(a => a.TenantId).HasDatabaseName("idx_action_tenant_id");
             entity.HasIndex(a => a.EngagementId).HasDatabaseName("idx_action_engagement_id");
             entity.HasIndex(a => new { a.TenantId, a.EngagementId }).HasDatabaseName("idx_action_tenant_engagement");
+            entity.HasIndex(a => new { a.EngagementId, a.StageNumber }).HasDatabaseName("idx_action_engagement_stage");
         });
     }
 }

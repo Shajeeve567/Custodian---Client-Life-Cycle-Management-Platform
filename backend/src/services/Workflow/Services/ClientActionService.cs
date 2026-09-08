@@ -63,7 +63,9 @@ public class ClientActionService : IClientActionService
             Title = dto.Title,
             Description = dto.Description,
             Type = dto.Type,
-            Status = "Pending",
+            Status = ClientActionStatus.Pending,
+            StageNumber = dto.StageNumber > 0 ? dto.StageNumber : 1,
+            DeadlineUtc = dto.DeadlineUtc,
             Source = dto.Source,
             IsInternalOnly = dto.IsInternalOnly,
             AssignedToRole = dto.AssignedToRole,
@@ -92,7 +94,7 @@ public class ClientActionService : IClientActionService
             return null;
         }
 
-        action.Status = "Completed";
+        action.Status = ClientActionStatus.Completed;
         action.CompletedByActor = dto.CompletedByActor;
         action.CompletedAt = DateTime.UtcNow;
 
@@ -112,6 +114,8 @@ public class ClientActionService : IClientActionService
             Description = entity.Description,
             Type = entity.Type,
             Status = entity.Status,
+            StageNumber = entity.StageNumber,
+            DeadlineUtc = entity.DeadlineUtc,
             Source = entity.Source,
             IsInternalOnly = entity.IsInternalOnly,
             AssignedToRole = entity.AssignedToRole,
