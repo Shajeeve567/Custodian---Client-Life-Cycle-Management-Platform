@@ -87,7 +87,7 @@ export interface CreateEngagementRequest {
     staffId: string;
 }
 
-export type ActionType = 'KycDocument' | 'SignAgreement' | 'CustomTask';
+export type ActionType = 'KycDocument' | 'SignAgreement' | 'CustomTask' | 'DocumentUpload';
 
 export interface ClientAction {
     actionId: string;
@@ -95,22 +95,76 @@ export interface ClientAction {
     tenantId: string;
     title: string;
     description: string;
-    type: ActionType;
-    assignedRole: UserRole;
+    type: ActionType | string;
+    status?: string;
+    stageNumber?: number;
+    deadlineUtc?: string | null;
+    assignedRole?: UserRole;
     isInternalOnly: boolean;
-    isCompleted: boolean;
+    isCompleted?: boolean;
     createdAt: string;
     completedAt?: string | null;
+    completedByActor?: string | null;
 }
 
 export interface CreateClientActionRequest {
     engagementId: string;
     title: string;
-    description: string;
-    type: ActionType;
-    assignedRole: UserRole;
-    isInternalOnly: boolean;
+    description?: string;
+    type: ActionType | string;
+    stageNumber?: number;
+    deadlineUtc?: string | null;
+    assignedRole?: UserRole;
+    isInternalOnly?: boolean;
 }
+
+export interface ClientSafeAction {
+    actionId: string;
+    title: string;
+    description?: string | null;
+    type: string;
+    status: string;
+    stageNumber: number;
+    deadlineUtc?: string | null;
+    isOverdue: boolean;
+    daysRemaining?: number | null;
+}
+
+export interface ClientPortalStage {
+    stageNumber: number;
+    name: string;
+    tagline: string;
+    status: 'Completed' | 'Current' | 'Upcoming' | string;
+}
+
+export interface ClientPortalDashboard {
+    engagementId: string;
+    status: EngagementStatus | string;
+    createdAt: string;
+    currentStageNumber: number;
+    currentStageName: string;
+    currentStageTagline: string;
+    conditionStatus: string;
+    conditionDescription: string;
+    progressPercentage: number;
+    completedTasksCount: number;
+    totalTasksCount: number;
+    primaryNextAction?: ClientSafeAction | null;
+    pendingActions: ClientSafeAction[];
+    stages: ClientPortalStage[];
+}
+
+export interface UploadActionEvidenceRequest {
+    uploaderActor: string;
+    documentId?: string;
+}
+
+export interface ReviewActionRequest {
+    status: 'Completed' | 'Rejected' | string;
+    reviewerActor: string;
+    reviewNote?: string;
+}
+
 
 export interface AuditEvent {
     eventId: string;

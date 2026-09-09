@@ -24,15 +24,20 @@ export const App: React.FC = () => {
                     <Route path="/login" element={<AuthPage initialMode="login" />} />
                     <Route path="/register" element={<AuthPage initialMode="register" />} />
 
-                    {/* Protected Operational Routes (Figma Node 9:1350) */}
+                    {/* Protected Operational Routes */}
                     <Route element={<ProtectedRoute />}>
-                        <Route path="/engagements" element={<EngagementsPage />} />
-                        <Route path="/workspace/:engagementId" element={<WorkspacePage />} />
-                        <Route path="/actions" element={<WorkflowsPage />} />
-                        <Route path="/workflows" element={<Navigate to="/actions" replace />} />
-                        <Route path="/documents" element={<DocumentsPage />} />
-                        <Route path="/audit" element={<AuditPage />} />
+                        {/* Client Portal: Available to Clients (and Staff previewing) */}
                         <Route path="/portal" element={<PortalPage />} />
+
+                        {/* Agency Operations: Strictly restricted to Staff, Owner, Admin */}
+                        <Route element={<ProtectedRoute allowedRoles={['Owner', 'Staff', 'Admin']} />}>
+                            <Route path="/engagements" element={<EngagementsPage />} />
+                            <Route path="/workspace/:engagementId" element={<WorkspacePage />} />
+                            <Route path="/actions" element={<WorkflowsPage />} />
+                            <Route path="/workflows" element={<Navigate to="/actions" replace />} />
+                            <Route path="/documents" element={<DocumentsPage />} />
+                            <Route path="/audit" element={<AuditPage />} />
+                        </Route>
                     </Route>
 
                     {/* Fallback */}

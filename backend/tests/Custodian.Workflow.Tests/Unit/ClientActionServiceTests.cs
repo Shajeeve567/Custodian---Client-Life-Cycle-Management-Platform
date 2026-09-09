@@ -255,4 +255,159 @@ public class ClientActionServiceTests
         var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
         Assert.Equal("Completed", dbAction!.Status);
     }
+
+    [Fact]
+    public async Task CreateActionAsync_WithStageAndDeadline_PersistsAndMapsFieldsCorrectly()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var deadline = DateTime.UtcNow.AddDays(3);
+
+        var service = new ClientActionService(db);
+        var createDto = new CreateClientActionDto
+        {
+            Title = "Submit Proof of Address",
+            Type = "DocumentUpload",
+            StageNumber = 2,
+            DeadlineUtc = deadline,
+            Source = "Stage2Compliance",
+            IsInternalOnly = false,
+            AssignedToRole = "Client"
+        };
+
+        // Act
+        var created = await service.CreateActionAsync(engagementId, tenantId, createDto);
+
+        // Assert
+        Assert.NotNull(created);
+        Assert.Equal(2, created.StageNumber);
+        Assert.Equal(deadline, created.DeadlineUtc);
+        Assert.Equal(ClientActionStatus.Pending, created.Status);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == created.ActionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(2, dbAction.StageNumber);
+        Assert.Equal(deadline, dbAction.DeadlineUtc);
+    }
+
+    [Fact]
+    public async Task UploadEvidenceAsync_PendingAction_TransitionsToUploaded()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Tax Certificate",
+            Status = ClientActionStatus.Pending
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientActionService(db);
+        var uploadDto = new UploadActionEvidenceDto
+        {
+            UploaderActor = "client-user-1",
+            DocumentId = Guid.NewGuid()
+        };
+
+        // Act
+        var result = await service.UploadEvidenceAsync(engagementId, actionId, tenantId, uploadDto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Uploaded, result.Status);
+        Assert.Equal("client-user-1", result.CompletedByActor);
+        Assert.Null(result.CompletedAt); // Still awaiting review
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.Equal(ClientActionStatus.Uploaded, dbAction!.Status);
+    }
+
+    [Fact]
+    public async Task ReviewActionAsync_Accept_TransitionsToCompleted()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Tax Certificate",
+            Status = ClientActionStatus.Uploaded
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientActionService(db);
+        var reviewDto = new ReviewActionDto
+        {
+            Status = ClientActionStatus.Completed,
+            ReviewerActor = "staff-reviewer-99",
+            ReviewNote = "Document verified successfully."
+        };
+
+        // Act
+        var result = await service.ReviewActionAsync(engagementId, actionId, tenantId, reviewDto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Completed, result.Status);
+        Assert.NotNull(result.CompletedAt);
+        Assert.Equal("staff-reviewer-99", result.CompletedByActor);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.Equal(ClientActionStatus.Completed, dbAction!.Status);
+    }
+
+    [Fact]
+    public async Task ReviewActionAsync_Reject_TransitionsToRejected()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Tax Certificate",
+            Status = ClientActionStatus.Uploaded
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientActionService(db);
+        var reviewDto = new ReviewActionDto
+        {
+            Status = ClientActionStatus.Rejected,
+            ReviewerActor = "staff-reviewer-99",
+            ReviewNote = "Image is blurry. Please re-upload a clear copy."
+        };
+
+        // Act
+        var result = await service.ReviewActionAsync(engagementId, actionId, tenantId, reviewDto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Rejected, result.Status);
+        Assert.Null(result.CompletedAt); // Not completed
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.Equal(ClientActionStatus.Rejected, dbAction!.Status);
+        Assert.Contains("blurry", dbAction.SourceMetadata);
+    }
 }

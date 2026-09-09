@@ -2,6 +2,14 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Custodian.Workflow.Models;
 
+public static class ClientActionStatus
+{
+    public const string Pending = "Pending";
+    public const string Uploaded = "Uploaded";
+    public const string Completed = "Completed";
+    public const string Rejected = "Rejected";
+}
+
 public class ClientAction
 {
     [Key]
@@ -26,7 +34,12 @@ public class ClientAction
 
     [Required]
     [MaxLength(30)]
-    public string Status { get; set; } = "Pending";
+    public string Status { get; set; } = ClientActionStatus.Pending;
+
+    [Range(1, 5)]
+    public int StageNumber { get; set; } = 1;
+
+    public DateTime? DeadlineUtc { get; set; }
 
     [Required]
     [MaxLength(100)]
