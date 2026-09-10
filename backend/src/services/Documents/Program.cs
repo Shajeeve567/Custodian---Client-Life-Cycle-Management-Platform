@@ -14,6 +14,11 @@ builder.Services.AddSingleton<IDocumentValidator, DocumentValidator>();
 builder.Services.AddScoped<IStorageService, LocalStorageService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 
+// Compliance Rule Engine & Rules
+builder.Services.AddSingleton<Custodian.Documents.Compliance.Rules.IComplianceRule, Custodian.Documents.Compliance.Rules.DocumentFreshnessRule>();
+builder.Services.AddSingleton<Custodian.Documents.Compliance.Rules.IComplianceRule, Custodian.Documents.Compliance.Rules.DocumentExpiryRule>();
+builder.Services.AddSingleton<Custodian.Documents.Compliance.IComplianceRuleEngine, Custodian.Documents.Compliance.ComplianceRuleEngine>();
+
 // Configure EF Core with MySQL
 var connectionString = builder.Configuration.GetConnectionString("AzureMySqlConnection");
 if (string.IsNullOrWhiteSpace(connectionString) || connectionString.Contains("YOUR_SECRET_STRING"))
