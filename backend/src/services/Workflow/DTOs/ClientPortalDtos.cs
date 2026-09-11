@@ -49,6 +49,7 @@ public class ClientSafeActionDto
     public DateTime? DeadlineUtc { get; set; }
     public bool IsOverdue { get; set; }
     public int? DaysRemaining { get; set; }
+    public string? RejectionReason { get; set; }
 }
 
 /// <summary>

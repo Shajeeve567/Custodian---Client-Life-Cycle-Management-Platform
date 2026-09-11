@@ -128,6 +128,7 @@ export interface ClientSafeAction {
     deadlineUtc?: string | null;
     isOverdue: boolean;
     daysRemaining?: number | null;
+    rejectionReason?: string | null;
 }
 
 export interface ClientPortalStage {
@@ -157,6 +158,8 @@ export interface ClientPortalDashboard {
 export interface UploadActionEvidenceRequest {
     uploaderActor: string;
     documentId?: string;
+    complianceStatus?: string;
+    rejectionReason?: string;
 }
 
 export interface ReviewActionRequest {
@@ -188,4 +191,7 @@ export interface DocumentMetadata {
     expiryDate: string;
     uploadedAt: string;
     filePath?: string;
+    complianceStatus?: string;
+    rejectionReason?: string;
+    validatedAt?: string;
 }

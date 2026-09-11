@@ -332,6 +332,94 @@ public class ClientActionServiceTests
     }
 
     [Fact]
+    public async Task UploadEvidenceAsync_RejectedCompliance_TransitionsToRejected_PreservingDeterministicReason()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var documentId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Utility Bill",
+            Status = ClientActionStatus.Pending
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientActionService(db);
+        var uploadDto = new UploadActionEvidenceDto
+        {
+            UploaderActor = "client-user-1",
+            DocumentId = documentId,
+            ComplianceStatus = "Rejected",
+            RejectionReason = "Document exceeds maximum allowable age of 90 days (issued 120 days ago)."
+        };
+
+        // Act
+        var result = await service.UploadEvidenceAsync(engagementId, actionId, tenantId, uploadDto);
+
+        // Assert: Workflow contract requires automatic rejection without human staff review
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Rejected, result.Status);
+        Assert.Equal("client-user-1", result.CompletedByActor);
+        Assert.Null(result.CompletedAt);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(ClientActionStatus.Rejected, dbAction.Status);
+        Assert.Contains("Rejected", dbAction.SourceMetadata);
+        Assert.Contains("exceeds maximum allowable age of 90 days", dbAction.SourceMetadata);
+    }
+
+    [Fact]
+    public async Task UploadEvidenceAsync_CompliantCompliance_TransitionsToUploaded_AwaitingHumanVerification()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var documentId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Valid Passport",
+            Status = ClientActionStatus.Pending
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientActionService(db);
+        var uploadDto = new UploadActionEvidenceDto
+        {
+            UploaderActor = "client-user-1",
+            DocumentId = documentId,
+            ComplianceStatus = "Compliant"
+        };
+
+        // Act
+        var result = await service.UploadEvidenceAsync(engagementId, actionId, tenantId, uploadDto);
+
+        // Assert: Automatic check passed -> transitions to Uploaded (human verification is a separate state)
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Uploaded, result.Status);
+        Assert.Equal("client-user-1", result.CompletedByActor);
+        Assert.Null(result.CompletedAt);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(ClientActionStatus.Uploaded, dbAction.Status);
+        Assert.Contains("Compliant", dbAction.SourceMetadata);
+    }
+
+    [Fact]
     public async Task ReviewActionAsync_Accept_TransitionsToCompleted()
     {
         // Arrange

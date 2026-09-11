@@ -98,13 +98,15 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
 
             const uploadedDoc = await DocumentsApi.uploadDocument(engagementId, formData, tenantId);
 
-            // 2. Automatically transition Workflow action status from Pending/Rejected -> Uploaded
+            // 2. Automatically transition Workflow action status with compliance result contract
             await WorkflowApi.uploadEvidence(
                 engagementId,
                 action.actionId,
                 {
                     uploaderActor: userId || 'client-user',
                     documentId: uploadedDoc?.documentId,
+                    complianceStatus: uploadedDoc?.complianceStatus,
+                    rejectionReason: uploadedDoc?.rejectionReason,
                 },
                 tenantId
             );

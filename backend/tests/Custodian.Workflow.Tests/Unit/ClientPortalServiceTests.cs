@@ -255,4 +255,48 @@ public class ClientPortalServiceTests
         Assert.NotNull(dashboard);
         Assert.Equal(activeEngagementId, dashboard.EngagementId);
     }
+
+    [Fact]
+    public async Task GetDashboard_RejectedActionWithReason_MapsRejectionReasonToSafeAction()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+        var clientId = "client-alpha";
+        var expectedReason = "Document exceeds maximum allowable age of 90 days (issued 120 days ago).";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = clientId,
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started
+        });
+
+        db.ClientActions.Add(new ClientAction
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Utility Bill",
+            Status = ClientActionStatus.Rejected,
+            StageNumber = 2,
+            IsInternalOnly = false,
+            AssignedToRole = "Client",
+            SourceMetadata = $"{{\"documentId\":\"{Guid.NewGuid()}\",\"complianceStatus\":\"Rejected\",\"rejectionReason\":\"{expectedReason}\"}}"
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientPortalService(db);
+
+        // Act
+        var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+
+        // Assert
+        Assert.NotNull(dashboard);
+        Assert.NotNull(dashboard.PrimaryNextAction);
+        Assert.Equal(ClientActionStatus.Rejected, dashboard.PrimaryNextAction.Status);
+        Assert.Equal(expectedReason, dashboard.PrimaryNextAction.RejectionReason);
+    }
 }

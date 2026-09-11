@@ -118,12 +118,42 @@ public class ClientActionService : IClientActionService
             return null;
         }
 
-        // Automatic state transition upon client upload: Pending/Rejected -> Uploaded (awaiting review)
-        action.Status = ClientActionStatus.Uploaded;
-        action.CompletedByActor = dto.UploaderActor;
-        if (dto.DocumentId.HasValue)
+        // Workflow contract: Automatic checks and human verification are deliberately separate states.
+        // If automatic compliance validation rejected the document, immediately mark the action as Rejected
+        // with the deterministic rejection reason, bypassing human staff review.
+        var isRejected = string.Equals(dto.ComplianceStatus, "Rejected", StringComparison.OrdinalIgnoreCase);
+
+        if (isRejected)
         {
-            action.SourceMetadata = $"{{\"documentId\":\"{dto.DocumentId.Value}\"}}";
+            action.Status = ClientActionStatus.Rejected;
+            action.CompletedAt = null;
+            action.CompletedByActor = dto.UploaderActor;
+
+            var reason = !string.IsNullOrWhiteSpace(dto.RejectionReason)
+                ? dto.RejectionReason.Trim()
+                : "The submitted evidence does not meet compliance standards.";
+
+            var metaObj = new
+            {
+                documentId = dto.DocumentId?.ToString(),
+                complianceStatus = "Rejected",
+                rejectionReason = reason
+            };
+            action.SourceMetadata = System.Text.Json.JsonSerializer.Serialize(metaObj);
+        }
+        else
+        {
+            // If compliant (or pending), transition to Uploaded awaiting human verification
+            action.Status = ClientActionStatus.Uploaded;
+            action.CompletedAt = null;
+            action.CompletedByActor = dto.UploaderActor;
+
+            var metaObj = new
+            {
+                documentId = dto.DocumentId?.ToString(),
+                complianceStatus = "Compliant"
+            };
+            action.SourceMetadata = System.Text.Json.JsonSerializer.Serialize(metaObj);
         }
 
         await _dbContext.SaveChangesAsync();

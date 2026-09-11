@@ -66,6 +66,10 @@ public class UploadActionEvidenceDto
     public string UploaderActor { get; set; } = string.Empty;
 
     public Guid? DocumentId { get; set; }
+
+    public string? ComplianceStatus { get; set; }
+
+    public string? RejectionReason { get; set; }
 }
 
 public class ReviewActionDto

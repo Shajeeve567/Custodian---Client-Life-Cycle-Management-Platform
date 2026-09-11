@@ -306,6 +306,12 @@ public class ClientPortalService : IClientPortalService
             ? (int)Math.Ceiling((action.DeadlineUtc.Value - now).TotalDays)
             : null;
 
+        string? rejectionReason = null;
+        if (action.Status == ClientActionStatus.Rejected)
+        {
+            rejectionReason = ExtractRejectionReason(action.SourceMetadata);
+        }
+
         return new ClientSafeActionDto
         {
             ActionId = action.ActionId,
@@ -316,7 +322,31 @@ public class ClientPortalService : IClientPortalService
             StageNumber = action.StageNumber,
             DeadlineUtc = action.DeadlineUtc,
             IsOverdue = isOverdue,
-            DaysRemaining = daysRemaining
+            DaysRemaining = daysRemaining,
+            RejectionReason = rejectionReason
         };
+    }
+
+    private static string? ExtractRejectionReason(string? sourceMetadata)
+    {
+        if (string.IsNullOrWhiteSpace(sourceMetadata))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(sourceMetadata);
+            if (doc.RootElement.TryGetProperty("rejectionReason", out var prop) && prop.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                return prop.GetString();
+            }
+        }
+        catch
+        {
+            // Ignore non-JSON metadata
+        }
+
+        return null;
     }
 }
