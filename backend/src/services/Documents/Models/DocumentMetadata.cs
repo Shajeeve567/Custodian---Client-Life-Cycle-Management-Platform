@@ -14,4 +14,7 @@ public class DocumentMetadata
     public long FileSize { get; set; }
     public string StoragePath { get; set; } = string.Empty;
     public DateTime UploadedAt { get; set; } = DateTime.UtcNow;
+    public string ComplianceStatus { get; set; } = Compliance.ComplianceStatus.Pending;
+    public string? RejectionReason { get; set; }
+    public DateTime? ValidatedAt { get; set; }
 }

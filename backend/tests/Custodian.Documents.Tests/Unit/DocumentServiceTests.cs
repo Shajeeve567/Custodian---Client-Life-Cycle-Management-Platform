@@ -155,4 +155,126 @@ public class DocumentServiceTests
         Assert.Equal(created.DocumentId, result.DocumentId);
         Assert.Equal("Compliance", result.Type);
     }
+
+    [Fact]
+    public async Task UploadDocumentAsync_FreshUtilityBill_PersistsCompliantStatusAndTimestamp()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-beta";
+
+        storageMock
+            .Setup(s => s.SaveFileAsync(It.IsAny<IFormFile>(), tenantId, engagementId, It.IsAny<Guid>()))
+            .ReturnsAsync("uploads/utility.pdf");
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        var dto = new DocumentUploadDto
+        {
+            File = CreateValidPdfFormFile("utility_bill.pdf"),
+            Type = "UtilityBill",
+            IssueDate = DateTime.UtcNow.AddDays(-25),
+            UploaderId = "user-abc"
+        };
+
+        var response = await service.UploadDocumentAsync(engagementId, tenantId, dto);
+
+        Assert.NotNull(response);
+        Assert.Equal(Custodian.Documents.Compliance.ComplianceStatus.Compliant, response.ComplianceStatus);
+        Assert.Null(response.RejectionReason);
+        Assert.NotNull(response.ValidatedAt);
+
+        // Verify stored in Database
+        var persisted = await dbContext.Documents.FindAsync(response.DocumentId);
+        Assert.NotNull(persisted);
+        Assert.Equal(Custodian.Documents.Compliance.ComplianceStatus.Compliant, persisted.ComplianceStatus);
+        Assert.Null(persisted.RejectionReason);
+        Assert.NotNull(persisted.ValidatedAt);
+    }
+
+    [Fact]
+    public async Task UploadDocumentAsync_OutdatedUtilityBill_PersistsRejectedStatusAndHumanReadableReason()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-beta";
+
+        storageMock
+            .Setup(s => s.SaveFileAsync(It.IsAny<IFormFile>(), tenantId, engagementId, It.IsAny<Guid>()))
+            .ReturnsAsync("uploads/old_bill.pdf");
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        var issueDate = DateTime.UtcNow.AddDays(-120); // 120 days old exceeds 90-day max-age
+        var dto = new DocumentUploadDto
+        {
+            File = CreateValidPdfFormFile("old_utility_bill.pdf"),
+            Type = "UtilityBill",
+            IssueDate = issueDate,
+            UploaderId = "user-abc"
+        };
+
+        var response = await service.UploadDocumentAsync(engagementId, tenantId, dto);
+
+        Assert.NotNull(response);
+        Assert.Equal(Custodian.Documents.Compliance.ComplianceStatus.Rejected, response.ComplianceStatus);
+        Assert.NotNull(response.RejectionReason);
+        Assert.Contains("exceeds maximum allowable age of 90 days", response.RejectionReason);
+        Assert.NotNull(response.ValidatedAt);
+
+        // Verify stored in Database with rejection reason preserved
+        var persisted = await dbContext.Documents.FindAsync(response.DocumentId);
+        Assert.NotNull(persisted);
+        Assert.Equal(Custodian.Documents.Compliance.ComplianceStatus.Rejected, persisted.ComplianceStatus);
+        Assert.Equal(response.RejectionReason, persisted.RejectionReason);
+        Assert.NotNull(persisted.ValidatedAt);
+    }
+
+    [Fact]
+    public async Task UploadDocumentAsync_ExpiredPassport_PersistsRejectedStatusAndReason()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-beta";
+
+        storageMock
+            .Setup(s => s.SaveFileAsync(It.IsAny<IFormFile>(), tenantId, engagementId, It.IsAny<Guid>()))
+            .ReturnsAsync("uploads/passport.pdf");
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        var expiredDate = DateTime.UtcNow.AddDays(-5);
+        var dto = new DocumentUploadDto
+        {
+            File = CreateValidPdfFormFile("expired_passport.pdf"),
+            Type = "Passport",
+            IssueDate = DateTime.UtcNow.AddYears(-10),
+            ExpiryDate = expiredDate,
+            UploaderId = "user-abc"
+        };
+
+        var response = await service.UploadDocumentAsync(engagementId, tenantId, dto);
+
+        Assert.NotNull(response);
+        Assert.Equal(Custodian.Documents.Compliance.ComplianceStatus.Rejected, response.ComplianceStatus);
+        Assert.NotNull(response.RejectionReason);
+        Assert.Contains("Document expired on", response.RejectionReason);
+        Assert.Contains(expiredDate.ToString("yyyy-MM-dd"), response.RejectionReason);
+
+        // Verify in Database
+        var persisted = await dbContext.Documents.FindAsync(response.DocumentId);
+        Assert.NotNull(persisted);
+        Assert.Equal(Custodian.Documents.Compliance.ComplianceStatus.Rejected, persisted.ComplianceStatus);
+        Assert.Equal(response.RejectionReason, persisted.RejectionReason);
+    }
 }
+

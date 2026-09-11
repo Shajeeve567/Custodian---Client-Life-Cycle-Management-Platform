@@ -71,9 +71,22 @@ public class DocumentDbContext : DbContext
                 .HasColumnName("created_at")
                 .IsRequired();
 
+            entity.Property(e => e.ComplianceStatus)
+                .HasColumnName("compliance_status")
+                .IsRequired()
+                .HasMaxLength(50);
+
+            entity.Property(e => e.RejectionReason)
+                .HasColumnName("rejection_reason")
+                .HasMaxLength(1000);
+
+            entity.Property(e => e.ValidatedAt)
+                .HasColumnName("validated_at");
+
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => e.EngagementId);
             entity.HasIndex(e => e.Type);
+            entity.HasIndex(e => e.ComplianceStatus);
         });
     }
 }

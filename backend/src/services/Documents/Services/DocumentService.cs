@@ -1,3 +1,6 @@
+using Custodian.Documents.Compliance;
+using Custodian.Documents.Compliance.Rules;
+using Custodian.Documents.Compliance.Store;
 using Custodian.Documents.Data;
 using Custodian.Documents.DTOs;
 using Custodian.Documents.Models;
@@ -10,15 +13,20 @@ public class DocumentService : IDocumentService
     private readonly DocumentDbContext _dbContext;
     private readonly IDocumentValidator _validator;
     private readonly IStorageService _storageService;
+    private readonly IComplianceRuleEngine _complianceEngine;
 
     public DocumentService(
         DocumentDbContext dbContext,
         IDocumentValidator validator,
-        IStorageService storageService)
+        IStorageService storageService,
+        IComplianceRuleEngine? complianceEngine = null)
     {
         _dbContext = dbContext;
         _validator = validator;
         _storageService = storageService;
+        _complianceEngine = complianceEngine ?? new ComplianceRuleEngine(
+            new IComplianceRule[] { new DocumentFreshnessRule(), new DocumentExpiryRule() },
+            new ComplianceRuleStore());
     }
 
     public async Task<DocumentResponseDto> UploadDocumentAsync(Guid engagementId, string tenantId, DocumentUploadDto dto)
@@ -37,6 +45,14 @@ public class DocumentService : IDocumentService
         var documentId = Guid.NewGuid();
         var storagePath = await _storageService.SaveFileAsync(dto.File, tenantId, engagementId, documentId);
 
+        // Execute deterministic compliance validation automatically on upload
+        var complianceResult = _complianceEngine.Evaluate(
+            documentType: dto.Type,
+            issueDate: dto.IssueDate,
+            expiryDate: dto.ExpiryDate,
+            ruleDefinition: null,
+            fileName: dto.File.FileName);
+
         var metadata = new DocumentMetadata
         {
             DocumentId = documentId,
@@ -50,7 +66,10 @@ public class DocumentService : IDocumentService
             ContentType = dto.File.ContentType,
             FileSize = dto.File.Length,
             StoragePath = storagePath,
-            UploadedAt = DateTime.UtcNow
+            UploadedAt = DateTime.UtcNow,
+            ComplianceStatus = complianceResult.Status,
+            RejectionReason = complianceResult.RejectionReason,
+            ValidatedAt = complianceResult.ValidatedAtUtc
         };
 
         _dbContext.Documents.Add(metadata);
@@ -104,7 +123,10 @@ public class DocumentService : IDocumentService
             ContentType = entity.ContentType,
             FileSize = entity.FileSize,
             StoragePath = entity.StoragePath,
-            UploadedAt = entity.UploadedAt
+            UploadedAt = entity.UploadedAt,
+            ComplianceStatus = entity.ComplianceStatus,
+            RejectionReason = entity.RejectionReason,
+            ValidatedAt = entity.ValidatedAt
         };
     }
 }
