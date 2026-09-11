@@ -14,7 +14,10 @@ builder.Services.AddSingleton<IDocumentValidator, DocumentValidator>();
 builder.Services.AddScoped<IStorageService, LocalStorageService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 
-// Compliance Rule Engine & Rules
+// Compliance Rule Store, Engine & Rules
+builder.Services.Configure<Custodian.Documents.Compliance.Store.ComplianceRuleOptions>(
+    builder.Configuration.GetSection(Custodian.Documents.Compliance.Store.ComplianceRuleOptions.SectionName));
+builder.Services.AddSingleton<Custodian.Documents.Compliance.Store.IComplianceRuleStore, Custodian.Documents.Compliance.Store.ComplianceRuleStore>();
 builder.Services.AddSingleton<Custodian.Documents.Compliance.Rules.IComplianceRule, Custodian.Documents.Compliance.Rules.DocumentFreshnessRule>();
 builder.Services.AddSingleton<Custodian.Documents.Compliance.Rules.IComplianceRule, Custodian.Documents.Compliance.Rules.DocumentExpiryRule>();
 builder.Services.AddSingleton<Custodian.Documents.Compliance.IComplianceRuleEngine, Custodian.Documents.Compliance.ComplianceRuleEngine>();
