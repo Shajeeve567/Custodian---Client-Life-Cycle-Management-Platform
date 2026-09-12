@@ -43,29 +43,15 @@ public class ClientActionsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
-        // Determine client view enforcement (CSTD-12 Group B):
-        // Clients and unprivileged callers MUST always receive clientView = true to prevent leaking internal actions & sourceMetadata.
-        // Only Staff and Owner callers can access internal-only actions (clientView = false).
+        // Determine if client view rule applies (via explicit parameter, header, or role claim)
+        // Group B security rule: If caller is in the Client role, client view is strictly enforced and cannot be bypassed.
         bool clientView;
-        if (User?.Identity?.IsAuthenticated == true)
+        if (User.IsInRole("Client"))
         {
-            if (User.IsInRole("Client") || (!User.IsInRole("Owner") && !User.IsInRole("Staff")))
-            {
-                clientView = true;
-            }
-            else
-            {
-                // Staff / Owner: default to full staff view (false), unless they explicitly request client preview
-                clientView = isClientView ?? false;
-                if (!clientView && Request?.Headers != null && Request.Headers.TryGetValue("X-Client-View", out var headerVal))
-                {
-                    _ = bool.TryParse(headerVal, out clientView);
-                }
-            }
+            clientView = true;
         }
         else
         {
-            // Fallback for unauthenticated unit test mocks
             clientView = isClientView ?? false;
             if (!clientView && Request?.Headers != null && Request.Headers.TryGetValue("X-Client-View", out var headerVal))
             {
