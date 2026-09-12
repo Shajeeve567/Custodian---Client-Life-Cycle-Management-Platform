@@ -1,7 +1,9 @@
 using Custodian.Audit.Data;
 using Custodian.Audit.Repositories;
 using Custodian.Audit.Services;
+using Custodian.Shared.Auth;
 using Custodian.Shared.Http;
+using Custodian.Shared.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
@@ -10,6 +12,9 @@ var builder = WebApplication.CreateBuilder(args);
 // Add Controllers & CORS
 builder.Services.AddControllers();
 builder.Services.AddCustodianCors(builder.Configuration);
+builder.Services.AddTenantContext();
+builder.Services.AddJwtAuthentication(builder.Configuration);
+builder.Services.AddAuthorization();
 
 // Add OpenAPI / Swagger
 builder.Services.AddOpenApi();
@@ -51,8 +56,9 @@ using (var scope = app.Services.CreateScope())
 
 app.UseCors();
 // app.UseHttpsRedirection();
+app.UseAuthentication();
 app.UseAuthorization();
-
+app.UseTenantContext();
 app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Audit Service" }));
 app.MapControllers();
 

@@ -351,14 +351,21 @@ export const PortalApi = {
    ========================================================================== */
 
 export const AuditApi = {
-    async getEvents(tenantId: string, engagementId?: string): Promise<AuditEvent[]> {
-        let url = `${API_BASE.AUDIT}/events?tenantId=${tenantId}`;
-        if (engagementId) url += `&engagementId=${engagementId}`;
+    async getEvents(tenantId?: string, engagementId?: string): Promise<AuditEvent[]> {
+        let url = `${API_BASE.AUDIT}/events`;
+        const params = new URLSearchParams();
+        if (tenantId) params.append('tenantId', tenantId);
+        if (engagementId) params.append('engagementId', engagementId);
+        const query = params.toString();
+        if (query) url += `?${query}`;
         return request<AuditEvent[]>(url);
     },
 
-    async verifyChain(tenantId: string): Promise<{ isVerified: boolean; count: number }> {
-        return request<{ isVerified: boolean; count: number }>(`${API_BASE.AUDIT}/events/verify?tenantId=${tenantId}`);
+    async verifyChain(tenantId?: string): Promise<{ isVerified: boolean; count: number }> {
+        const url = tenantId
+            ? `${API_BASE.AUDIT}/events/verify?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.AUDIT}/events/verify`;
+        return request<{ isVerified: boolean; count: number }>(url);
     },
 };
 

@@ -106,4 +106,115 @@ public class AuditEventsControllerTests
         // Assert
         Assert.IsType<NotFoundObjectResult>(result.Result);
     }
+
+    // ==========================================
+    // TENANT ISOLATION TESTS (CSTD-12 & CSTD-269)
+    // ==========================================
+
+    [Fact]
+    public async Task GetEvents_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Act: Authenticated user with _testTenantId queries another tenant ID
+        var attackerTenantId = Guid.NewGuid().ToString();
+        var result = await _controller.GetEvents(attackerTenantId);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.GetEventsByTenantAsync(It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetEvents_WithoutTenantQuery_UsesJwtClaimAndReturns200OK()
+    {
+        // Arrange
+        _mockService.Setup(s => s.GetEventsByTenantAsync(_testTenantId))
+            .ReturnsAsync(new List<AuditEventResponse>());
+
+        // Act
+        var result = await _controller.GetEvents(null);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        _mockService.Verify(s => s.GetEventsByTenantAsync(_testTenantId), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetEventById_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Act
+        var attackerTenantId = Guid.NewGuid().ToString();
+        var result = await _controller.GetEventById(Guid.NewGuid(), attackerTenantId);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.GetEventByIdAsync(It.IsAny<Guid>(), It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetEventsByEngagement_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Act
+        var attackerTenantId = Guid.NewGuid().ToString();
+        var result = await _controller.GetEventsByEngagement(Guid.NewGuid(), attackerTenantId);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.GetEventsByEngagementAsync(It.IsAny<Guid>(), It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task VerifyChain_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Act
+        var attackerTenantId = Guid.NewGuid().ToString();
+        var result = await _controller.VerifyChain(attackerTenantId);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result);
+        _mockService.Verify(s => s.GetEventsByTenantAsync(It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateEvent_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        var request = new CreateAuditEventRequest
+        {
+            EngagementId = Guid.NewGuid(),
+            Actor = "testuser@custodian.com",
+            Type = "Genesis",
+            Payload = "{}"
+        };
+        var attackerTenantId = Guid.NewGuid().ToString();
+
+        // Act
+        var result = await _controller.CreateEvent(request, attackerTenantId);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.RecordEventAsync(It.IsAny<CreateAuditEventRequest>(), It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateEvent_MismatchedTenantPayload_Returns403Forbidden()
+    {
+        // Arrange: Request payload specifies another tenant
+        var attackerTenantId = Guid.NewGuid();
+        var request = new CreateAuditEventRequest
+        {
+            EngagementId = Guid.NewGuid(),
+            TenantId = attackerTenantId,
+            Actor = "testuser@custodian.com",
+            Type = "Genesis",
+            Payload = "{}"
+        };
+
+        // Act
+        var result = await _controller.CreateEvent(request, null);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.RecordEventAsync(It.IsAny<CreateAuditEventRequest>(), It.IsAny<Guid>()), Times.Never);
+    }
 }
