@@ -21,6 +21,8 @@ public class ClientActionResponseDto
     public DateTime? CompletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public string? SourceMetadata { get; set; }
+    public string? VerificationStatus { get; set; }
+    public string? VerificationReason { get; set; }
 }
 
 public class CreateClientActionDto
@@ -70,6 +72,12 @@ public class UploadActionEvidenceDto
     public string? ComplianceStatus { get; set; }
 
     public string? RejectionReason { get; set; }
+
+    public string? VerificationStatus { get; set; }
+
+    public string? VerificationReason { get; set; }
+
+    public string? VerifiedBy { get; set; }
 }
 
 public class ReviewActionDto
@@ -82,5 +90,21 @@ public class ReviewActionDto
     public string ReviewerActor { get; set; } = string.Empty;
 
     public string? ReviewNote { get; set; }
+
+    public string? VerificationStatus { get; set; }
+
+    public string? VerificationReason { get; set; }
+}
+
+public class ApplyActionVerificationDto
+{
+    [Required]
+    public string VerificationStatus { get; set; } = string.Empty; // "Verified" or "Rejected"
+
+    [Required]
+    [MaxLength(100)]
+    public string VerifiedBy { get; set; } = string.Empty;
+
+    public string? VerificationReason { get; set; }
 }
 

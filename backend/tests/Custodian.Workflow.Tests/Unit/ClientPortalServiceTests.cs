@@ -1,3 +1,4 @@
+using Custodian.Shared.Contracts;
 using Custodian.Workflow.Data;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Services;
@@ -298,5 +299,180 @@ public class ClientPortalServiceTests
         Assert.NotNull(dashboard.PrimaryNextAction);
         Assert.Equal(ClientActionStatus.Rejected, dashboard.PrimaryNextAction.Status);
         Assert.Equal(expectedReason, dashboard.PrimaryNextAction.RejectionReason);
+    }
+
+    [Fact]
+    public async Task GetDashboard_AutoCompliantUploadedAction_KeepsStageInUnderReview_AndBlocksGateAdvance()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+        var clientId = "client-alpha";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = clientId,
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started
+        });
+
+        // Stage 1 completed
+        db.ClientActions.Add(new ClientAction
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Stage 1 Intake",
+            Status = ClientActionStatus.Completed,
+            StageNumber = 1,
+            IsInternalOnly = false,
+            AssignedToRole = "Client"
+        });
+
+        // Stage 2 has an auto-compliant uploaded document awaiting human verification
+        db.ClientActions.Add(new ClientAction
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Articles of Incorporation",
+            Status = ClientActionStatus.Uploaded,
+            StageNumber = 2,
+            IsInternalOnly = false,
+            AssignedToRole = "Client",
+            SourceMetadata = $"{{\"documentId\":\"{Guid.NewGuid()}\",\"complianceStatus\":\"Compliant\",\"verificationStatus\":\"Pending\"}}"
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientPortalService(db);
+
+        // Act
+        var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+
+        // Assert:
+        // 1. Stage gate does not advance past Stage 2
+        Assert.NotNull(dashboard);
+        Assert.Equal(2, dashboard.CurrentStageNumber);
+        // 2. Condition status is "UnderReview"
+        Assert.Equal("UnderReview", dashboard.ConditionStatus);
+        Assert.Contains("verified by the custodian team", dashboard.ConditionDescription);
+        // 3. Progress percentage is 50% (1 of 2 completed)
+        Assert.Equal(50, dashboard.ProgressPercentage);
+    }
+
+    [Fact]
+    public async Task GetDashboard_VerifiedAction_AdvancesStageGate_AndReflectsProgress()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+        var clientId = "client-alpha";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = clientId,
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started
+        });
+
+        // Stage 1 completed
+        db.ClientActions.Add(new ClientAction
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Stage 1 Intake",
+            Status = ClientActionStatus.Completed,
+            StageNumber = 1,
+            IsInternalOnly = false,
+            AssignedToRole = "Client"
+        });
+
+        // Stage 2 human-verified document -> Completed
+        db.ClientActions.Add(new ClientAction
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Articles of Incorporation",
+            Status = ClientActionStatus.Completed,
+            StageNumber = 2,
+            IsInternalOnly = false,
+            AssignedToRole = "Client",
+            SourceMetadata = $"{{\"documentId\":\"{Guid.NewGuid()}\",\"complianceStatus\":\"Compliant\",\"verificationStatus\":\"Verified\"}}"
+        });
+
+        // Stage 3 action pending
+        db.ClientActions.Add(new ClientAction
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Executive Sign-Off",
+            Status = ClientActionStatus.Pending,
+            StageNumber = 3,
+            IsInternalOnly = false,
+            AssignedToRole = "Client"
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientPortalService(db);
+
+        // Act
+        var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+
+        // Assert: Gate advances to Stage 3 now that Stage 2 human verification completed
+        Assert.NotNull(dashboard);
+        Assert.Equal(3, dashboard.CurrentStageNumber);
+        Assert.Equal("ActionRequired", dashboard.ConditionStatus);
+        Assert.NotNull(dashboard.PrimaryNextAction);
+        Assert.Equal("Executive Sign-Off", dashboard.PrimaryNextAction.Title);
+    }
+
+    [Fact]
+    public async Task GetDashboard_RejectedVerification_ExposesStaffVerificationReasonInSafeDto()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+        var clientId = "client-alpha";
+        var staffReason = "Official stamp is blurred and certificate registry ID is illegible.";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = clientId,
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started
+        });
+
+        db.ClientActions.Add(new ClientAction
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Certificate of Good Standing",
+            Status = ClientActionStatus.Rejected,
+            StageNumber = 2,
+            IsInternalOnly = false,
+            AssignedToRole = "Client",
+            SourceMetadata = $"{{\"documentId\":\"{Guid.NewGuid()}\",\"complianceStatus\":\"Compliant\",\"verificationStatus\":\"Rejected\",\"verificationReason\":\"{staffReason}\"}}"
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientPortalService(db);
+
+        // Act
+        var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+
+        // Assert
+        Assert.NotNull(dashboard);
+        Assert.Equal("RevisionRequired", dashboard.ConditionStatus);
+        Assert.NotNull(dashboard.PrimaryNextAction);
+        Assert.Equal(ClientActionStatus.Rejected, dashboard.PrimaryNextAction.Status);
+        Assert.Equal(staffReason, dashboard.PrimaryNextAction.RejectionReason);
+        Assert.Equal(DocumentVerificationStatus.Rejected, dashboard.PrimaryNextAction.VerificationStatus);
     }
 }

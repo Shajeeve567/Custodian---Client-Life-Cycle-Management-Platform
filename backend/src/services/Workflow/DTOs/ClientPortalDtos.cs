@@ -50,6 +50,7 @@ public class ClientSafeActionDto
     public bool IsOverdue { get; set; }
     public int? DaysRemaining { get; set; }
     public string? RejectionReason { get; set; }
+    public string? VerificationStatus { get; set; }
 }
 
 /// <summary>

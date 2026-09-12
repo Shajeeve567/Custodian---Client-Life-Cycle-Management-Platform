@@ -498,4 +498,230 @@ public class ClientActionServiceTests
         Assert.Equal(ClientActionStatus.Rejected, dbAction!.Status);
         Assert.Contains("blurry", dbAction.SourceMetadata);
     }
+
+    [Fact]
+    public async Task UploadEvidenceAsync_Compliant_WithVerifiedStatus_TransitionsActionToCompleted()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var documentId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Articles of Incorporation",
+            Status = ClientActionStatus.Pending
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientActionService(db);
+        var uploadDto = new UploadActionEvidenceDto
+        {
+            UploaderActor = "client-user-1",
+            DocumentId = documentId,
+            ComplianceStatus = "Compliant",
+            VerificationStatus = DocumentVerificationStatus.Verified,
+            VerifiedBy = "staff-analyst-1",
+            VerificationReason = "State registry seal confirmed valid."
+        };
+
+        // Act
+        var result = await service.UploadEvidenceAsync(engagementId, actionId, tenantId, uploadDto);
+
+        // Assert: Only human-confirmed evidence satisfies a required gate -> Completed
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Completed, result.Status);
+        Assert.NotNull(result.CompletedAt);
+        Assert.Equal("staff-analyst-1", result.CompletedByActor);
+        Assert.Equal(DocumentVerificationStatus.Verified, result.VerificationStatus);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(ClientActionStatus.Completed, dbAction.Status);
+        Assert.Contains("Compliant", dbAction.SourceMetadata);
+        Assert.Contains("Verified", dbAction.SourceMetadata);
+        Assert.Contains("State registry seal confirmed valid", dbAction.SourceMetadata);
+    }
+
+    [Fact]
+    public async Task UploadEvidenceAsync_Compliant_WithRejectedVerification_TransitionsActionToRejected_PreservingCompliance()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var documentId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Articles of Incorporation",
+            Status = ClientActionStatus.Pending
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientActionService(db);
+        var uploadDto = new UploadActionEvidenceDto
+        {
+            UploaderActor = "client-user-1",
+            DocumentId = documentId,
+            ComplianceStatus = "Compliant",
+            VerificationStatus = DocumentVerificationStatus.Rejected,
+            VerifiedBy = "staff-analyst-1",
+            VerificationReason = "Notary signature does not match official registry."
+        };
+
+        // Act
+        var result = await service.UploadEvidenceAsync(engagementId, actionId, tenantId, uploadDto);
+
+        // Assert: Compliance is preserved as Compliant, but human verification failed -> Rejected
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Rejected, result.Status);
+        Assert.Null(result.CompletedAt);
+        Assert.Equal("staff-analyst-1", result.CompletedByActor);
+        Assert.Equal(DocumentVerificationStatus.Rejected, result.VerificationStatus);
+        Assert.Equal("Notary signature does not match official registry.", result.VerificationReason);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(ClientActionStatus.Rejected, dbAction.Status);
+        Assert.Contains("Compliant", dbAction.SourceMetadata);
+        Assert.Contains("Rejected", dbAction.SourceMetadata);
+        Assert.Contains("Notary signature does not match official registry", dbAction.SourceMetadata);
+    }
+
+    [Fact]
+    public async Task ApplyVerificationOutcomeAsync_Verified_TransitionsToCompleted_AndPreservesMetadata()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var documentId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Passport Verification",
+            Status = ClientActionStatus.Uploaded,
+            SourceMetadata = $"{{\"documentId\":\"{documentId}\",\"complianceStatus\":\"Compliant\"}}"
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientActionService(db);
+        var dto = new ApplyActionVerificationDto
+        {
+            VerificationStatus = DocumentVerificationStatus.Verified,
+            VerifiedBy = "compliance-officer-5",
+            VerificationReason = "MRZ checksum and human photo verified against passport."
+        };
+
+        // Act
+        var result = await service.ApplyVerificationOutcomeAsync(engagementId, actionId, tenantId, dto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Completed, result.Status);
+        Assert.NotNull(result.CompletedAt);
+        Assert.Equal("compliance-officer-5", result.CompletedByActor);
+        Assert.Equal(DocumentVerificationStatus.Verified, result.VerificationStatus);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(ClientActionStatus.Completed, dbAction.Status);
+        Assert.Contains(documentId.ToString(), dbAction.SourceMetadata);
+        Assert.Contains("Compliant", dbAction.SourceMetadata);
+        Assert.Contains("Verified", dbAction.SourceMetadata);
+    }
+
+    [Fact]
+    public async Task ApplyVerificationOutcomeAsync_Rejected_TransitionsToRejected_WithStaffReason()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var documentId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Passport Verification",
+            Status = ClientActionStatus.Uploaded,
+            SourceMetadata = $"{{\"documentId\":\"{documentId}\",\"complianceStatus\":\"Compliant\"}}"
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientActionService(db);
+        var dto = new ApplyActionVerificationDto
+        {
+            VerificationStatus = DocumentVerificationStatus.Rejected,
+            VerifiedBy = "compliance-officer-5",
+            VerificationReason = "Passport page is cropped; MRZ lines are cut off."
+        };
+
+        // Act
+        var result = await service.ApplyVerificationOutcomeAsync(engagementId, actionId, tenantId, dto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Rejected, result.Status);
+        Assert.Null(result.CompletedAt);
+        Assert.Equal("compliance-officer-5", result.CompletedByActor);
+        Assert.Equal(DocumentVerificationStatus.Rejected, result.VerificationStatus);
+        Assert.Equal("Passport page is cropped; MRZ lines are cut off.", result.VerificationReason);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(ClientActionStatus.Rejected, dbAction.Status);
+        Assert.Contains(documentId.ToString(), dbAction.SourceMetadata);
+        Assert.Contains("Compliant", dbAction.SourceMetadata);
+        Assert.Contains("Rejected", dbAction.SourceMetadata);
+        Assert.Contains("Passport page is cropped", dbAction.SourceMetadata);
+    }
+
+    [Fact]
+    public async Task ApplyVerificationOutcomeAsync_InvalidStatus_ThrowsArgumentException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Passport Verification",
+            Status = ClientActionStatus.Uploaded
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientActionService(db);
+        var dto = new ApplyActionVerificationDto
+        {
+            VerificationStatus = "InvalidStatus",
+            VerifiedBy = "compliance-officer-5"
+        };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.ApplyVerificationOutcomeAsync(engagementId, actionId, tenantId, dto));
+    }
 }

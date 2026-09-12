@@ -1,3 +1,4 @@
+using Custodian.Shared.Contracts;
 using Custodian.Workflow.Controllers;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
@@ -206,5 +207,106 @@ public class ClientActionsControllerTests
         Assert.Equal(200, okResult.StatusCode);
         var response = Assert.IsType<ClientActionResponseDto>(okResult.Value);
         Assert.Equal(ClientActionStatus.Completed, response.Status);
+    }
+
+    [Fact]
+    public async Task ApplyVerification_ValidVerified_Returns200OK()
+    {
+        // Arrange
+        SetupTenantHeader("tenant-001");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var dto = new ApplyActionVerificationDto
+        {
+            VerificationStatus = DocumentVerificationStatus.Verified,
+            VerifiedBy = "compliance-lead-1"
+        };
+        var expectedResponse = new ClientActionResponseDto
+        {
+            ActionId = actionId,
+            Status = ClientActionStatus.Completed,
+            VerificationStatus = DocumentVerificationStatus.Verified
+        };
+
+        _mockService.Setup(s => s.ApplyVerificationOutcomeAsync(engagementId, actionId, "tenant-001", dto))
+                    .ReturnsAsync(expectedResponse);
+
+        // Act
+        var result = await _controller.ApplyVerification(engagementId, actionId, dto, tenantId: null);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        var response = Assert.IsType<ClientActionResponseDto>(okResult.Value);
+        Assert.Equal(ClientActionStatus.Completed, response.Status);
+        Assert.Equal(DocumentVerificationStatus.Verified, response.VerificationStatus);
+    }
+
+    [Fact]
+    public async Task ApplyVerification_NotFound_Returns404()
+    {
+        // Arrange
+        SetupTenantHeader("tenant-001");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var dto = new ApplyActionVerificationDto
+        {
+            VerificationStatus = DocumentVerificationStatus.Verified,
+            VerifiedBy = "compliance-lead-1"
+        };
+
+        _mockService.Setup(s => s.ApplyVerificationOutcomeAsync(engagementId, actionId, "tenant-001", dto))
+                    .ReturnsAsync((ClientActionResponseDto?)null);
+
+        // Act
+        var result = await _controller.ApplyVerification(engagementId, actionId, dto, tenantId: null);
+
+        // Assert
+        var notFound = Assert.IsType<NotFoundObjectResult>(result.Result);
+        Assert.Equal(404, notFound.StatusCode);
+    }
+
+    [Fact]
+    public async Task ApplyVerification_MissingTenant_Returns400BadRequest()
+    {
+        // Arrange (No header, no query, no claim)
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var dto = new ApplyActionVerificationDto
+        {
+            VerificationStatus = DocumentVerificationStatus.Verified,
+            VerifiedBy = "compliance-lead-1"
+        };
+
+        // Act
+        var result = await _controller.ApplyVerification(engagementId, actionId, dto, tenantId: null);
+
+        // Assert
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Equal(400, badRequest.StatusCode);
+    }
+
+    [Fact]
+    public async Task ApplyVerification_ServiceThrowsArgumentException_Returns400BadRequest()
+    {
+        // Arrange
+        SetupTenantHeader("tenant-001");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var dto = new ApplyActionVerificationDto
+        {
+            VerificationStatus = "InvalidStatus",
+            VerifiedBy = "compliance-lead-1"
+        };
+
+        _mockService.Setup(s => s.ApplyVerificationOutcomeAsync(engagementId, actionId, "tenant-001", dto))
+                    .ThrowsAsync(new ArgumentException("Invalid verification status."));
+
+        // Act
+        var result = await _controller.ApplyVerification(engagementId, actionId, dto, tenantId: null);
+
+        // Assert
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Equal(400, badRequest.StatusCode);
     }
 }

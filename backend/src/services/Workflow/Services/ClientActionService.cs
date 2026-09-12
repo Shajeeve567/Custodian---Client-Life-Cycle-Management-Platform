@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Custodian.Shared.Contracts;
 using Custodian.Workflow.Data;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
@@ -121,9 +123,9 @@ public class ClientActionService : IClientActionService
         // Workflow contract: Automatic checks and human verification are deliberately separate states.
         // If automatic compliance validation rejected the document, immediately mark the action as Rejected
         // with the deterministic rejection reason, bypassing human staff review.
-        var isRejected = string.Equals(dto.ComplianceStatus, "Rejected", StringComparison.OrdinalIgnoreCase);
+        var isComplianceRejected = string.Equals(dto.ComplianceStatus, "Rejected", StringComparison.OrdinalIgnoreCase);
 
-        if (isRejected)
+        if (isComplianceRejected)
         {
             action.Status = ClientActionStatus.Rejected;
             action.CompletedAt = null;
@@ -137,23 +139,70 @@ public class ClientActionService : IClientActionService
             {
                 documentId = dto.DocumentId?.ToString(),
                 complianceStatus = "Rejected",
-                rejectionReason = reason
+                rejectionReason = reason,
+                verificationStatus = DocumentVerificationStatus.Unverified
             };
-            action.SourceMetadata = System.Text.Json.JsonSerializer.Serialize(metaObj);
+            action.SourceMetadata = JsonSerializer.Serialize(metaObj);
         }
         else
         {
-            // If compliant (or pending), transition to Uploaded awaiting human verification
-            action.Status = ClientActionStatus.Uploaded;
-            action.CompletedAt = null;
-            action.CompletedByActor = dto.UploaderActor;
+            // Document passed automatic compliance check.
+            // Check verification status: only human-confirmed verification can satisfy a gate.
+            var isVerified = string.Equals(dto.VerificationStatus, DocumentVerificationStatus.Verified, StringComparison.OrdinalIgnoreCase);
+            var isVerificationRejected = string.Equals(dto.VerificationStatus, DocumentVerificationStatus.Rejected, StringComparison.OrdinalIgnoreCase);
 
-            var metaObj = new
+            if (isVerified)
             {
-                documentId = dto.DocumentId?.ToString(),
-                complianceStatus = "Compliant"
-            };
-            action.SourceMetadata = System.Text.Json.JsonSerializer.Serialize(metaObj);
+                action.Status = ClientActionStatus.Completed;
+                action.CompletedAt = DateTime.UtcNow;
+                action.CompletedByActor = !string.IsNullOrWhiteSpace(dto.VerifiedBy) ? dto.VerifiedBy : dto.UploaderActor;
+
+                var metaObj = new
+                {
+                    documentId = dto.DocumentId?.ToString(),
+                    complianceStatus = "Compliant",
+                    verificationStatus = DocumentVerificationStatus.Verified,
+                    verifiedBy = dto.VerifiedBy,
+                    verificationReason = dto.VerificationReason
+                };
+                action.SourceMetadata = JsonSerializer.Serialize(metaObj);
+            }
+            else if (isVerificationRejected)
+            {
+                action.Status = ClientActionStatus.Rejected;
+                action.CompletedAt = null;
+                action.CompletedByActor = !string.IsNullOrWhiteSpace(dto.VerifiedBy) ? dto.VerifiedBy : dto.UploaderActor;
+
+                var reason = !string.IsNullOrWhiteSpace(dto.VerificationReason)
+                    ? dto.VerificationReason.Trim()
+                    : (!string.IsNullOrWhiteSpace(dto.RejectionReason) ? dto.RejectionReason.Trim() : "Evidence verification rejected by staff.");
+
+                var metaObj = new
+                {
+                    documentId = dto.DocumentId?.ToString(),
+                    complianceStatus = "Compliant",
+                    verificationStatus = DocumentVerificationStatus.Rejected,
+                    verifiedBy = dto.VerifiedBy,
+                    verificationReason = reason,
+                    rejectionReason = reason
+                };
+                action.SourceMetadata = JsonSerializer.Serialize(metaObj);
+            }
+            else
+            {
+                // Auto-compliant, awaiting human staff verification -> Uploaded
+                action.Status = ClientActionStatus.Uploaded;
+                action.CompletedAt = null;
+                action.CompletedByActor = dto.UploaderActor;
+
+                var metaObj = new
+                {
+                    documentId = dto.DocumentId?.ToString(),
+                    complianceStatus = "Compliant",
+                    verificationStatus = DocumentVerificationStatus.Pending
+                };
+                action.SourceMetadata = JsonSerializer.Serialize(metaObj);
+            }
         }
 
         await _dbContext.SaveChangesAsync();
@@ -176,21 +225,44 @@ public class ClientActionService : IClientActionService
             return null;
         }
 
+        var (docId, compStatus, _, _) = ParseSourceMetadata(action.SourceMetadata);
+
         if (string.Equals(dto.Status, ClientActionStatus.Completed, StringComparison.OrdinalIgnoreCase))
         {
             action.Status = ClientActionStatus.Completed;
             action.CompletedAt = DateTime.UtcNow;
             action.CompletedByActor = dto.ReviewerActor;
+
+            var metaObj = new Dictionary<string, object?>
+            {
+                ["documentId"] = docId,
+                ["complianceStatus"] = compStatus ?? "Compliant",
+                ["verificationStatus"] = DocumentVerificationStatus.Verified,
+                ["verifiedBy"] = dto.ReviewerActor,
+                ["verificationReason"] = dto.VerificationReason ?? dto.ReviewNote
+            };
+            action.SourceMetadata = JsonSerializer.Serialize(metaObj);
         }
         else if (string.Equals(dto.Status, ClientActionStatus.Rejected, StringComparison.OrdinalIgnoreCase))
         {
             action.Status = ClientActionStatus.Rejected;
             action.CompletedAt = null;
             action.CompletedByActor = dto.ReviewerActor;
-            if (!string.IsNullOrWhiteSpace(dto.ReviewNote))
+
+            var reason = !string.IsNullOrWhiteSpace(dto.VerificationReason)
+                ? dto.VerificationReason.Trim()
+                : (!string.IsNullOrWhiteSpace(dto.ReviewNote) ? dto.ReviewNote.Trim() : "Action verification rejected.");
+
+            var metaObj = new Dictionary<string, object?>
             {
-                action.SourceMetadata = $"{{\"rejectionReason\":\"{dto.ReviewNote.Trim()}\"}}";
-            }
+                ["documentId"] = docId,
+                ["complianceStatus"] = compStatus ?? "Compliant",
+                ["verificationStatus"] = DocumentVerificationStatus.Rejected,
+                ["verifiedBy"] = dto.ReviewerActor,
+                ["verificationReason"] = reason,
+                ["rejectionReason"] = reason
+            };
+            action.SourceMetadata = JsonSerializer.Serialize(metaObj);
         }
         else
         {
@@ -202,8 +274,107 @@ public class ClientActionService : IClientActionService
         return MapToResponseDto(action, isClientView: false);
     }
 
+    public async Task<ClientActionResponseDto?> ApplyVerificationOutcomeAsync(
+        Guid engagementId,
+        Guid actionId,
+        string tenantId,
+        ApplyActionVerificationDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return null;
+        }
+
+        var action = await _dbContext.ClientActions
+            .FirstOrDefaultAsync(a => a.ActionId == actionId && (engagementId == Guid.Empty || a.EngagementId == engagementId) && a.TenantId == tenantId);
+
+        if (action == null)
+        {
+            return null;
+        }
+
+        var isVerified = string.Equals(dto.VerificationStatus, DocumentVerificationStatus.Verified, StringComparison.OrdinalIgnoreCase);
+        var isRejected = string.Equals(dto.VerificationStatus, DocumentVerificationStatus.Rejected, StringComparison.OrdinalIgnoreCase);
+
+        if (!isVerified && !isRejected)
+        {
+            throw new ArgumentException($"Invalid verification status '{dto.VerificationStatus}'. Must be '{DocumentVerificationStatus.Verified}' or '{DocumentVerificationStatus.Rejected}'.", nameof(dto));
+        }
+
+        var (docId, compStatus, _, _) = ParseSourceMetadata(action.SourceMetadata);
+
+        if (isVerified)
+        {
+            action.Status = ClientActionStatus.Completed;
+            action.CompletedAt = DateTime.UtcNow;
+            action.CompletedByActor = dto.VerifiedBy;
+
+            var metaObj = new Dictionary<string, object?>
+            {
+                ["documentId"] = docId,
+                ["complianceStatus"] = compStatus ?? "Compliant",
+                ["verificationStatus"] = DocumentVerificationStatus.Verified,
+                ["verifiedBy"] = dto.VerifiedBy,
+                ["verificationReason"] = dto.VerificationReason
+            };
+            action.SourceMetadata = JsonSerializer.Serialize(metaObj);
+        }
+        else
+        {
+            action.Status = ClientActionStatus.Rejected;
+            action.CompletedAt = null;
+            action.CompletedByActor = dto.VerifiedBy;
+
+            var reason = !string.IsNullOrWhiteSpace(dto.VerificationReason)
+                ? dto.VerificationReason.Trim()
+                : "Document verification was rejected by staff.";
+
+            var metaObj = new Dictionary<string, object?>
+            {
+                ["documentId"] = docId,
+                ["complianceStatus"] = compStatus ?? "Compliant",
+                ["verificationStatus"] = DocumentVerificationStatus.Rejected,
+                ["verifiedBy"] = dto.VerifiedBy,
+                ["verificationReason"] = reason,
+                ["rejectionReason"] = reason
+            };
+            action.SourceMetadata = JsonSerializer.Serialize(metaObj);
+        }
+
+        await _dbContext.SaveChangesAsync();
+
+        return MapToResponseDto(action, isClientView: false);
+    }
+
+    private static (string? DocumentId, string? ComplianceStatus, string? VerificationStatus, string? VerificationReason) ParseSourceMetadata(string? sourceMetadata)
+    {
+        if (string.IsNullOrWhiteSpace(sourceMetadata))
+        {
+            return (null, null, null, null);
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(sourceMetadata);
+            var root = doc.RootElement;
+            string? docId = root.TryGetProperty("documentId", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null;
+            string? comp = root.TryGetProperty("complianceStatus", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
+            string? ver = root.TryGetProperty("verificationStatus", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            string? reason = root.TryGetProperty("verificationReason", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString() :
+                (root.TryGetProperty("rejectionReason", out var rr) && rr.ValueKind == JsonValueKind.String ? rr.GetString() : null);
+
+            return (docId, comp, ver, reason);
+        }
+        catch
+        {
+            return (null, null, null, null);
+        }
+    }
+
     private static ClientActionResponseDto MapToResponseDto(ClientAction entity, bool isClientView)
     {
+        var (_, _, verStatus, verReason) = ParseSourceMetadata(entity.SourceMetadata);
+
         return new ClientActionResponseDto
         {
             ActionId = entity.ActionId,
@@ -222,7 +393,9 @@ public class ClientActionService : IClientActionService
             CompletedAt = entity.CompletedAt,
             CreatedAt = entity.CreatedAt,
             // Client-safe security rule: Strip SourceMetadata if called from client view
-            SourceMetadata = isClientView ? null : entity.SourceMetadata
+            SourceMetadata = isClientView ? null : entity.SourceMetadata,
+            VerificationStatus = verStatus,
+            VerificationReason = verReason
         };
     }
 }

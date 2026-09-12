@@ -312,6 +312,8 @@ public class ClientPortalService : IClientPortalService
             rejectionReason = ExtractRejectionReason(action.SourceMetadata);
         }
 
+        var verificationStatus = ExtractVerificationStatus(action.SourceMetadata);
+
         return new ClientSafeActionDto
         {
             ActionId = action.ActionId,
@@ -323,7 +325,8 @@ public class ClientPortalService : IClientPortalService
             DeadlineUtc = action.DeadlineUtc,
             IsOverdue = isOverdue,
             DaysRemaining = daysRemaining,
-            RejectionReason = rejectionReason
+            RejectionReason = rejectionReason,
+            VerificationStatus = verificationStatus
         };
     }
 
@@ -337,7 +340,35 @@ public class ClientPortalService : IClientPortalService
         try
         {
             using var doc = System.Text.Json.JsonDocument.Parse(sourceMetadata);
-            if (doc.RootElement.TryGetProperty("rejectionReason", out var prop) && prop.ValueKind == System.Text.Json.JsonValueKind.String)
+            var root = doc.RootElement;
+            if (root.TryGetProperty("verificationReason", out var vProp) && vProp.ValueKind == System.Text.Json.JsonValueKind.String && !string.IsNullOrWhiteSpace(vProp.GetString()))
+            {
+                return vProp.GetString();
+            }
+            if (root.TryGetProperty("rejectionReason", out var prop) && prop.ValueKind == System.Text.Json.JsonValueKind.String && !string.IsNullOrWhiteSpace(prop.GetString()))
+            {
+                return prop.GetString();
+            }
+        }
+        catch
+        {
+            // Ignore non-JSON metadata
+        }
+
+        return null;
+    }
+
+    private static string? ExtractVerificationStatus(string? sourceMetadata)
+    {
+        if (string.IsNullOrWhiteSpace(sourceMetadata))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(sourceMetadata);
+            if (doc.RootElement.TryGetProperty("verificationStatus", out var prop) && prop.ValueKind == System.Text.Json.JsonValueKind.String)
             {
                 return prop.GetString();
             }

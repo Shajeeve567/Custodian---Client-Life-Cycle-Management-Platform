@@ -9,5 +9,6 @@ public interface IClientActionService
     Task<ClientActionResponseDto?> CompleteActionAsync(Guid engagementId, Guid actionId, string tenantId, CompleteClientActionDto dto);
     Task<ClientActionResponseDto?> UploadEvidenceAsync(Guid engagementId, Guid actionId, string tenantId, UploadActionEvidenceDto dto);
     Task<ClientActionResponseDto?> ReviewActionAsync(Guid engagementId, Guid actionId, string tenantId, ReviewActionDto dto);
+    Task<ClientActionResponseDto?> ApplyVerificationOutcomeAsync(Guid engagementId, Guid actionId, string tenantId, ApplyActionVerificationDto dto);
 }
 

@@ -179,6 +179,43 @@ public class ClientActionsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Updates action status based on document human verification outcome (Verified -> Completed, Rejected -> Rejected with reason).
+    /// </summary>
+    [HttpPut("{actionId:guid}/verification")]
+    public async Task<ActionResult<ClientActionResponseDto>> ApplyVerification(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid actionId,
+        [FromBody] ApplyActionVerificationDto dto,
+        [FromQuery] string? tenantId)
+    {
+        var effectiveTenantId = ResolveTenantId(tenantId);
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        try
+        {
+            var result = await _actionService.ApplyVerificationOutcomeAsync(engagementId, actionId, effectiveTenantId, dto);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     private string? ResolveTenantId(string? queryTenantId)
     {
         // 1. Check HTTP header X-Tenant-ID
