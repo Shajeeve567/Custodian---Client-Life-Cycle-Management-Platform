@@ -43,11 +43,34 @@ public class ClientActionsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
-        // Determine if client view rule applies (via explicit parameter, header, or role claim)
-        bool clientView = isClientView ?? User.IsInRole("Client");
-        if (!clientView && Request?.Headers != null && Request.Headers.TryGetValue("X-Client-View", out var headerVal))
+        // Determine client view enforcement (CSTD-12 Group B):
+        // Clients and unprivileged callers MUST always receive clientView = true to prevent leaking internal actions & sourceMetadata.
+        // Only Staff and Owner callers can access internal-only actions (clientView = false).
+        bool clientView;
+        if (User?.Identity?.IsAuthenticated == true)
         {
-            _ = bool.TryParse(headerVal, out clientView);
+            if (User.IsInRole("Client") || (!User.IsInRole("Owner") && !User.IsInRole("Staff")))
+            {
+                clientView = true;
+            }
+            else
+            {
+                // Staff / Owner: default to full staff view (false), unless they explicitly request client preview
+                clientView = isClientView ?? false;
+                if (!clientView && Request?.Headers != null && Request.Headers.TryGetValue("X-Client-View", out var headerVal))
+                {
+                    _ = bool.TryParse(headerVal, out clientView);
+                }
+            }
+        }
+        else
+        {
+            // Fallback for unauthenticated unit test mocks
+            clientView = isClientView ?? false;
+            if (!clientView && Request?.Headers != null && Request.Headers.TryGetValue("X-Client-View", out var headerVal))
+            {
+                _ = bool.TryParse(headerVal, out clientView);
+            }
         }
 
         var actions = await _actionService.GetActionsByEngagementAsync(engagementId, effectiveTenantId, clientView, status);

@@ -42,22 +42,32 @@ public class ClientPortalController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
-        var effectiveClientId = ResolveClientId(clientId);
+        var (effectiveClientId, isClientMismatch) = ResolveClientId(clientId);
+        if (isClientMismatch)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveClientId))
         {
+            // Staff / Owner preview without specific client specified: fallback to tenant's active onboarding engagement
+            if (User?.IsInRole("Staff") == true || User?.IsInRole("Owner") == true)
+            {
+                var staffPreviewDashboard = await _portalService.GetActiveDashboardForTenantAsync(effectiveTenantId);
+                if (staffPreviewDashboard == null)
+                {
+                    return NotFound(new { message = $"No active onboarding engagement found in workspace '{effectiveTenantId}'." });
+                }
+                return Ok(staffPreviewDashboard);
+            }
+
             return BadRequest(new { message = "Client identification is required via JWT sub/clientId claim, X-Client-ID header, or clientId parameter." });
         }
 
         var dashboard = await _portalService.GetActiveDashboardForClientAsync(effectiveTenantId, effectiveClientId);
-        if (dashboard == null && !User.IsInRole("Client"))
-        {
-            // If caller is Staff/Owner previewing the portal, fallback to the latest active engagement in this workspace
-            dashboard = await _portalService.GetActiveDashboardForTenantAsync(effectiveTenantId);
-        }
-
         if (dashboard == null)
         {
-            return NotFound(new { message = $"No active onboarding engagement found in workspace '{effectiveTenantId}'." });
+            return NotFound(new { message = $"No active onboarding engagement found for client '{effectiveClientId}' in workspace '{effectiveTenantId}'." });
         }
 
         return Ok(dashboard);
@@ -84,9 +94,14 @@ public class ClientPortalController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
+        var (effectiveClientId, isClientMismatch) = ResolveClientId(clientId);
+        if (isClientMismatch)
+        {
+            return Forbid();
+        }
+
         // Determine if client authorization rule applies
-        var effectiveClientId = ResolveClientId(clientId);
-        var isClientCaller = User.IsInRole("Client") || !string.IsNullOrWhiteSpace(effectiveClientId);
+        var isClientCaller = User?.IsInRole("Client") == true || !string.IsNullOrWhiteSpace(effectiveClientId);
 
         var dashboard = await _portalService.GetDashboardForEngagementAsync(
             engagementId,
@@ -159,35 +174,74 @@ public class ClientPortalController : ControllerBase
         return (null, false);
     }
 
-    private string? ResolveClientId(string? queryClientId)
+    private (string? ClientId, bool IsMismatch) ResolveClientId(string? queryClientId)
     {
-        // 1. Check HTTP header X-Client-ID
+        // 1. Check JWT Claims: client_id, clientId, or sub/NameIdentifier (for Client role)
+        var jwtClaimClient = User?.FindFirst("client_id")?.Value
+            ?? User?.FindFirst("clientId")?.Value;
+
+        if (string.IsNullOrWhiteSpace(jwtClaimClient) && User?.IsInRole("Client") == true)
+        {
+            jwtClaimClient = User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                ?? User?.FindFirst("sub")?.Value;
+        }
+
+        if (!string.IsNullOrWhiteSpace(jwtClaimClient))
+        {
+            var cleanJwtClient = jwtClaimClient.Trim();
+
+            // Client caller cannot forge a different client ID via query param
+            if (!string.IsNullOrWhiteSpace(queryClientId) &&
+                !string.Equals(queryClientId.Trim(), cleanJwtClient, StringComparison.OrdinalIgnoreCase))
+            {
+                return (null, true);
+            }
+
+            // Client caller cannot forge a different client ID via X-Client-ID header
+            if (Request?.Headers != null && Request.Headers.TryGetValue("X-Client-ID", out var headerVal))
+            {
+                var headerClient = headerVal.ToString().Trim();
+                if (!string.IsNullOrWhiteSpace(headerClient) &&
+                    !string.Equals(headerClient, cleanJwtClient, StringComparison.OrdinalIgnoreCase))
+                {
+                    return (null, true);
+                }
+            }
+
+            return (cleanJwtClient, false);
+        }
+
+        // 2. Query String Parameter
+        if (!string.IsNullOrWhiteSpace(queryClientId))
+        {
+            return (queryClientId.Trim(), false);
+        }
+
+        // 3. HTTP Header X-Client-ID (for staff preview or unauthenticated test callers)
         if (Request?.Headers != null && Request.Headers.TryGetValue("X-Client-ID", out var headerValue))
         {
             var headerClient = headerValue.ToString();
             if (!string.IsNullOrWhiteSpace(headerClient))
             {
-                return headerClient.Trim();
+                return (headerClient.Trim(), false);
             }
         }
 
-        // 2. Check JWT Claims: client_id, clientId, sub, or NameIdentifier
-        var jwtClaimClient = User?.FindFirst("client_id")?.Value
-            ?? User?.FindFirst("clientId")?.Value
-            ?? User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+        // 4. Staff/Owner callers should NOT treat their user sub as a clientId unless explicitly passed
+        if (User?.IsInRole("Owner") == true || User?.IsInRole("Staff") == true)
+        {
+            return (null, false);
+        }
+
+        // 5. Fallback to sub / NameIdentifier for general test/unassigned contexts
+        var fallbackSub = User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
             ?? User?.FindFirst("sub")?.Value;
 
-        if (!string.IsNullOrWhiteSpace(jwtClaimClient))
+        if (!string.IsNullOrWhiteSpace(fallbackSub))
         {
-            return jwtClaimClient.Trim();
+            return (fallbackSub.Trim(), false);
         }
 
-        // 3. Fallback to Query String Parameter
-        if (!string.IsNullOrWhiteSpace(queryClientId))
-        {
-            return queryClientId.Trim();
-        }
-
-        return null;
+        return (null, false);
     }
 }

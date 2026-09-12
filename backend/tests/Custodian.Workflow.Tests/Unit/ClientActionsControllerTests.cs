@@ -469,4 +469,63 @@ public class ClientActionsControllerTests
         Assert.IsType<ForbidResult>(result.Result);
         _mockService.Verify(s => s.ApplyVerificationOutcomeAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<ApplyActionVerificationDto>()), Times.Never);
     }
+
+    [Fact]
+    public async Task GetActionHistory_ClientRoleRequestsClientViewFalse_ForcesClientViewTrue()
+    {
+        // Arrange (CSTD-12 Group B): Client passes ?isClientView=false to attempt viewing internal actions
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = tenantId;
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantId),
+            new Claim(ClaimTypes.Role, "Client")
+        }, "TestAuth"));
+
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        _mockService.Setup(s => s.GetActionsByEngagementAsync(engagementId, tenantId, true, null))
+            .ReturnsAsync(new List<ClientActionResponseDto>());
+
+        // Act: isClientView is explicitly set to false in query
+        var result = await _controller.GetActionHistory(engagementId, tenantId: null, status: null, isClientView: false);
+
+        // Assert: Controller MUST enforce isClientView: true when calling service
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        _mockService.Verify(s => s.GetActionsByEngagementAsync(engagementId, tenantId, true, null), Times.Once);
+        _mockService.Verify(s => s.GetActionsByEngagementAsync(engagementId, tenantId, false, null), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetActionHistory_StaffRoleRequestsClientViewFalse_AllowsStaffView()
+    {
+        // Arrange: Staff requests staff view (isClientView: false)
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = tenantId;
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantId),
+            new Claim(ClaimTypes.Role, "Staff")
+        }, "TestAuth"));
+
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        _mockService.Setup(s => s.GetActionsByEngagementAsync(engagementId, tenantId, false, null))
+            .ReturnsAsync(new List<ClientActionResponseDto>());
+
+        // Act
+        var result = await _controller.GetActionHistory(engagementId, tenantId: null, status: null, isClientView: false);
+
+        // Assert: Staff is permitted staff view
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        _mockService.Verify(s => s.GetActionsByEngagementAsync(engagementId, tenantId, false, null), Times.Once);
+    }
 }

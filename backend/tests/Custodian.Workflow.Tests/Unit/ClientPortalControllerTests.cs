@@ -192,4 +192,97 @@ public class ClientPortalControllerTests
         var notFound = Assert.IsType<NotFoundObjectResult>(result.Result);
         Assert.Equal(404, notFound.StatusCode);
     }
+
+    [Fact]
+    public async Task GetMyActiveEngagement_ForgedClientIdHeader_Returns404_NeverFallsBackToTenantDashboard()
+    {
+        // Arrange (CSTD-269 AC4): Caller provides a forged X-Client-ID that doesn't match any real engagement
+        var tenantId = "tenant-001";
+        var forgedClientId = "forged-client-xyz";
+        
+        // Caller has a normal user token (role is not Client)
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = tenantId;
+        httpContext.Request.Headers["X-Client-ID"] = forgedClientId;
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantId),
+            new Claim("sub", Guid.NewGuid().ToString())
+        }, "TestAuth"));
+
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        _mockPortalService.Setup(s => s.GetActiveDashboardForClientAsync(tenantId, forgedClientId))
+            .ReturnsAsync((ClientPortalDashboardDto?)null);
+
+        // Act
+        var result = await _controller.GetMyActiveEngagement(tenantId: null, clientId: null);
+
+        // Assert: MUST return 404 NotFound and MUST NEVER call GetActiveDashboardForTenantAsync
+        var notFound = Assert.IsType<NotFoundObjectResult>(result.Result);
+        Assert.Equal(404, notFound.StatusCode);
+        _mockPortalService.Verify(s => s.GetActiveDashboardForTenantAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetMyActiveEngagement_ClientRoleMismatchedHeader_Returns403Forbidden()
+    {
+        // Arrange: Authenticated client tries to impersonate another client via X-Client-ID header
+        var tenantId = "tenant-001";
+        var realClientId = "real-client-123";
+        var forgedClientId = "victim-client-456";
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = tenantId;
+        httpContext.Request.Headers["X-Client-ID"] = forgedClientId; // Forged header
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantId),
+            new Claim("client_id", realClientId), // Real JWT claim
+            new Claim(ClaimTypes.Role, "Client")
+        }, "TestAuth"));
+
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        // Act
+        var result = await _controller.GetMyActiveEngagement(tenantId: null, clientId: null);
+
+        // Assert: 403 Forbidden
+        Assert.IsType<ForbidResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task GetMyActiveEngagement_StaffPreviewWithoutClient_ReturnsTenantDashboard()
+    {
+        // Arrange: Staff previews portal without passing any client ID
+        var tenantId = "tenant-001";
+        var expectedDto = new ClientPortalDashboardDto
+        {
+            EngagementId = Guid.NewGuid(),
+            CurrentStageNumber = 1
+        };
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = tenantId;
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantId),
+            new Claim("sub", Guid.NewGuid().ToString()),
+            new Claim(ClaimTypes.Role, "Staff")
+        }, "TestAuth"));
+
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        _mockPortalService.Setup(s => s.GetActiveDashboardForTenantAsync(tenantId))
+            .ReturnsAsync(expectedDto);
+
+        // Act
+        var result = await _controller.GetMyActiveEngagement(tenantId: null, clientId: null);
+
+        // Assert: 200 OK with staff preview
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        var dto = Assert.IsType<ClientPortalDashboardDto>(okResult.Value);
+        Assert.Equal(expectedDto.EngagementId, dto.EngagementId);
+    }
 }
