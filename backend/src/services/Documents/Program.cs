@@ -1,16 +1,25 @@
 using Custodian.Documents.Data;
+using Custodian.Documents.Services;
+using Custodian.Shared.Auth;
 using Custodian.Shared.Http;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
-
-using Custodian.Documents.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add controllers & services
 builder.Services.AddControllers();
 builder.Services.AddCustodianCors(builder.Configuration);
+
+// Configure Authentication & Authorization
+if (builder.Configuration.GetSection("Jwt").Exists())
+{
+    builder.Services.AddJwtAuthentication(builder.Configuration);
+}
+builder.Services.AddAuthorization();
+
 builder.Services.AddSingleton<IDocumentValidator, DocumentValidator>();
+
 builder.Services.AddScoped<IStorageService, LocalStorageService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 
@@ -53,6 +62,7 @@ using (var scope = app.Services.CreateScope())
 
 app.UseCors();
 // app.UseHttpsRedirection();
+app.UseAuthentication();
 app.UseAuthorization();
 app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Documents Service" }));
 app.MapControllers();

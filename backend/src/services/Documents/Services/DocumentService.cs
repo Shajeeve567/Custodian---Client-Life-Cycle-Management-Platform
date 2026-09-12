@@ -114,7 +114,87 @@ public class DocumentService : IDocumentService
         return document == null ? null : MapToResponseDto(document);
     }
 
+    public async Task<DocumentResponseDto?> VerifyDocumentAsync(
+        Guid engagementId,
+        Guid documentId,
+        string tenantId,
+        VerifyDocumentRequestDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return null;
+        }
+
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(d => d.DocumentId == documentId && d.EngagementId == engagementId && d.TenantId == tenantId);
+
+        if (document == null)
+        {
+            return null;
+        }
+
+        // AC 2: Only auto-compliant documents enter verification
+        if (!string.Equals(document.ComplianceStatus, Compliance.ComplianceStatus.Compliant, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Document '{documentId}' is not automatically compliant (Compliance Status: '{document.ComplianceStatus}'). Only automatically compliant documents can enter human verification.");
+        }
+
+        // AC 4: Verification separate from compliance (compliance status remains compliant)
+        document.VerificationStatus = DocumentVerificationStatus.Verified;
+        document.VerifiedBy = !string.IsNullOrWhiteSpace(dto.StaffActor) ? dto.StaffActor.Trim() : "StaffUser";
+        document.VerifiedAt = DateTime.UtcNow;
+        document.VerificationReason = dto.StaffNotes?.Trim();
+
+        await _dbContext.SaveChangesAsync();
+
+        return MapToResponseDto(document);
+    }
+
+    public async Task<DocumentResponseDto?> RejectDocumentVerificationAsync(
+        Guid engagementId,
+        Guid documentId,
+        string tenantId,
+        RejectDocumentRequestDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(dto.Reason))
+        {
+            throw new ArgumentException("Rejection reason is required when rejecting document verification.", nameof(dto));
+        }
+
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(d => d.DocumentId == documentId && d.EngagementId == engagementId && d.TenantId == tenantId);
+
+        if (document == null)
+        {
+            return null;
+        }
+
+        // AC 2: Only auto-compliant documents enter verification
+        if (!string.Equals(document.ComplianceStatus, Compliance.ComplianceStatus.Compliant, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Document '{documentId}' is not automatically compliant (Compliance Status: '{document.ComplianceStatus}'). Only automatically compliant documents can enter human verification.");
+        }
+
+        // AC 3 & AC 4: Verification separate from compliance (compliance status remains compliant, rejection reason recorded in verification reason)
+        document.VerificationStatus = DocumentVerificationStatus.Rejected;
+        document.VerifiedBy = !string.IsNullOrWhiteSpace(dto.StaffActor) ? dto.StaffActor.Trim() : "StaffUser";
+        document.VerifiedAt = DateTime.UtcNow;
+        document.VerificationReason = dto.Reason.Trim();
+
+        await _dbContext.SaveChangesAsync();
+
+        return MapToResponseDto(document);
+    }
+
     private static DocumentResponseDto MapToResponseDto(DocumentMetadata entity)
+
     {
         return new DocumentResponseDto
         {

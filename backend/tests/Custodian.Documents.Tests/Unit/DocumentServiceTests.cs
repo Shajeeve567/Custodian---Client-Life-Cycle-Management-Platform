@@ -326,6 +326,209 @@ public class DocumentServiceTests
         Assert.Equal(verifiedAt, result.VerifiedAt);
         Assert.Equal("Physical document cross-checked", result.VerificationReason);
     }
+
+    [Fact]
+    public async Task VerifyDocumentAsync_CompliantDocument_SetsVerifiedStatusAndKeepsComplianceStatus()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+
+        var metadata = new Custodian.Documents.Models.DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Passport",
+            UploaderId = "client-1",
+            FileName = "passport.pdf",
+            ContentType = "application/pdf",
+            FileSize = 1000,
+            StoragePath = "uploads/passport.pdf",
+            UploadedAt = DateTime.UtcNow,
+            ComplianceStatus = Custodian.Documents.Compliance.ComplianceStatus.Compliant,
+            VerificationStatus = DocumentVerificationStatus.Unverified
+        };
+
+        dbContext.Documents.Add(metadata);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+        var dto = new VerifyDocumentRequestDto
+        {
+            StaffNotes = "Manually reviewed and approved.",
+            StaffActor = "staff-john"
+        };
+
+        var result = await service.VerifyDocumentAsync(engagementId, documentId, tenantId, dto);
+
+        Assert.NotNull(result);
+        Assert.Equal(DocumentVerificationStatus.Verified, result.VerificationStatus);
+        Assert.Equal("staff-john", result.VerifiedBy);
+        Assert.Equal("Manually reviewed and approved.", result.VerificationReason);
+        Assert.NotNull(result.VerifiedAt);
+        // AC 4: Verification remains separate; compliance status is still compliant
+        Assert.Equal(Custodian.Documents.Compliance.ComplianceStatus.Compliant, result.ComplianceStatus);
+
+        // Verify in DB
+        var persisted = await dbContext.Documents.FindAsync(documentId);
+        Assert.NotNull(persisted);
+        Assert.Equal(DocumentVerificationStatus.Verified, persisted.VerificationStatus);
+        Assert.Equal(Custodian.Documents.Compliance.ComplianceStatus.Compliant, persisted.ComplianceStatus);
+    }
+
+    [Fact]
+    public async Task VerifyDocumentAsync_NonCompliantDocument_ThrowsInvalidOperationException()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+
+        var metadata = new Custodian.Documents.Models.DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Passport",
+            UploaderId = "client-1",
+            FileName = "passport.pdf",
+            ContentType = "application/pdf",
+            FileSize = 1000,
+            StoragePath = "uploads/passport.pdf",
+            UploadedAt = DateTime.UtcNow,
+            ComplianceStatus = Custodian.Documents.Compliance.ComplianceStatus.Rejected,
+            RejectionReason = "Expired document",
+            VerificationStatus = DocumentVerificationStatus.Unverified
+        };
+
+        dbContext.Documents.Add(metadata);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+        var dto = new VerifyDocumentRequestDto { StaffActor = "staff-john" };
+
+        // AC 2: Only auto-compliant documents enter verification
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.VerifyDocumentAsync(engagementId, documentId, tenantId, dto));
+
+        Assert.Contains("not automatically compliant", ex.Message);
+    }
+
+    [Fact]
+    public async Task RejectDocumentVerificationAsync_CompliantDocument_SetsRejectedStatusWithReason()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+
+        var metadata = new Custodian.Documents.Models.DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Passport",
+            UploaderId = "client-1",
+            FileName = "passport.pdf",
+            ContentType = "application/pdf",
+            FileSize = 1000,
+            StoragePath = "uploads/passport.pdf",
+            UploadedAt = DateTime.UtcNow,
+            ComplianceStatus = Custodian.Documents.Compliance.ComplianceStatus.Compliant,
+            VerificationStatus = DocumentVerificationStatus.Unverified
+        };
+
+        dbContext.Documents.Add(metadata);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+        var dto = new RejectDocumentRequestDto
+        {
+            Reason = "Photograph is dark and unreadable.",
+            StaffActor = "staff-sarah"
+        };
+
+        var result = await service.RejectDocumentVerificationAsync(engagementId, documentId, tenantId, dto);
+
+        Assert.NotNull(result);
+        Assert.Equal(DocumentVerificationStatus.Rejected, result.VerificationStatus);
+        Assert.Equal("Photograph is dark and unreadable.", result.VerificationReason);
+        Assert.Equal("staff-sarah", result.VerifiedBy);
+        Assert.NotNull(result.VerifiedAt);
+        // AC 4: Compliance status is untouched
+        Assert.Equal(Custodian.Documents.Compliance.ComplianceStatus.Compliant, result.ComplianceStatus);
+    }
+
+    [Fact]
+    public async Task RejectDocumentVerificationAsync_EmptyReason_ThrowsArgumentException()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+        var dto = new RejectDocumentRequestDto
+        {
+            Reason = "   ",
+            StaffActor = "staff-sarah"
+        };
+
+        // AC 3: Rejection requires a reason
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.RejectDocumentVerificationAsync(engagementId, documentId, tenantId, dto));
+    }
+
+    [Fact]
+    public async Task VerifyDocumentAsync_CrossTenantIsolation_ReturnsNull()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+
+        var metadata = new Custodian.Documents.Models.DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = "tenant-A",
+            Type = "Passport",
+            UploaderId = "client-1",
+            FileName = "passport.pdf",
+            ContentType = "application/pdf",
+            FileSize = 1000,
+            StoragePath = "uploads/passport.pdf",
+            ComplianceStatus = Custodian.Documents.Compliance.ComplianceStatus.Compliant,
+            VerificationStatus = DocumentVerificationStatus.Unverified
+        };
+
+        dbContext.Documents.Add(metadata);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+        var dto = new VerifyDocumentRequestDto { StaffActor = "staff-1" };
+
+        // Attempting to verify from tenant-B
+        var result = await service.VerifyDocumentAsync(engagementId, documentId, "tenant-B", dto);
+        Assert.Null(result);
+    }
 }
+
 
 

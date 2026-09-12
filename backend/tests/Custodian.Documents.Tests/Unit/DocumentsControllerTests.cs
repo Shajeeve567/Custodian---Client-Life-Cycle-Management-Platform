@@ -233,4 +233,137 @@ public class DocumentsControllerTests
 
         Assert.IsType<NotFoundObjectResult>(actionResult);
     }
+
+    private void SetUserRole(string role, string userId = "staff-user-1")
+    {
+        var claims = new[]
+        {
+            new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, userId),
+            new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, role),
+            new System.Security.Claims.Claim("tenant_id", "tenant-1")
+        };
+        var identity = new System.Security.Claims.ClaimsIdentity(claims, "TestAuth");
+        _controller.ControllerContext.HttpContext.User = new System.Security.Claims.ClaimsPrincipal(identity);
+    }
+
+    [Fact]
+    public async Task VerifyDocument_AuthorizedStaff_Returns200OkWithVerifiedDoc()
+    {
+        SetUserRole("Staff", "staff-alice");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var requestDto = new VerifyDocumentRequestDto { StaffNotes = "Looks good" };
+        var responseDto = new DocumentResponseDto
+        {
+            DocumentId = documentId,
+            VerificationStatus = Custodian.Shared.Contracts.DocumentVerificationStatus.Verified,
+            VerifiedBy = "staff-alice",
+            ComplianceStatus = Custodian.Documents.Compliance.ComplianceStatus.Compliant
+        };
+
+        _documentServiceMock
+            .Setup(s => s.VerifyDocumentAsync(engagementId, documentId, tenantId, requestDto))
+            .ReturnsAsync(responseDto);
+
+        var actionResult = await _controller.VerifyDocument(engagementId, documentId, requestDto, tenantId);
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var result = Assert.IsType<DocumentResponseDto>(okResult.Value);
+        Assert.Equal(Custodian.Shared.Contracts.DocumentVerificationStatus.Verified, result.VerificationStatus);
+    }
+
+    [Fact]
+    public async Task VerifyDocument_ClientRole_Returns403Forbidden()
+    {
+        SetUserRole("Client", "client-bob");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var requestDto = new VerifyDocumentRequestDto { StaffNotes = "Trying to verify myself" };
+
+        var actionResult = await _controller.VerifyDocument(engagementId, documentId, requestDto, tenantId);
+
+        Assert.IsType<ForbidResult>(actionResult.Result);
+    }
+
+    [Fact]
+    public async Task VerifyDocument_PreconditionFailed_Returns400BadRequest()
+    {
+        SetUserRole("Staff", "staff-alice");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var requestDto = new VerifyDocumentRequestDto();
+
+        _documentServiceMock
+            .Setup(s => s.VerifyDocumentAsync(engagementId, documentId, tenantId, requestDto))
+            .ThrowsAsync(new InvalidOperationException("Document is not automatically compliant."));
+
+        var actionResult = await _controller.VerifyDocument(engagementId, documentId, requestDto, tenantId);
+
+        var badRequestResult = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
+        Assert.NotNull(badRequestResult.Value);
+    }
+
+    [Fact]
+    public async Task RejectDocument_AuthorizedStaffWithReason_Returns200Ok()
+    {
+        SetUserRole("Staff", "staff-alice");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var requestDto = new RejectDocumentRequestDto { Reason = "Document is unreadable." };
+        var responseDto = new DocumentResponseDto
+        {
+            DocumentId = documentId,
+            VerificationStatus = Custodian.Shared.Contracts.DocumentVerificationStatus.Rejected,
+            VerificationReason = "Document is unreadable."
+        };
+
+        _documentServiceMock
+            .Setup(s => s.RejectDocumentVerificationAsync(engagementId, documentId, tenantId, requestDto))
+            .ReturnsAsync(responseDto);
+
+        var actionResult = await _controller.RejectDocument(engagementId, documentId, requestDto, tenantId);
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var result = Assert.IsType<DocumentResponseDto>(okResult.Value);
+        Assert.Equal(Custodian.Shared.Contracts.DocumentVerificationStatus.Rejected, result.VerificationStatus);
+    }
+
+    [Fact]
+    public async Task RejectDocument_MissingReason_Returns400BadRequest()
+    {
+        SetUserRole("Staff", "staff-alice");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var requestDto = new RejectDocumentRequestDto { Reason = "" };
+
+        var actionResult = await _controller.RejectDocument(engagementId, documentId, requestDto, tenantId);
+
+        Assert.IsType<BadRequestObjectResult>(actionResult.Result);
+    }
+
+    [Fact]
+    public async Task RejectDocument_NonStaffRole_Returns403Forbidden()
+    {
+        SetUserRole("Client", "client-bob");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var requestDto = new RejectDocumentRequestDto { Reason = "Reason" };
+
+        var actionResult = await _controller.RejectDocument(engagementId, documentId, requestDto, tenantId);
+
+        Assert.IsType<ForbidResult>(actionResult.Result);
+    }
 }
+
