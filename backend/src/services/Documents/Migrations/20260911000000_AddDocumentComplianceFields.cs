@@ -17,7 +17,7 @@ namespace Documents.Migrations
                 type: "varchar(50)",
                 maxLength: 50,
                 nullable: false,
-                defaultValue: "Compliant")
+                defaultValue: "Pending")
                 .Annotation("MySql:CharSet", "utf8mb4");
 
             migrationBuilder.AddColumn<string>(
