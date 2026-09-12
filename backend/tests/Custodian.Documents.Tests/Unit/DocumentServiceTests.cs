@@ -2,6 +2,7 @@ using System.Text;
 using Custodian.Documents.Data;
 using Custodian.Documents.DTOs;
 using Custodian.Documents.Services;
+using Custodian.Shared.Contracts;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Moq;
@@ -275,6 +276,56 @@ public class DocumentServiceTests
         Assert.NotNull(persisted);
         Assert.Equal(Custodian.Documents.Compliance.ComplianceStatus.Rejected, persisted.ComplianceStatus);
         Assert.Equal(response.RejectionReason, persisted.RejectionReason);
+        Assert.Equal(DocumentVerificationStatus.Unverified, persisted.VerificationStatus);
+    }
+
+    [Fact]
+    public async Task GetDocumentByIdAsync_WithVerificationFields_MapsAllVerificationProperties()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-gamma";
+        var verifiedAt = DateTime.UtcNow;
+
+        var metadata = new Custodian.Documents.Models.DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Passport",
+            UploaderId = "client-user",
+            FileName = "passport.pdf",
+            ContentType = "application/pdf",
+            FileSize = 1024,
+            StoragePath = "uploads/passport.pdf",
+            UploadedAt = DateTime.UtcNow.AddHours(-2),
+            ComplianceStatus = Custodian.Documents.Compliance.ComplianceStatus.Compliant,
+            RejectionReason = null,
+            ValidatedAt = DateTime.UtcNow.AddHours(-2),
+            VerificationStatus = DocumentVerificationStatus.Verified,
+            VerifiedBy = "staff-reviewer",
+            VerifiedAt = verifiedAt,
+            VerificationReason = "Physical document cross-checked"
+        };
+
+        dbContext.Documents.Add(metadata);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        var result = await service.GetDocumentByIdAsync(engagementId, documentId, tenantId);
+
+        Assert.NotNull(result);
+        Assert.Equal(documentId, result.DocumentId);
+        Assert.Equal(DocumentVerificationStatus.Verified, result.VerificationStatus);
+        Assert.Equal("staff-reviewer", result.VerifiedBy);
+        Assert.Equal(verifiedAt, result.VerifiedAt);
+        Assert.Equal("Physical document cross-checked", result.VerificationReason);
     }
 }
+
 

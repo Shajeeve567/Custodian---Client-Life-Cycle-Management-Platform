@@ -4,6 +4,7 @@ using Custodian.Documents.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Documents.Migrations
 {
     [DbContext(typeof(DocumentDbContext))]
-    partial class DocumentDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260912000000_AddDocumentVerificationFields")]
+    partial class AddDocumentVerificationFields
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -28,6 +31,12 @@ namespace Documents.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("char(36)")
                         .HasColumnName("document_id");
+
+                    b.Property<string>("ComplianceStatus")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("compliance_status");
 
                     b.Property<string>("ContentType")
                         .IsRequired()
@@ -57,6 +66,11 @@ namespace Documents.Migrations
                         .HasColumnType("datetime(6)")
                         .HasColumnName("issue_date");
 
+                    b.Property<string>("RejectionReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(1000)")
+                        .HasColumnName("rejection_reason");
+
                     b.Property<string>("StoragePath")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -84,17 +98,6 @@ namespace Documents.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("varchar(100)")
                         .HasColumnName("uploader_id");
-
-                    b.Property<string>("ComplianceStatus")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(50)")
-                        .HasColumnName("compliance_status");
-
-                    b.Property<string>("RejectionReason")
-                        .HasMaxLength(1000)
-                        .HasColumnType("varchar(1000)")
-                        .HasColumnName("rejection_reason");
 
                     b.Property<DateTime?>("ValidatedAt")
                         .HasColumnType("datetime(6)")

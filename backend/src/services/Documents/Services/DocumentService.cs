@@ -4,7 +4,9 @@ using Custodian.Documents.Compliance.Store;
 using Custodian.Documents.Data;
 using Custodian.Documents.DTOs;
 using Custodian.Documents.Models;
+using Custodian.Shared.Contracts;
 using Microsoft.EntityFrameworkCore;
+
 
 namespace Custodian.Documents.Services;
 
@@ -69,7 +71,11 @@ public class DocumentService : IDocumentService
             UploadedAt = DateTime.UtcNow,
             ComplianceStatus = complianceResult.Status,
             RejectionReason = complianceResult.RejectionReason,
-            ValidatedAt = complianceResult.ValidatedAtUtc
+            ValidatedAt = complianceResult.ValidatedAtUtc,
+            VerificationStatus = DocumentVerificationStatus.Unverified,
+            VerifiedBy = null,
+            VerifiedAt = null,
+            VerificationReason = null
         };
 
         _dbContext.Documents.Add(metadata);
@@ -126,7 +132,11 @@ public class DocumentService : IDocumentService
             UploadedAt = entity.UploadedAt,
             ComplianceStatus = entity.ComplianceStatus,
             RejectionReason = entity.RejectionReason,
-            ValidatedAt = entity.ValidatedAt
+            ValidatedAt = entity.ValidatedAt,
+            VerificationStatus = entity.VerificationStatus,
+            VerifiedBy = entity.VerifiedBy,
+            VerifiedAt = entity.VerifiedAt,
+            VerificationReason = entity.VerificationReason
         };
     }
 }

@@ -83,10 +83,27 @@ public class DocumentDbContext : DbContext
             entity.Property(e => e.ValidatedAt)
                 .HasColumnName("validated_at");
 
+            entity.Property(e => e.VerificationStatus)
+                .HasColumnName("verification_status")
+                .IsRequired()
+                .HasMaxLength(50);
+
+            entity.Property(e => e.VerifiedBy)
+                .HasColumnName("verified_by")
+                .HasMaxLength(100);
+
+            entity.Property(e => e.VerifiedAt)
+                .HasColumnName("verified_at");
+
+            entity.Property(e => e.VerificationReason)
+                .HasColumnName("verification_reason")
+                .HasMaxLength(1000);
+
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => e.EngagementId);
             entity.HasIndex(e => e.Type);
             entity.HasIndex(e => e.ComplianceStatus);
+            entity.HasIndex(e => e.VerificationStatus);
         });
     }
 }
