@@ -17,4 +17,9 @@ public class DocumentResponseDto
     public string ComplianceStatus { get; set; } = Compliance.ComplianceStatus.Pending;
     public string? RejectionReason { get; set; }
     public DateTime? ValidatedAt { get; set; }
+    public string VerificationStatus { get; set; } = Custodian.Shared.Contracts.DocumentVerificationStatus.Unverified;
+    public string? VerifiedBy { get; set; }
+    public DateTime? VerifiedAt { get; set; }
+    public string? VerificationReason { get; set; }
 }
+

@@ -8,4 +8,9 @@ public sealed record DocumentComplianceContract(
     string DocumentType,
     string ComplianceStatus,
     string? RejectionReason,
-    DateTime ValidatedAtUtc);
+    DateTime ValidatedAtUtc,
+    string VerificationStatus = DocumentVerificationStatus.Unverified,
+    string? VerifiedBy = null,
+    string? VerificationReason = null,
+    DateTime? VerifiedAtUtc = null);
+
