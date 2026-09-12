@@ -3,10 +3,12 @@ using Custodian.Documents.Data;
 using Custodian.Documents.DTOs;
 using Custodian.Documents.Services;
 using Custodian.Shared.Contracts;
+using Custodian.Shared.Messaging;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 using Xunit;
+
 
 namespace Custodian.Documents.Tests.Unit;
 
@@ -528,7 +530,178 @@ public class DocumentServiceTests
         var result = await service.VerifyDocumentAsync(engagementId, documentId, "tenant-B", dto);
         Assert.Null(result);
     }
+
+    [Fact]
+    public async Task VerifyDocumentAsync_PublishesDocumentVerifiedAuditEvent()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+        var auditMock = new Mock<IAuditPublisher>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-audit";
+
+        var metadata = new Custodian.Documents.Models.DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Passport",
+            UploaderId = "client-user",
+            FileName = "passport.pdf",
+            ContentType = "application/pdf",
+            FileSize = 2048,
+            StoragePath = "uploads/passport.pdf",
+            ComplianceStatus = Custodian.Documents.Compliance.ComplianceStatus.Compliant,
+            VerificationStatus = DocumentVerificationStatus.Unverified
+        };
+
+        dbContext.Documents.Add(metadata);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(
+            dbContext,
+            validator,
+            storageMock.Object,
+            complianceEngine: null,
+            auditPublisher: auditMock.Object);
+
+        var dto = new VerifyDocumentRequestDto
+        {
+            StaffNotes = "All details match government database.",
+            StaffActor = "staff-auditor"
+        };
+
+        var result = await service.VerifyDocumentAsync(engagementId, documentId, tenantId, dto);
+
+        Assert.NotNull(result);
+        Assert.Equal(DocumentVerificationStatus.Verified, result.VerificationStatus);
+
+        // AC 6: Verify audit event published with correct event type and actor
+        auditMock.Verify(
+            a => a.PublishEventAsync(
+                engagementId,
+                tenantId,
+                "staff-auditor",
+                EventTypes.DocumentVerified,
+                It.IsAny<object>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RejectDocumentVerificationAsync_PublishesDocumentVerificationRejectedAuditEvent()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+        var auditMock = new Mock<IAuditPublisher>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-audit";
+
+        var metadata = new Custodian.Documents.Models.DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Passport",
+            UploaderId = "client-user",
+            FileName = "passport.pdf",
+            ContentType = "application/pdf",
+            FileSize = 2048,
+            StoragePath = "uploads/passport.pdf",
+            ComplianceStatus = Custodian.Documents.Compliance.ComplianceStatus.Compliant,
+            VerificationStatus = DocumentVerificationStatus.Unverified
+        };
+
+        dbContext.Documents.Add(metadata);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(
+            dbContext,
+            validator,
+            storageMock.Object,
+            complianceEngine: null,
+            auditPublisher: auditMock.Object);
+
+        var dto = new RejectDocumentRequestDto
+        {
+            Reason = "Expiry date is obscured by glare.",
+            StaffActor = "staff-inspector"
+        };
+
+        var result = await service.RejectDocumentVerificationAsync(engagementId, documentId, tenantId, dto);
+
+        Assert.NotNull(result);
+        Assert.Equal(DocumentVerificationStatus.Rejected, result.VerificationStatus);
+
+        // AC 6: Verify rejection audit event published with correct event type and actor
+        auditMock.Verify(
+            a => a.PublishEventAsync(
+                engagementId,
+                tenantId,
+                "staff-inspector",
+                EventTypes.DocumentVerificationRejected,
+                It.IsAny<object>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task VerifyDocumentAsync_WhenAuditPublisherThrows_DoesNotCorruptOrFailVerification()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+        var auditMock = new Mock<IAuditPublisher>();
+
+        auditMock
+            .Setup(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()))
+            .ThrowsAsync(new HttpRequestException("Audit service unavailable"));
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-audit";
+
+        var metadata = new Custodian.Documents.Models.DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Passport",
+            UploaderId = "client-user",
+            FileName = "passport.pdf",
+            ContentType = "application/pdf",
+            FileSize = 2048,
+            StoragePath = "uploads/passport.pdf",
+            ComplianceStatus = Custodian.Documents.Compliance.ComplianceStatus.Compliant,
+            VerificationStatus = DocumentVerificationStatus.Unverified
+        };
+
+        dbContext.Documents.Add(metadata);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(
+            dbContext,
+            validator,
+            storageMock.Object,
+            complianceEngine: null,
+            auditPublisher: auditMock.Object);
+
+        var dto = new VerifyDocumentRequestDto { StaffActor = "staff-user" };
+
+        // Should NOT throw; business transaction succeeds even if audit fails
+        // Wait: does DocumentService handle exception from IAuditPublisher or does AuditPublisher handle it?
+        // Let's ensure DocumentService handles any exception from IAuditPublisher gracefully!
+        var result = await service.VerifyDocumentAsync(engagementId, documentId, tenantId, dto);
+
+        Assert.NotNull(result);
+        Assert.Equal(DocumentVerificationStatus.Verified, result.VerificationStatus);
+    }
 }
+
 
 
 

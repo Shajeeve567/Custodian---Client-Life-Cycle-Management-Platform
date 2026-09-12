@@ -5,8 +5,8 @@ using Custodian.Documents.Data;
 using Custodian.Documents.DTOs;
 using Custodian.Documents.Models;
 using Custodian.Shared.Contracts;
+using Custodian.Shared.Messaging;
 using Microsoft.EntityFrameworkCore;
-
 
 namespace Custodian.Documents.Services;
 
@@ -16,12 +16,14 @@ public class DocumentService : IDocumentService
     private readonly IDocumentValidator _validator;
     private readonly IStorageService _storageService;
     private readonly IComplianceRuleEngine _complianceEngine;
+    private readonly IAuditPublisher? _auditPublisher;
 
     public DocumentService(
         DocumentDbContext dbContext,
         IDocumentValidator validator,
         IStorageService storageService,
-        IComplianceRuleEngine? complianceEngine = null)
+        IComplianceRuleEngine? complianceEngine = null,
+        IAuditPublisher? auditPublisher = null)
     {
         _dbContext = dbContext;
         _validator = validator;
@@ -29,7 +31,9 @@ public class DocumentService : IDocumentService
         _complianceEngine = complianceEngine ?? new ComplianceRuleEngine(
             new IComplianceRule[] { new DocumentFreshnessRule(), new DocumentExpiryRule() },
             new ComplianceRuleStore());
+        _auditPublisher = auditPublisher;
     }
+
 
     public async Task<DocumentResponseDto> UploadDocumentAsync(Guid engagementId, string tenantId, DocumentUploadDto dto)
     {
@@ -148,6 +152,36 @@ public class DocumentService : IDocumentService
 
         await _dbContext.SaveChangesAsync();
 
+        if (_auditPublisher != null)
+        {
+            try
+            {
+                var auditPayload = new
+                {
+                    documentId = document.DocumentId,
+                    engagementId = document.EngagementId,
+                    tenantId = document.TenantId,
+                    documentType = document.Type,
+                    complianceStatus = document.ComplianceStatus,
+                    verificationStatus = document.VerificationStatus,
+                    verifiedBy = document.VerifiedBy,
+                    verifiedAtUtc = document.VerifiedAt,
+                    notes = document.VerificationReason
+                };
+
+                await _auditPublisher.PublishEventAsync(
+                    engagementId,
+                    tenantId,
+                    document.VerifiedBy ?? "StaffUser",
+                    EventTypes.DocumentVerified,
+                    auditPayload);
+            }
+            catch
+            {
+                // Non-blocking: audit event side effects must not silently corrupt or fail the primary transaction
+            }
+        }
+
         return MapToResponseDto(document);
     }
 
@@ -189,6 +223,36 @@ public class DocumentService : IDocumentService
         document.VerificationReason = dto.Reason.Trim();
 
         await _dbContext.SaveChangesAsync();
+
+        if (_auditPublisher != null)
+        {
+            try
+            {
+                var auditPayload = new
+                {
+                    documentId = document.DocumentId,
+                    engagementId = document.EngagementId,
+                    tenantId = document.TenantId,
+                    documentType = document.Type,
+                    complianceStatus = document.ComplianceStatus,
+                    verificationStatus = document.VerificationStatus,
+                    verifiedBy = document.VerifiedBy,
+                    verifiedAtUtc = document.VerifiedAt,
+                    rejectionReason = document.VerificationReason
+                };
+
+                await _auditPublisher.PublishEventAsync(
+                    engagementId,
+                    tenantId,
+                    document.VerifiedBy ?? "StaffUser",
+                    EventTypes.DocumentVerificationRejected,
+                    auditPayload);
+            }
+            catch
+            {
+                // Non-blocking: audit event side effects must not silently corrupt or fail the primary transaction
+            }
+        }
 
         return MapToResponseDto(document);
     }

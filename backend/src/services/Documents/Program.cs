@@ -23,6 +23,13 @@ builder.Services.AddSingleton<IDocumentValidator, DocumentValidator>();
 builder.Services.AddScoped<IStorageService, LocalStorageService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 
+builder.Services.AddHttpClient<IAuditPublisher, AuditPublisher>(client =>
+{
+    var auditBaseUrl = builder.Configuration["Services:AuditUrl"] ?? builder.Configuration["AuditService:BaseUrl"] ?? "http://localhost:5051";
+    client.BaseAddress = new Uri(auditBaseUrl);
+});
+
+
 // Compliance Rule Store, Engine & Rules
 builder.Services.Configure<Custodian.Documents.Compliance.Store.ComplianceRuleOptions>(
     builder.Configuration.GetSection(Custodian.Documents.Compliance.Store.ComplianceRuleOptions.SectionName));
