@@ -28,6 +28,31 @@ public class TenantController(ITenantRepository repo, TenantContext tenantContex
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<Tenant>> GetTenant(Guid id, CancellationToken cancellationToken)
     {
+        var claimTenant = User.FindFirst("tenant_id")?.Value 
+                       ?? User.FindFirst("tenantId")?.Value 
+                       ?? tenantContext.TenantId;
+
+        if (!string.IsNullOrWhiteSpace(claimTenant) && Guid.TryParse(claimTenant, out var scopedTenantId))
+        {
+            if (scopedTenantId != Guid.Empty && scopedTenantId != id)
+            {
+                return Forbid();
+            }
+        }
+
+        var userIdStr = User.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                     ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        if (Guid.TryParse(userIdStr, out var userId))
+        {
+            var memberships = await repo.ListMembershipsByUserAsync(userId, cancellationToken);
+            if (memberships != null && memberships.Count > 0 &&
+                !memberships.Any(m => m.TenantId == id && m.Role == Custodian.Shared.Auth.Role.Owner))
+            {
+                return Forbid();
+            }
+        }
+
         var tenant = await repo.GetByIdAsync(id, cancellationToken);
         if (tenant is null) return NotFound();
         
