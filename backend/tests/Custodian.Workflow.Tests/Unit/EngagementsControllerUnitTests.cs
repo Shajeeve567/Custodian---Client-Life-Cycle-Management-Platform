@@ -302,11 +302,25 @@ public class EngagementsControllerUnitTests
     }
 
     // ==========================================
-    // 6. TENANT ISOLATION & JWT CLAIM PRECEDENCE TESTS (Subtask 4)
+    // 6. TENANT ISOLATION & QA ACCEPTANCE CRITERIA TESTS (CSTD-12 & CSTD-269)
     // ==========================================
 
     [Fact]
-    public async Task ResolveTenantId_JwtClaimPresent_ShouldOverrideQueryParameter()
+    public async Task GetEngagements_MismatchedTenantQuery_ShouldReturn403Forbidden()
+    {
+        // Arrange: Authenticated JWT user belongs to tenant-AUTHENTICATED
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+
+        // Act: Client attempts to access Company B's engagements: ?tenantId=tenant-ATTACKER
+        var actionResult = await _controller.GetEngagements("tenant-ATTACKER");
+
+        // Assert: Controller strictly forbids cross-tenant access with 403 Forbidden
+        Assert.IsType<ForbidResult>(actionResult.Result);
+        _mockRepo.Verify(r => r.GetAllByTenantAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetEngagements_WithoutTenantQuery_ShouldUseJwtClaimAndReturn200OK()
     {
         // Arrange: Authenticated JWT user belongs to tenant-AUTHENTICATED
         SetupUserJwtClaim("tenant-AUTHENTICATED");
@@ -319,16 +333,109 @@ public class EngagementsControllerUnitTests
             StaffId = "s1"
         };
 
-        // Repository should be called with "tenant-AUTHENTICATED", NOT "tenant-ATTACKER"
         _mockRepo.Setup(r => r.GetAllByTenantAsync("tenant-AUTHENTICATED"))
                  .ReturnsAsync(new List<Engagement> { engagement });
 
-        // Act: Client passes attacker tenant in query string: ?tenantId=tenant-ATTACKER
-        var actionResult = await _controller.GetEngagements("tenant-ATTACKER");
+        // Act: Client calls GET /api/engagements with valid JWT and no query parameter
+        var actionResult = await _controller.GetEngagements(null);
 
-        // Assert: Controller ignores "tenant-ATTACKER" and uses JWT claim "tenant-AUTHENTICATED"
+        // Assert: Controller resolves caller's own tenant and returns 200 OK
         var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var list = Assert.IsAssignableFrom<IEnumerable<EngagementResponse>>(okResult.Value);
+        Assert.Single(list);
         _mockRepo.Verify(r => r.GetAllByTenantAsync("tenant-AUTHENTICATED"), Times.Once);
-        _mockRepo.Verify(r => r.GetAllByTenantAsync("tenant-ATTACKER"), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetEngagementById_MismatchedTenantQuery_ShouldReturn403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+
+        // Act
+        var actionResult = await _controller.GetEngagementById(Guid.NewGuid(), "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(actionResult.Result);
+        _mockRepo.Verify(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetEngagementById_WithoutTenantQuery_ShouldUseJwtClaim()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var engagement = new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = "tenant-AUTHENTICATED",
+            ClientId = "c1",
+            StaffId = "s1"
+        };
+
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, "tenant-AUTHENTICATED"))
+                 .ReturnsAsync(engagement);
+
+        // Act
+        var actionResult = await _controller.GetEngagementById(engagementId, null);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var response = Assert.IsType<EngagementResponse>(okResult.Value);
+        Assert.Equal(engagementId, response.EngagementId);
+    }
+
+    [Fact]
+    public async Task CreateEngagement_MismatchedTenantPayload_ShouldReturn403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var request = new CreateEngagementRequest
+        {
+            TenantId = "tenant-ATTACKER",
+            ClientId = "c1",
+            StaffId = "s1"
+        };
+
+        // Act
+        var actionResult = await _controller.CreateEngagement(request);
+
+        // Assert
+        Assert.IsType<ForbidResult>(actionResult.Result);
+        _mockRepo.Verify(r => r.CreateAsync(It.IsAny<Engagement>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateStatus_MismatchedTenantPayload_ShouldReturn403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var request = new UpdateEngagementStatusRequest
+        {
+            TenantId = "tenant-ATTACKER",
+            Status = "Started"
+        };
+
+        // Act
+        var actionResult = await _controller.UpdateStatus(Guid.NewGuid(), request);
+
+        // Assert
+        Assert.IsType<ForbidResult>(actionResult.Result);
+        _mockRepo.Verify(r => r.UpdateAsync(It.IsAny<Engagement>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DeleteEngagement_MismatchedTenantQuery_ShouldReturn403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+
+        // Act
+        var actionResult = await _controller.DeleteEngagement(Guid.NewGuid(), "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(actionResult);
+        _mockRepo.Verify(r => r.DeleteAsync(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
     }
 }

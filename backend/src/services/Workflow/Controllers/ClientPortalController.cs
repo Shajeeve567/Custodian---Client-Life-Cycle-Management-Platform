@@ -1,10 +1,12 @@
 using System.Security.Claims;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Custodian.Workflow.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/portal")]
 public class ClientPortalController : ControllerBase
@@ -29,10 +31,15 @@ public class ClientPortalController : ControllerBase
         [FromQuery] string? tenantId,
         [FromQuery] string? clientId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
         var effectiveClientId = ResolveClientId(clientId);
@@ -66,10 +73,15 @@ public class ClientPortalController : ControllerBase
         [FromQuery] string? tenantId,
         [FromQuery] string? clientId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
         // Determine if client authorization rule applies
@@ -100,32 +112,51 @@ public class ClientPortalController : ControllerBase
         return Ok(dashboard);
     }
 
-    private string? ResolveTenantId(string? queryTenantId)
+    private (string? TenantId, bool IsForbidden) TryResolveTenantId(string? queryTenantId)
     {
-        // 1. Check HTTP header X-Tenant-ID
+        var jwtClaimTenant = User?.FindFirst("tenant_id")?.Value ?? User?.FindFirst("tenantId")?.Value;
+        if (!string.IsNullOrWhiteSpace(jwtClaimTenant))
+        {
+            var cleanJwtTenant = jwtClaimTenant.Trim();
+
+            // Check if query tenant parameter conflicts
+            if (!string.IsNullOrWhiteSpace(queryTenantId) &&
+                !string.Equals(queryTenantId.Trim(), cleanJwtTenant, StringComparison.OrdinalIgnoreCase))
+            {
+                return (null, true);
+            }
+
+            // Check if header tenant conflicts
+            if (Request?.Headers != null && Request.Headers.TryGetValue("X-Tenant-ID", out var headerVal))
+            {
+                var headerTenant = headerVal.ToString().Trim();
+                if (!string.IsNullOrWhiteSpace(headerTenant) &&
+                    !string.Equals(headerTenant, cleanJwtTenant, StringComparison.OrdinalIgnoreCase))
+                {
+                    return (null, true);
+                }
+            }
+
+            return (cleanJwtTenant, false);
+        }
+
+        // 1. Check HTTP header X-Tenant-ID (for unauthenticated test contexts)
         if (Request?.Headers != null && Request.Headers.TryGetValue("X-Tenant-ID", out var headerValue))
         {
             var headerTenant = headerValue.ToString();
             if (!string.IsNullOrWhiteSpace(headerTenant))
             {
-                return headerTenant.Trim();
+                return (headerTenant.Trim(), false);
             }
         }
 
-        // 2. Check JWT Claims
-        var jwtClaimTenant = User?.FindFirst("tenant_id")?.Value ?? User?.FindFirst("tenantId")?.Value;
-        if (!string.IsNullOrWhiteSpace(jwtClaimTenant))
-        {
-            return jwtClaimTenant.Trim();
-        }
-
-        // 3. Fallback to Query String Parameter
+        // 2. Fallback to Query String Parameter
         if (!string.IsNullOrWhiteSpace(queryTenantId))
         {
-            return queryTenantId.Trim();
+            return (queryTenantId.Trim(), false);
         }
 
-        return null;
+        return (null, false);
     }
 
     private string? ResolveClientId(string? queryClientId)

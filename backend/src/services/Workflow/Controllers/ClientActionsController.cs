@@ -1,10 +1,12 @@
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
 namespace Custodian.Workflow.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/engagements/{engagementId:guid}/actions")]
 public class ClientActionsController : ControllerBase
@@ -30,10 +32,15 @@ public class ClientActionsController : ControllerBase
         [FromQuery] string? status,
         [FromQuery] bool? isClientView)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
         // Determine if client view rule applies (via explicit parameter, header, or role claim)
@@ -56,10 +63,15 @@ public class ClientActionsController : ControllerBase
         [FromBody] CreateClientActionDto dto,
         [FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
         if (!ModelState.IsValid)
@@ -92,10 +104,15 @@ public class ClientActionsController : ControllerBase
         [FromBody] CompleteClientActionDto dto,
         [FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
         if (!ModelState.IsValid)
@@ -122,10 +139,15 @@ public class ClientActionsController : ControllerBase
         [FromBody] UploadActionEvidenceDto dto,
         [FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
         if (!ModelState.IsValid)
@@ -152,10 +174,15 @@ public class ClientActionsController : ControllerBase
         [FromBody] ReviewActionDto dto,
         [FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
         if (!ModelState.IsValid)
@@ -189,10 +216,15 @@ public class ClientActionsController : ControllerBase
         [FromBody] ApplyActionVerificationDto dto,
         [FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
         if (!ModelState.IsValid)
@@ -216,31 +248,50 @@ public class ClientActionsController : ControllerBase
         }
     }
 
-    private string? ResolveTenantId(string? queryTenantId)
+    private (string? TenantId, bool IsForbidden) TryResolveTenantId(string? queryTenantId)
     {
-        // 1. Check HTTP header X-Tenant-ID
+        var jwtClaimTenant = User?.FindFirst("tenant_id")?.Value ?? User?.FindFirst("tenantId")?.Value;
+        if (!string.IsNullOrWhiteSpace(jwtClaimTenant))
+        {
+            var cleanJwtTenant = jwtClaimTenant.Trim();
+
+            // Check if query tenant parameter conflicts
+            if (!string.IsNullOrWhiteSpace(queryTenantId) &&
+                !string.Equals(queryTenantId.Trim(), cleanJwtTenant, StringComparison.OrdinalIgnoreCase))
+            {
+                return (null, true);
+            }
+
+            // Check if header tenant conflicts
+            if (Request?.Headers != null && Request.Headers.TryGetValue("X-Tenant-ID", out var headerVal))
+            {
+                var headerTenant = headerVal.ToString().Trim();
+                if (!string.IsNullOrWhiteSpace(headerTenant) &&
+                    !string.Equals(headerTenant, cleanJwtTenant, StringComparison.OrdinalIgnoreCase))
+                {
+                    return (null, true);
+                }
+            }
+
+            return (cleanJwtTenant, false);
+        }
+
+        // 1. Check HTTP header X-Tenant-ID (for unauthenticated test contexts)
         if (Request?.Headers != null && Request.Headers.TryGetValue("X-Tenant-ID", out var headerValue))
         {
             var headerTenant = headerValue.ToString();
             if (!string.IsNullOrWhiteSpace(headerTenant))
             {
-                return headerTenant.Trim();
+                return (headerTenant.Trim(), false);
             }
         }
 
-        // 2. Check JWT Claims
-        var jwtClaimTenant = User?.FindFirst("tenant_id")?.Value ?? User?.FindFirst("tenantId")?.Value;
-        if (!string.IsNullOrWhiteSpace(jwtClaimTenant))
-        {
-            return jwtClaimTenant.Trim();
-        }
-
-        // 3. Fallback to Query String Parameter
+        // 2. Fallback to Query String Parameter
         if (!string.IsNullOrWhiteSpace(queryTenantId))
         {
-            return queryTenantId.Trim();
+            return (queryTenantId.Trim(), false);
         }
 
-        return null;
+        return (null, false);
     }
 }

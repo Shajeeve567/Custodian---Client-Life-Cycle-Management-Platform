@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Custodian.Shared.Contracts;
 using Custodian.Workflow.Controllers;
 using Custodian.Workflow.DTOs;
@@ -31,6 +32,19 @@ public class ClientActionsControllerTests
         _controller.ControllerContext = new ControllerContext
         {
             HttpContext = httpContext
+        };
+    }
+
+    private void SetupUserJwtClaim(string tenantIdClaim)
+    {
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantIdClaim)
+        }, "TestAuthType"));
+
+        _controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext { User = user }
         };
     }
 
@@ -308,5 +322,151 @@ public class ClientActionsControllerTests
         // Assert
         var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
         Assert.Equal(400, badRequest.StatusCode);
+    }
+
+    // ==========================================
+    // TENANT ISOLATION TESTS (CSTD-12 & CSTD-269)
+    // ==========================================
+
+    [Fact]
+    public async Task GetActionHistory_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+
+        // Act
+        var result = await _controller.GetActionHistory(engagementId, tenantId: "tenant-ATTACKER", status: null, isClientView: null);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.GetActionsByEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetActionHistory_WithoutTenantQuery_UsesJwtClaimAndReturns200OK()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var actions = new List<ClientActionResponseDto>
+        {
+            new ClientActionResponseDto { ActionId = Guid.NewGuid(), Title = "Upload Document", Status = "Pending" }
+        };
+
+        _mockService.Setup(s => s.GetActionsByEngagementAsync(engagementId, "tenant-AUTHENTICATED", false, null))
+                    .ReturnsAsync(actions);
+
+        // Act
+        var result = await _controller.GetActionHistory(engagementId, tenantId: null, status: null, isClientView: false);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        _mockService.Verify(s => s.GetActionsByEngagementAsync(engagementId, "tenant-AUTHENTICATED", false, null), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateAction_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var dto = new CreateClientActionDto
+        {
+            Title = "Test Action",
+            Type = "DocumentUpload",
+            Source = "Step1"
+        };
+
+        // Act
+        var result = await _controller.CreateAction(engagementId, dto, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.CreateActionAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CreateClientActionDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CompleteAction_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var dto = new CompleteClientActionDto
+        {
+            CompletedByActor = "staff-user-1"
+        };
+
+        // Act
+        var result = await _controller.CompleteAction(engagementId, actionId, dto, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.CompleteActionAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CompleteClientActionDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UploadEvidence_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var dto = new UploadActionEvidenceDto
+        {
+            DocumentId = Guid.NewGuid(),
+            UploaderActor = "client-user-1"
+        };
+
+        // Act
+        var result = await _controller.UploadEvidence(engagementId, actionId, dto, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.UploadEvidenceAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UploadActionEvidenceDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ReviewAction_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var dto = new ReviewActionDto
+        {
+            Status = ClientActionStatus.Completed,
+            ReviewerActor = "staff-user-1"
+        };
+
+        // Act
+        var result = await _controller.ReviewAction(engagementId, actionId, dto, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.ReviewActionAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<ReviewActionDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ApplyVerification_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var dto = new ApplyActionVerificationDto
+        {
+            VerificationStatus = DocumentVerificationStatus.Verified,
+            VerifiedBy = "staff-lead"
+        };
+
+        // Act
+        var result = await _controller.ApplyVerification(engagementId, actionId, dto, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.ApplyVerificationOutcomeAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<ApplyActionVerificationDto>()), Times.Never);
     }
 }

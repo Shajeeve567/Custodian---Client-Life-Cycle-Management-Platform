@@ -2,6 +2,8 @@ using Custodian.Workflow.Data;
 using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
 using Custodian.Shared.Http;
+using Custodian.Shared.Auth;
+using Custodian.Shared.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
@@ -10,6 +12,8 @@ var builder = WebApplication.CreateBuilder(args);
 // Add controllers & CORS
 builder.Services.AddControllers();
 builder.Services.AddCustodianCors(builder.Configuration);
+builder.Services.AddTenantContext();
+builder.Services.AddJwtAuthentication(builder.Configuration);
 
 // Configure EF Core with MySQL
 var connectionString = builder.Configuration.GetConnectionString("AzureMySqlConnection");
@@ -53,7 +57,9 @@ using (var scope = app.Services.CreateScope())
 
 app.UseCors();
 // app.UseHttpsRedirection();
+app.UseAuthentication();
 app.UseAuthorization();
+app.UseTenantContext();
 app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Workflow Service" }));
 app.MapControllers();
 

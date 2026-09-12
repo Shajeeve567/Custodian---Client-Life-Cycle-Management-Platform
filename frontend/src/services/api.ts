@@ -204,7 +204,7 @@ export const IdentityApi = {
 };
 
 /* ==========================================================================
-   Workflow Service API (No auth middleware - tenant passed in body/query)
+   Workflow Service API (Authenticated with tenant context)
    ========================================================================== */
 
 export const WorkflowApi = {
@@ -212,45 +212,48 @@ export const WorkflowApi = {
     async createEngagement(req: CreateEngagementRequest): Promise<Engagement> {
         return request<Engagement>(`${API_BASE.WORKFLOW}/api/Engagements`, {
             method: 'POST',
-            skipAuthHeader: true,
             body: JSON.stringify(req),
         });
     },
 
     // 2. List Engagements: GET /api/Engagements?tenantId=<tenantId>
-    async getEngagements(tenantId: string): Promise<Engagement[]> {
-        return request<Engagement[]>(`${API_BASE.WORKFLOW}/api/Engagements?tenantId=${encodeURIComponent(tenantId)}`, {
+    async getEngagements(tenantId?: string): Promise<Engagement[]> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/Engagements?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/Engagements`;
+        return request<Engagement[]>(url, {
             method: 'GET',
-            skipAuthHeader: true,
         });
     },
 
     async updateStatus(engagementId: string, status: EngagementStatus, tenantId: string): Promise<Engagement> {
         return request<Engagement>(`${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/status`, {
             method: 'PUT',
-            skipAuthHeader: true,
             body: JSON.stringify({ tenantId, status }),
         });
     },
 
     async deleteEngagement(engagementId: string, tenantId: string): Promise<void> {
-        return request<void>(`${API_BASE.WORKFLOW}/api/Engagements/${engagementId}`, {
+        return request<void>(`${API_BASE.WORKFLOW}/api/Engagements/${engagementId}?tenantId=${encodeURIComponent(tenantId)}`, {
             method: 'DELETE',
-            skipAuthHeader: true,
         });
     },
 
-    async getActions(engagementId: string, tenantId: string): Promise<ClientAction[]> {
-        return request<ClientAction[]>(`${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/actions`, {
+    async getActions(engagementId: string, tenantId?: string): Promise<ClientAction[]> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/actions?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/actions`;
+        return request<ClientAction[]>(url, {
             method: 'GET',
-            skipAuthHeader: true,
         });
     },
 
-    async createAction(req: CreateClientActionRequest, tenantId: string): Promise<ClientAction> {
-        return request<ClientAction>(`${API_BASE.WORKFLOW}/api/Engagements/${req.engagementId}/actions`, {
+    async createAction(req: CreateClientActionRequest, tenantId?: string): Promise<ClientAction> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/Engagements/${req.engagementId}/actions?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/Engagements/${req.engagementId}/actions`;
+        return request<ClientAction>(url, {
             method: 'POST',
-            skipAuthHeader: true,
             body: JSON.stringify(req),
         });
     },

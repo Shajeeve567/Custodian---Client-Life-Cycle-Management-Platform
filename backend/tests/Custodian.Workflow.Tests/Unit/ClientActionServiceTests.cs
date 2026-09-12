@@ -1,3 +1,4 @@
+using Custodian.Shared.Contracts;
 using Custodian.Workflow.Data;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
