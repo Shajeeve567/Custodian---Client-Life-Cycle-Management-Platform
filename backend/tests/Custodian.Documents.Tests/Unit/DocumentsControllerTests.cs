@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text;
 using Custodian.Documents.Controllers;
 using Custodian.Documents.DTOs;
@@ -234,16 +235,29 @@ public class DocumentsControllerTests
         Assert.IsType<NotFoundObjectResult>(actionResult);
     }
 
-    private void SetUserRole(string role, string userId = "staff-user-1")
+    private void SetUserRole(string role, string userId = "staff-user-1", string tenantId = "tenant-1")
     {
         var claims = new[]
         {
-            new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, userId),
-            new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, role),
-            new System.Security.Claims.Claim("tenant_id", "tenant-1")
+            new Claim(ClaimTypes.NameIdentifier, userId),
+            new Claim(ClaimTypes.Role, role),
+            new Claim("tenant_id", tenantId)
         };
-        var identity = new System.Security.Claims.ClaimsIdentity(claims, "TestAuth");
-        _controller.ControllerContext.HttpContext.User = new System.Security.Claims.ClaimsPrincipal(identity);
+        var identity = new ClaimsIdentity(claims, "TestAuth");
+        _controller.ControllerContext.HttpContext.User = new ClaimsPrincipal(identity);
+    }
+
+    private void SetupUserJwtClaim(string tenantIdClaim)
+    {
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantIdClaim)
+        }, "TestAuthType"));
+
+        _controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext { User = user }
+        };
     }
 
     [Fact]
@@ -364,6 +378,142 @@ public class DocumentsControllerTests
         var actionResult = await _controller.RejectDocument(engagementId, documentId, requestDto, tenantId);
 
         Assert.IsType<ForbidResult>(actionResult.Result);
+    }
+
+    // ==========================================
+    // TENANT ISOLATION TESTS (CSTD-12 & CSTD-269)
+    // ==========================================
+
+    [Fact]
+    public async Task GetDocumentsByEngagement_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+
+        // Act
+        var result = await _controller.GetDocumentsByEngagement(engagementId, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _documentServiceMock.Verify(s => s.GetDocumentsByEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetDocumentsByEngagement_WithoutTenantQuery_UsesJwtClaimAndReturns200OK()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var docs = new List<DocumentResponseDto>
+        {
+            new DocumentResponseDto
+            {
+                DocumentId = Guid.NewGuid(),
+                EngagementId = engagementId,
+                TenantId = "tenant-AUTHENTICATED",
+                FileName = "test.pdf"
+            }
+        };
+
+        _documentServiceMock
+            .Setup(s => s.GetDocumentsByEngagementAsync(engagementId, "tenant-AUTHENTICATED"))
+            .ReturnsAsync(docs);
+
+        // Act
+        var result = await _controller.GetDocumentsByEngagement(engagementId, tenantId: null);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        _documentServiceMock.Verify(s => s.GetDocumentsByEngagementAsync(engagementId, "tenant-AUTHENTICATED"), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetDocumentById_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+
+        // Act
+        var result = await _controller.GetDocumentById(engagementId, documentId, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _documentServiceMock.Verify(s => s.GetDocumentByIdAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DownloadDocument_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+
+        // Act
+        var result = await _controller.DownloadDocument(engagementId, documentId, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result);
+        _documentServiceMock.Verify(s => s.GetDocumentByIdAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UploadDocument_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var uploadDto = new DocumentUploadDto
+        {
+            File = CreateDummyFormFile(),
+            Type = "Identity",
+            UploaderId = "user-1"
+        };
+
+        // Act
+        var result = await _controller.UploadDocument(engagementId, uploadDto, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _documentServiceMock.Verify(s => s.UploadDocumentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<DocumentUploadDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task VerifyDocument_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange: Authenticated staff belonging to tenant-AUTHENTICATED
+        SetUserRole("Staff", "staff-alice", "tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var requestDto = new VerifyDocumentRequestDto();
+
+        // Act
+        var result = await _controller.VerifyDocument(engagementId, documentId, requestDto, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _documentServiceMock.Verify(s => s.VerifyDocumentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<VerifyDocumentRequestDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RejectDocument_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange: Authenticated staff belonging to tenant-AUTHENTICATED
+        SetUserRole("Staff", "staff-alice", "tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var requestDto = new RejectDocumentRequestDto { Reason = "Illegible scan" };
+
+        // Act
+        var result = await _controller.RejectDocument(engagementId, documentId, requestDto, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _documentServiceMock.Verify(s => s.RejectDocumentVerificationAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<RejectDocumentRequestDto>()), Times.Never);
     }
 }
 

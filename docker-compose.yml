@@ -118,6 +118,10 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__AzureMySqlConnection=${DOCUMENT_DB_CONNECTION}
+      - Jwt__SigningKey=${JWT_KEY}
+      - Jwt__Issuer=${JWT_ISSUER}
+      - Jwt__Audience=${JWT_AUDIENCE}
+      - Jwt__ExpiryMinutes=${JWT_EXPIRY_MINUTES}
       - AzureBlob__ConnectionString=${AZURE_BLOB_CONNECTION_STRING}
       - AzureBlob__ContainerName=${AZURE_BLOB_CONTAINER_NAME}
       - Kafka__BootstrapServers=kafka:29092

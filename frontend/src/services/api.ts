@@ -363,24 +363,24 @@ export const AuditApi = {
 };
 
 export const DocumentsApi = {
-    async getDocuments(engagementId: string, tenantId: string): Promise<DocumentMetadata[]> {
-        return request<DocumentMetadata[]>(
-            `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents?tenantId=${encodeURIComponent(tenantId)}`,
-            {
-                headers: { 'X-Tenant-ID': tenantId },
-            }
-        );
+    async getDocuments(engagementId: string, tenantId?: string): Promise<DocumentMetadata[]> {
+        const url = tenantId
+            ? `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents`;
+        return request<DocumentMetadata[]>(url, {
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+        });
     },
 
-    async uploadDocument(engagementId: string, formData: FormData, tenantId: string): Promise<DocumentMetadata> {
-        return request<DocumentMetadata>(
-            `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents?tenantId=${encodeURIComponent(tenantId)}`,
-            {
-                method: 'POST',
-                headers: { 'X-Tenant-ID': tenantId },
-                body: formData,
-            }
-        );
+    async uploadDocument(engagementId: string, formData: FormData, tenantId?: string): Promise<DocumentMetadata> {
+        const url = tenantId
+            ? `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents`;
+        return request<DocumentMetadata>(url, {
+            method: 'POST',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: formData,
+        });
     },
 
     getDownloadUrl(engagementId: string, documentId: string, tenantId?: string): string {
