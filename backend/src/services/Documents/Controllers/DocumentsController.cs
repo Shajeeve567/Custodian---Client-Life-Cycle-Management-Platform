@@ -282,6 +282,61 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Staff metadata update endpoint: Updates editable metadata fields for a specific document without silently rerunning validation.
+    /// Restricted to authorized staff (Owner, Staff).
+    /// </summary>
+    [HttpPut("{documentId:guid}/metadata")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<DocumentResponseDto>> UpdateDocumentMetadata(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid documentId,
+        [FromBody] UpdateDocumentMetadataDto dto,
+        [FromQuery] string? tenantId = null)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        try
+        {
+            var result = await _documentService.UpdateDocumentMetadataAsync(engagementId, documentId, effectiveTenantId, dto);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Document '{documentId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Document metadata update failed for document {DocumentId}", documentId);
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     private ActionResult? CheckStaffAuthorization()
     {
         // 1. If ClaimsPrincipal is authenticated, check role claims

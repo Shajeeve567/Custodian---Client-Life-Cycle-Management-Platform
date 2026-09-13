@@ -644,5 +644,98 @@ public class DocumentsControllerTests
         Assert.Equal("application/pdf", fileResult.ContentType);
         Assert.Equal("original_deleted.pdf", fileResult.FileDownloadName);
     }
+
+    [Fact]
+    public async Task UpdateDocumentMetadata_AuthorizedStaff_Returns200OkWithUpdatedDto()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+        var dto = new UpdateDocumentMetadataDto { Type = "UpdatedType", IssueDate = DateTime.UtcNow };
+
+        var updatedDoc = new DocumentResponseDto
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "UpdatedType"
+        };
+
+        _documentServiceMock
+            .Setup(s => s.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto))
+            .ReturnsAsync(updatedDoc);
+
+        var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, tenantId);
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var resultDto = Assert.IsType<DocumentResponseDto>(okResult.Value);
+        Assert.Equal("UpdatedType", resultDto.Type);
+    }
+
+    [Fact]
+    public async Task UpdateDocumentMetadata_NonStaffRole_Returns403Forbidden()
+    {
+        SetUserRole("Client", "client-user-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var dto = new UpdateDocumentMetadataDto { Type = "UpdatedType" };
+
+        var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, "tenant-1");
+
+        Assert.IsType<ForbidResult>(actionResult.Result);
+        _documentServiceMock.Verify(s => s.UpdateDocumentMetadataAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UpdateDocumentMetadataDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateDocumentMetadata_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var dto = new UpdateDocumentMetadataDto { Type = "UpdatedType" };
+
+        var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, "tenant-ATTACKER");
+
+        Assert.IsType<ForbidResult>(actionResult.Result);
+        _documentServiceMock.Verify(s => s.UpdateDocumentMetadataAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UpdateDocumentMetadataDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateDocumentMetadata_DocumentNotFound_Returns404NotFound()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+        var dto = new UpdateDocumentMetadataDto { Type = "UpdatedType" };
+
+        _documentServiceMock
+            .Setup(s => s.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto))
+            .ReturnsAsync((DocumentResponseDto?)null);
+
+        var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, tenantId);
+
+        Assert.IsType<NotFoundObjectResult>(actionResult.Result);
+    }
+
+    [Fact]
+    public async Task UpdateDocumentMetadata_SoftDeletedDoc_Returns400BadRequest()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+        var dto = new UpdateDocumentMetadataDto { Type = "UpdatedType" };
+
+        _documentServiceMock
+            .Setup(s => s.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto))
+            .ThrowsAsync(new InvalidOperationException($"Cannot update metadata for soft-deleted document '{documentId}'."));
+
+        var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, tenantId);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
+        Assert.NotNull(badRequest.Value);
+    }
 }
 

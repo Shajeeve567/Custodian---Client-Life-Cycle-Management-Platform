@@ -322,6 +322,59 @@ public class DocumentService : IDocumentService
         return MapToResponseDto(document);
     }
 
+    public async Task<DocumentResponseDto?> UpdateDocumentMetadataAsync(
+        Guid engagementId,
+        Guid documentId,
+        string tenantId,
+        UpdateDocumentMetadataDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return null;
+        }
+
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(d => d.DocumentId == documentId && d.EngagementId == engagementId && d.TenantId == tenantId);
+
+        if (document == null)
+        {
+            return null;
+        }
+
+        if (document.IsDeleted)
+        {
+            throw new InvalidOperationException($"Cannot update metadata for soft-deleted document '{documentId}'.");
+        }
+
+        if (dto.IssueDate.HasValue && dto.ExpiryDate.HasValue && dto.ExpiryDate < dto.IssueDate)
+        {
+            throw new ArgumentException("ExpiryDate cannot be earlier than IssueDate.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(dto.Type))
+        {
+            document.Type = dto.Type.Trim();
+        }
+
+        if (dto.IssueDate.HasValue)
+        {
+            document.IssueDate = dto.IssueDate;
+        }
+
+        if (dto.ExpiryDate.HasValue)
+        {
+            document.ExpiryDate = dto.ExpiryDate;
+        }
+
+        // AC: Metadata update does not silently rerun validation.
+        // ComplianceRuleEngine is intentionally NOT called,
+        // and existing ComplianceStatus, ValidatedAt, RejectionReason, and verification states are preserved.
+
+        await _dbContext.SaveChangesAsync();
+
+        return MapToResponseDto(document);
+    }
+
     private static DocumentResponseDto MapToResponseDto(DocumentMetadata entity)
 
     {

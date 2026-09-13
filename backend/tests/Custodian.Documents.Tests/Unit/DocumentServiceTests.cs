@@ -1027,6 +1027,201 @@ public class DocumentServiceTests
         Assert.True(includedResult.IsDeleted);
         Assert.Equal("staff-1", includedResult.DeletedBy);
     }
+
+    [Fact]
+    public async Task UpdateDocumentMetadataAsync_ValidUpdates_PersistsChangesAndReturnsResponse()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-meta";
+
+        var doc = new DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "OldType",
+            IssueDate = DateTime.UtcNow.AddYears(-3),
+            ExpiryDate = DateTime.UtcNow.AddYears(2),
+            IsDeleted = false
+        };
+
+        dbContext.Documents.Add(doc);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        var newIssueDate = DateTime.UtcNow.AddYears(-1);
+        var newExpiryDate = DateTime.UtcNow.AddYears(5);
+        var updateDto = new UpdateDocumentMetadataDto
+        {
+            Type = "NewType",
+            IssueDate = newIssueDate,
+            ExpiryDate = newExpiryDate
+        };
+
+        var response = await service.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, updateDto);
+
+        Assert.NotNull(response);
+        Assert.Equal("NewType", response.Type);
+        Assert.Equal(newIssueDate, response.IssueDate);
+        Assert.Equal(newExpiryDate, response.ExpiryDate);
+
+        // Verify persisted in DB
+        var persisted = await dbContext.Documents.FindAsync(documentId);
+        Assert.NotNull(persisted);
+        Assert.Equal("NewType", persisted.Type);
+        Assert.Equal(newIssueDate, persisted.IssueDate);
+        Assert.Equal(newExpiryDate, persisted.ExpiryDate);
+    }
+
+    [Fact]
+    public async Task UpdateDocumentMetadataAsync_DoesNotSilentlyRerunComplianceValidationOrAlterVerification()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+        var complianceEngineMock = new Mock<IComplianceRuleEngine>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-compliance";
+        var validatedAt = DateTime.UtcNow.AddDays(-1);
+        var verifiedAt = DateTime.UtcNow.AddHours(-2);
+
+        var doc = new DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Passport",
+            IssueDate = DateTime.UtcNow.AddYears(-2),
+            ExpiryDate = DateTime.UtcNow.AddYears(8),
+            ComplianceStatus = ComplianceStatus.Compliant,
+            RejectionReason = null,
+            ValidatedAt = validatedAt,
+            VerificationStatus = DocumentVerificationStatus.Verified,
+            VerifiedBy = "staff-senior",
+            VerifiedAt = verifiedAt,
+            VerificationReason = "Legible copy confirmed",
+            IsDeleted = false
+        };
+
+        dbContext.Documents.Add(doc);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object, complianceEngine: complianceEngineMock.Object);
+
+        var updateDto = new UpdateDocumentMetadataDto
+        {
+            Type = "Identity",
+            IssueDate = DateTime.UtcNow.AddYears(-1),
+            ExpiryDate = DateTime.UtcNow.AddYears(9)
+        };
+
+        var result = await service.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, updateDto);
+
+        Assert.NotNull(result);
+        Assert.Equal("Identity", result.Type);
+
+        // AC: Metadata update does not silently rerun validation.
+        complianceEngineMock.Verify(c => c.Evaluate(It.IsAny<string>(), It.IsAny<DateTime?>(), It.IsAny<DateTime?>(), It.IsAny<ComplianceRuleDefinition?>(), It.IsAny<string?>()), Times.Never);
+        complianceEngineMock.Verify(c => c.Evaluate(It.IsAny<DocumentValidationContext>(), It.IsAny<ComplianceRuleDefinition?>()), Times.Never);
+
+        // Assert all compliance and verification states remain completely untouched
+        Assert.Equal(ComplianceStatus.Compliant, result.ComplianceStatus);
+        Assert.Null(result.RejectionReason);
+        Assert.Equal(validatedAt, result.ValidatedAt);
+        Assert.Equal(DocumentVerificationStatus.Verified, result.VerificationStatus);
+        Assert.Equal("staff-senior", result.VerifiedBy);
+        Assert.Equal(verifiedAt, result.VerifiedAt);
+        Assert.Equal("Legible copy confirmed", result.VerificationReason);
+    }
+
+    [Fact]
+    public async Task UpdateDocumentMetadataAsync_SoftDeletedDocument_ThrowsInvalidOperationException()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-deleted";
+
+        var doc = new DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Identity",
+            IsDeleted = true,
+            DeletedAt = DateTime.UtcNow
+        };
+
+        dbContext.Documents.Add(doc);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        var updateDto = new UpdateDocumentMetadataDto { Type = "UpdatedType" };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, updateDto));
+    }
+
+    [Fact]
+    public async Task UpdateDocumentMetadataAsync_NonExistentDocument_ReturnsNull()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        var result = await service.UpdateDocumentMetadataAsync(Guid.NewGuid(), Guid.NewGuid(), "tenant-1", new UpdateDocumentMetadataDto { Type = "NewType" });
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task UpdateDocumentMetadataAsync_InvalidDates_ThrowsArgumentException()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-dates";
+
+        var doc = new DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Identity",
+            IsDeleted = false
+        };
+
+        dbContext.Documents.Add(doc);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        var updateDto = new UpdateDocumentMetadataDto
+        {
+            IssueDate = DateTime.UtcNow,
+            ExpiryDate = DateTime.UtcNow.AddDays(-10) // earlier than IssueDate
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, updateDto));
+    }
 }
 
 

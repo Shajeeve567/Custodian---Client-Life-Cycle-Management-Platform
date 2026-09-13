@@ -11,4 +11,5 @@ public interface IDocumentService
     Task<DocumentResponseDto?> GetDocumentByIdAsync(Guid engagementId, Guid documentId, string tenantId, bool includeDeleted);
     Task<DocumentResponseDto?> VerifyDocumentAsync(Guid engagementId, Guid documentId, string tenantId, VerifyDocumentRequestDto dto);
     Task<DocumentResponseDto?> RejectDocumentVerificationAsync(Guid engagementId, Guid documentId, string tenantId, RejectDocumentRequestDto dto);
+    Task<DocumentResponseDto?> UpdateDocumentMetadataAsync(Guid engagementId, Guid documentId, string tenantId, UpdateDocumentMetadataDto dto);
 }
