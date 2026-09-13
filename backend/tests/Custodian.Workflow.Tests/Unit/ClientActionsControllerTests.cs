@@ -49,9 +49,11 @@ public class ClientActionsControllerTests
     }
 
     [Fact]
-    public async Task GetActionHistory_ValidTenantHeader_Returns200OK()
+    public async Task GetActionHistory_ValidTenantHeader_NoExplicitViewRequest_DefaultsToClientView()
     {
-        // Arrange
+        // Arrange: no role claim at all — CSTD-12 fix means the safe client view is the default
+        // when the staff view was never explicitly requested (previously this incorrectly
+        // defaulted to the staff view for any non-Client caller).
         SetupTenantHeader("tenant-001");
         var engagementId = Guid.NewGuid();
         var expectedActions = new List<ClientActionResponseDto>
@@ -59,17 +61,35 @@ public class ClientActionsControllerTests
             new ClientActionResponseDto { ActionId = Guid.NewGuid(), Title = "Upload Document", Status = "Pending" }
         };
 
-        _mockService.Setup(s => s.GetActionsByEngagementAsync(engagementId, "tenant-001", false, null))
+        _mockService.Setup(s => s.GetActionsByEngagementAsync(engagementId, "tenant-001", true, null))
                     .ReturnsAsync(expectedActions);
 
-        // Act
-        var result = await _controller.GetActionHistory(engagementId, tenantId: null, status: null, isClientView: false);
+        // Act: no isClientView specified
+        var result = await _controller.GetActionHistory(engagementId, tenantId: null, status: null, isClientView: null);
 
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
         Assert.Equal(200, okResult.StatusCode);
         var list = Assert.IsAssignableFrom<IEnumerable<ClientActionResponseDto>>(okResult.Value);
         Assert.Single(list);
+        _mockService.Verify(s => s.GetActionsByEngagementAsync(engagementId, "tenant-001", true, null), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetActionHistory_NoRecognizedRoleExplicitlyRequestsStaffView_Returns403Forbidden()
+    {
+        // Arrange (CSTD-12 fix — Internal Field Leak): a caller with no Owner/Staff/Client role
+        // explicitly asks for the staff view via ?isClientView=false. Must be rejected outright,
+        // not silently downgraded and not served — this is the exact reported vulnerability.
+        SetupTenantHeader("tenant-001");
+        var engagementId = Guid.NewGuid();
+
+        // Act
+        var result = await _controller.GetActionHistory(engagementId, tenantId: null, status: null, isClientView: false);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.GetActionsByEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]
@@ -344,9 +364,11 @@ public class ClientActionsControllerTests
     }
 
     [Fact]
-    public async Task GetActionHistory_WithoutTenantQuery_UsesJwtClaimAndReturns200OK()
+    public async Task GetActionHistory_WithoutTenantQuery_UsesJwtClaimAndDefaultsToClientView()
     {
-        // Arrange
+        // Arrange: JWT carries only a tenant claim, no role — safe default is client view
+        // (CSTD-12 fix; previously this caller could reach the staff view by passing
+        // isClientView=false despite having no recognized role).
         SetupUserJwtClaim("tenant-AUTHENTICATED");
         var engagementId = Guid.NewGuid();
         var actions = new List<ClientActionResponseDto>
@@ -354,16 +376,16 @@ public class ClientActionsControllerTests
             new ClientActionResponseDto { ActionId = Guid.NewGuid(), Title = "Upload Document", Status = "Pending" }
         };
 
-        _mockService.Setup(s => s.GetActionsByEngagementAsync(engagementId, "tenant-AUTHENTICATED", false, null))
+        _mockService.Setup(s => s.GetActionsByEngagementAsync(engagementId, "tenant-AUTHENTICATED", true, null))
                     .ReturnsAsync(actions);
 
         // Act
-        var result = await _controller.GetActionHistory(engagementId, tenantId: null, status: null, isClientView: false);
+        var result = await _controller.GetActionHistory(engagementId, tenantId: null, status: null, isClientView: null);
 
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
         Assert.Equal(200, okResult.StatusCode);
-        _mockService.Verify(s => s.GetActionsByEngagementAsync(engagementId, "tenant-AUTHENTICATED", false, null), Times.Once);
+        _mockService.Verify(s => s.GetActionsByEngagementAsync(engagementId, "tenant-AUTHENTICATED", true, null), Times.Once);
     }
 
     [Fact]
@@ -527,6 +549,90 @@ public class ClientActionsControllerTests
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
         Assert.Equal(200, okResult.StatusCode);
         _mockService.Verify(s => s.GetActionsByEngagementAsync(engagementId, tenantId, false, null), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetActionHistory_OwnerRoleRequestsClientViewFalse_AllowsStaffView()
+    {
+        // Arrange: Owner requests staff view (isClientView: false) — the story names both
+        // Staff and Owner as authorized for the staff view.
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = tenantId;
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantId),
+            new Claim(ClaimTypes.Role, "Owner")
+        }, "TestAuth"));
+
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        _mockService.Setup(s => s.GetActionsByEngagementAsync(engagementId, tenantId, false, null))
+            .ReturnsAsync(new List<ClientActionResponseDto>());
+
+        // Act
+        var result = await _controller.GetActionHistory(engagementId, tenantId: null, status: null, isClientView: false);
+
+        // Assert: Owner is permitted staff view
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        _mockService.Verify(s => s.GetActionsByEngagementAsync(engagementId, tenantId, false, null), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetActionHistory_ClientRoleRequestsViaXClientViewHeader_ForcesClientViewTrue()
+    {
+        // Arrange (CSTD-12): the X-Client-View header must not be a bypass route either —
+        // a Client-role caller setting X-Client-View: false must still be forced to client view.
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = tenantId;
+        httpContext.Request.Headers["X-Client-View"] = "false";
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantId),
+            new Claim(ClaimTypes.Role, "Client")
+        }, "TestAuth"));
+
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        _mockService.Setup(s => s.GetActionsByEngagementAsync(engagementId, tenantId, true, null))
+            .ReturnsAsync(new List<ClientActionResponseDto>());
+
+        // Act
+        var result = await _controller.GetActionHistory(engagementId, tenantId: null, status: null, isClientView: null);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        _mockService.Verify(s => s.GetActionsByEngagementAsync(engagementId, tenantId, true, null), Times.Once);
+        _mockService.Verify(s => s.GetActionsByEngagementAsync(engagementId, tenantId, false, null), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetActionHistory_NoRecognizedRoleUsesXClientViewHeaderToRequestStaffView_Returns403Forbidden()
+    {
+        // Arrange (CSTD-12): the X-Client-View header is an equally valid attack route as the
+        // query parameter — must be rejected the same way for a caller with no Owner/Staff role.
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = tenantId;
+        httpContext.Request.Headers["X-Client-View"] = "false";
+
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        // Act
+        var result = await _controller.GetActionHistory(engagementId, tenantId: null, status: null, isClientView: null);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.GetActionsByEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]
