@@ -5,7 +5,7 @@ import { DocumentVaultView } from '../components/DocumentVaultView';
 export const DocumentsPage: React.FC = () => {
     return (
         <DashboardLayout>
-            <div className="w-full max-w-5xl">
+            <div className="w-full">
                 <DocumentVaultView />
             </div>
         </DashboardLayout>

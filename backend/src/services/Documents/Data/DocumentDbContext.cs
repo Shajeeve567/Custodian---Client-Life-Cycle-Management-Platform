@@ -71,9 +71,52 @@ public class DocumentDbContext : DbContext
                 .HasColumnName("created_at")
                 .IsRequired();
 
+            entity.Property(e => e.ComplianceStatus)
+                .HasColumnName("compliance_status")
+                .IsRequired()
+                .HasMaxLength(50);
+
+            entity.Property(e => e.RejectionReason)
+                .HasColumnName("rejection_reason")
+                .HasMaxLength(1000);
+
+            entity.Property(e => e.ValidatedAt)
+                .HasColumnName("validated_at");
+
+            entity.Property(e => e.VerificationStatus)
+                .HasColumnName("verification_status")
+                .IsRequired()
+                .HasMaxLength(50);
+
+            entity.Property(e => e.VerifiedBy)
+                .HasColumnName("verified_by")
+                .HasMaxLength(100);
+
+            entity.Property(e => e.VerifiedAt)
+                .HasColumnName("verified_at");
+
+            entity.Property(e => e.VerificationReason)
+                .HasColumnName("verification_reason")
+                .HasMaxLength(1000);
+
+            entity.Property(e => e.IsDeleted)
+                .HasColumnName("is_deleted")
+                .IsRequired()
+                .HasDefaultValue(false);
+
+            entity.Property(e => e.DeletedAt)
+                .HasColumnName("deleted_at");
+
+            entity.Property(e => e.DeletedBy)
+                .HasColumnName("deleted_by")
+                .HasMaxLength(100);
+
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => e.EngagementId);
             entity.HasIndex(e => e.Type);
+            entity.HasIndex(e => e.ComplianceStatus);
+            entity.HasIndex(e => e.VerificationStatus);
+            entity.HasIndex(e => e.IsDeleted);
         });
     }
 }

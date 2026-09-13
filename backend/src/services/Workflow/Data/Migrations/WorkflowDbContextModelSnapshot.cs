@@ -48,6 +48,10 @@ namespace Workflow.Data.Migrations
                         .HasColumnType("datetime(6)")
                         .HasColumnName("created_at");
 
+                    b.Property<DateTime?>("DeadlineUtc")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("deadline_utc");
+
                     b.Property<string>("Description")
                         .HasColumnType("longtext")
                         .HasColumnName("description");
@@ -69,6 +73,12 @@ namespace Workflow.Data.Migrations
                     b.Property<string>("SourceMetadata")
                         .HasColumnType("longtext")
                         .HasColumnName("source_metadata");
+
+                    b.Property<int>("StageNumber")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1)
+                        .HasColumnName("stage_number");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -101,6 +111,9 @@ namespace Workflow.Data.Migrations
 
                     b.HasIndex("TenantId")
                         .HasDatabaseName("idx_action_tenant_id");
+
+                    b.HasIndex("EngagementId", "StageNumber")
+                        .HasDatabaseName("idx_action_engagement_stage");
 
                     b.HasIndex("TenantId", "EngagementId")
                         .HasDatabaseName("idx_action_tenant_engagement");

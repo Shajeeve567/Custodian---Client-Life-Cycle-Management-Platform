@@ -1,10 +1,12 @@
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
 namespace Custodian.Workflow.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/engagements/{engagementId:guid}/actions")]
 public class ClientActionsController : ControllerBase
@@ -30,17 +32,31 @@ public class ClientActionsController : ControllerBase
         [FromQuery] string? status,
         [FromQuery] bool? isClientView)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
         // Determine if client view rule applies (via explicit parameter, header, or role claim)
-        bool clientView = isClientView ?? User.IsInRole("Client");
-        if (!clientView && Request?.Headers != null && Request.Headers.TryGetValue("X-Client-View", out var headerVal))
+        // Group B security rule: If caller is in the Client role, client view is strictly enforced and cannot be bypassed.
+        bool clientView;
+        if (User.IsInRole("Client"))
         {
-            _ = bool.TryParse(headerVal, out clientView);
+            clientView = true;
+        }
+        else
+        {
+            clientView = isClientView ?? false;
+            if (!clientView && Request?.Headers != null && Request.Headers.TryGetValue("X-Client-View", out var headerVal))
+            {
+                _ = bool.TryParse(headerVal, out clientView);
+            }
         }
 
         var actions = await _actionService.GetActionsByEngagementAsync(engagementId, effectiveTenantId, clientView, status);
@@ -56,10 +72,15 @@ public class ClientActionsController : ControllerBase
         [FromBody] CreateClientActionDto dto,
         [FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
         if (!ModelState.IsValid)
@@ -92,10 +113,15 @@ public class ClientActionsController : ControllerBase
         [FromBody] CompleteClientActionDto dto,
         [FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
         if (!ModelState.IsValid)
@@ -112,31 +138,232 @@ public class ClientActionsController : ControllerBase
         return Ok(result);
     }
 
-    private string? ResolveTenantId(string? queryTenantId)
+    /// <summary>
+    /// Client evidence upload endpoint: Automatically transitions action from Pending/Rejected to Uploaded (awaiting staff review).
+    /// </summary>
+    [HttpPut("{actionId:guid}/upload")]
+    public async Task<ActionResult<ClientActionResponseDto>> UploadEvidence(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid actionId,
+        [FromBody] UploadActionEvidenceDto dto,
+        [FromQuery] string? tenantId)
     {
-        // 1. Check HTTP header X-Tenant-ID
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var result = await _actionService.UploadEvidenceAsync(engagementId, actionId, effectiveTenantId, dto);
+        if (result == null)
+        {
+            return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+        }
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Staff review endpoint: Marks an action as Completed (verified/accepted) or Rejected (revision required).
+    /// Restricted to authorized staff (Owner, Staff).
+    /// </summary>
+    [HttpPut("{actionId:guid}/review")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<ClientActionResponseDto>> ReviewAction(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid actionId,
+        [FromBody] ReviewActionDto dto,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        dto.ReviewerActor ??= ResolveStaffActor();
+
+        try
+        {
+            var result = await _actionService.ReviewActionAsync(engagementId, actionId, effectiveTenantId, dto);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Updates action status based on document human verification outcome (Verified -> Completed, Rejected -> Rejected with reason).
+    /// Restricted to authorized staff (Owner, Staff).
+    /// </summary>
+    [HttpPut("{actionId:guid}/verification")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<ClientActionResponseDto>> ApplyVerification(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid actionId,
+        [FromBody] ApplyActionVerificationDto dto,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        dto.VerifiedBy ??= ResolveStaffActor();
+
+        try
+        {
+            var result = await _actionService.ApplyVerificationOutcomeAsync(engagementId, actionId, effectiveTenantId, dto);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    private ActionResult? CheckStaffAuthorization()
+    {
+        // 1. If ClaimsPrincipal is authenticated, check role claims
+        if (User?.Identity?.IsAuthenticated == true)
+        {
+            var isStaff = User.IsInRole("Owner") || User.IsInRole("Staff") ||
+                          User.Claims.Any(c => c.Type == System.Security.Claims.ClaimTypes.Role &&
+                              (c.Value.Equals("Owner", StringComparison.OrdinalIgnoreCase) || c.Value.Equals("Staff", StringComparison.OrdinalIgnoreCase)));
+
+            return isStaff ? null : Forbid();
+        }
+
+        // 2. Check X-User-Role header fallback for direct testing / service-to-service calls
+        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Role", out var roleHeader))
+        {
+            var role = roleHeader.ToString();
+            var isStaff = role.Equals("Owner", StringComparison.OrdinalIgnoreCase) || role.Equals("Staff", StringComparison.OrdinalIgnoreCase);
+            return isStaff ? null : Forbid();
+        }
+
+        return null;
+    }
+
+    private string? ResolveStaffActor()
+    {
+        var actor = User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? User?.FindFirst("sub")?.Value
+            ?? User?.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
+            ?? User?.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
+
+        if (!string.IsNullOrWhiteSpace(actor))
+        {
+            return actor.Trim();
+        }
+
+        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Id", out var userHeader))
+        {
+            return userHeader.ToString().Trim();
+        }
+
+        return null;
+    }
+
+    private (string? TenantId, bool IsForbidden) TryResolveTenantId(string? queryTenantId)
+    {
+        var jwtClaimTenant = User?.FindFirst("tenant_id")?.Value ?? User?.FindFirst("tenantId")?.Value;
+        if (!string.IsNullOrWhiteSpace(jwtClaimTenant))
+        {
+            var cleanJwtTenant = jwtClaimTenant.Trim();
+
+            // Check if query tenant parameter conflicts
+            if (!string.IsNullOrWhiteSpace(queryTenantId) &&
+                !string.Equals(queryTenantId.Trim(), cleanJwtTenant, StringComparison.OrdinalIgnoreCase))
+            {
+                return (null, true);
+            }
+
+            // Check if header tenant conflicts
+            if (Request?.Headers != null && Request.Headers.TryGetValue("X-Tenant-ID", out var headerVal))
+            {
+                var headerTenant = headerVal.ToString().Trim();
+                if (!string.IsNullOrWhiteSpace(headerTenant) &&
+                    !string.Equals(headerTenant, cleanJwtTenant, StringComparison.OrdinalIgnoreCase))
+                {
+                    return (null, true);
+                }
+            }
+
+            return (cleanJwtTenant, false);
+        }
+
+        // 1. Check HTTP header X-Tenant-ID (for unauthenticated test contexts)
         if (Request?.Headers != null && Request.Headers.TryGetValue("X-Tenant-ID", out var headerValue))
         {
             var headerTenant = headerValue.ToString();
             if (!string.IsNullOrWhiteSpace(headerTenant))
             {
-                return headerTenant.Trim();
+                return (headerTenant.Trim(), false);
             }
         }
 
-        // 2. Check JWT Claims
-        var jwtClaimTenant = User?.FindFirst("tenant_id")?.Value ?? User?.FindFirst("tenantId")?.Value;
-        if (!string.IsNullOrWhiteSpace(jwtClaimTenant))
-        {
-            return jwtClaimTenant.Trim();
-        }
-
-        // 3. Fallback to Query String Parameter
+        // 2. Fallback to Query String Parameter
         if (!string.IsNullOrWhiteSpace(queryTenantId))
         {
-            return queryTenantId.Trim();
+            return (queryTenantId.Trim(), false);
         }
 
-        return null;
+        return (null, false);
     }
 }

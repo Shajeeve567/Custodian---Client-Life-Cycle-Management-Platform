@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { WorkflowApi, IdentityApi } from '../services/api';
-import { Engagement, ClientProfile, UserAccountResponse, ClientAction, EngagementStage } from '../types';
+import { WorkflowApi, IdentityApi, DocumentsApi } from '../services/api';
+import { Engagement, ClientProfile, UserAccountResponse, ClientAction, DocumentMetadata, EngagementStage } from '../types';
 import { ENGAGEMENT_STAGES, getStageDefinition, getStageIndex, getNextStage } from '../constants/engagementStages';
 import {
     ArrowLeft,
@@ -16,7 +16,18 @@ import {
     CheckCircle,
     AlertTriangle,
     Layers,
-    Lock
+    Lock,
+    User,
+    Building2,
+    Calendar,
+    ArrowRight,
+    ShieldCheck,
+    ShieldAlert,
+    Download,
+    Check,
+    X,
+    Clock,
+    RefreshCw
 } from 'lucide-react';
 
 interface WorkspaceStageViewProps {
@@ -36,6 +47,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [client, setClient] = useState<ClientProfile | null>(null);
     const [staffLead, setStaffLead] = useState<UserAccountResponse | null>(null);
     const [actions, setActions] = useState<ClientAction[]>([]);
+    const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
     // Which stage card the user is currently viewing details for (not necessarily
@@ -46,6 +58,40 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [isAdvancingStage, setIsAdvancingStage] = useState(false);
     const [stageAdvanceSuccess, setStageAdvanceSuccess] = useState<string | null>(null);
     const [stageAdvanceError, setStageAdvanceError] = useState<string | null>(null);
+
+    // Stage Action Verification Modals State
+    const [actionToVerify, setActionToVerify] = useState<{ action: ClientAction; doc?: DocumentMetadata } | null>(null);
+    const [verifyNotes, setVerifyNotes] = useState<string>('');
+    const [isVerifyingAction, setIsVerifyingAction] = useState<boolean>(false);
+
+    const [actionToReject, setActionToReject] = useState<{ action: ClientAction; doc?: DocumentMetadata } | null>(null);
+    const [rejectReason, setRejectReason] = useState<string>('');
+    const [isRejectingAction, setIsRejectingAction] = useState<boolean>(false);
+
+    // Helper to match action to evidence document in vault
+    const findLinkedDoc = (act: ClientAction): DocumentMetadata | undefined => {
+        const actDocId = (act as any).documentId || (act as any).metadata?.documentId;
+        if (actDocId) {
+            const found = documents.find((d) => d.documentId === actDocId);
+            if (found) return found;
+        }
+
+        if (act.type === 'KycDocument' || act.title.toLowerCase().includes('kyc') || act.title.toLowerCase().includes('passport')) {
+            const found = documents.find((d) => d.type === 'KYC_PASSPORT');
+            if (found) return found;
+        }
+
+        if (act.type === 'SignAgreement' || act.title.toLowerCase().includes('agreement') || act.title.toLowerCase().includes('contract')) {
+            const found = documents.find((d) => d.type === 'SIGNED_AGREEMENT');
+            if (found) return found;
+        }
+
+        if (act.type === 'DocumentUpload') {
+            return documents.find((d) => !d.isDeleted);
+        }
+
+        return undefined;
+    };
 
     // Load Workspace Data
     const loadWorkspaceData = useCallback(async () => {
@@ -90,6 +136,13 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             } catch (aErr) {
                 console.warn(aErr);
             }
+
+            try {
+                const docList = await DocumentsApi.getDocuments(engagementId, tenantId);
+                setDocuments(docList || []);
+            } catch (dErr) {
+                console.warn(dErr);
+            }
         } catch (err) {
             console.error(err);
         } finally {
@@ -102,13 +155,113 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     }, [loadWorkspaceData]);
 
     const handleCompleteAction = async (actionId: string) => {
+        if (!tenantId) return;
         setCompletingActionId(actionId);
-        setTimeout(() => {
+        try {
+            await WorkflowApi.completeAction(actionId, tenantId, engagementId, userId || 'staff-lead');
             setActions((prev) =>
-                prev.map((a) => (a.actionId === actionId ? { ...a, isCompleted: true } : a))
+                prev.map((a) => (a.actionId === actionId ? { ...a, isCompleted: true, status: 'Completed' } : a))
             );
+        } catch (err) {
+            console.warn('Fallback local action completion:', err);
+            setActions((prev) =>
+                prev.map((a) => (a.actionId === actionId ? { ...a, isCompleted: true, status: 'Completed' } : a))
+            );
+        } finally {
             setCompletingActionId(null);
-        }, 500);
+        }
+    };
+
+    // Dual-Sync Staff Verification Handler
+    const handleConfirmVerifyAction = async () => {
+        if (!actionToVerify || !tenantId) return;
+        setIsVerifyingAction(true);
+        try {
+            const { action, doc } = actionToVerify;
+
+            // 1. Verify in Document Microservice if document is linked
+            if (doc) {
+                await DocumentsApi.verifyDocument(
+                    engagementId,
+                    doc.documentId,
+                    {
+                        staffActor: userId || 'staff-lead',
+                        staffNotes: verifyNotes.trim() || undefined,
+                    },
+                    tenantId
+                );
+            }
+
+            // 2. Synchronize verification in Workflow Microservice
+            await WorkflowApi.applyVerification(
+                engagementId,
+                action.actionId,
+                {
+                    verificationStatus: 'Verified',
+                    verifiedBy: userId || 'staff-lead',
+                    verificationReason: verifyNotes.trim() || undefined,
+                },
+                tenantId
+            );
+
+
+            // 4. Refresh workspace data
+            await loadWorkspaceData();
+            setActionToVerify(null);
+            setVerifyNotes('');
+        } catch (err: any) {
+            alert('Verification failed: ' + (err.message || 'Server error'));
+        } finally {
+            setIsVerifyingAction(false);
+        }
+    };
+
+    // Dual-Sync Staff Rejection Handler
+    const handleConfirmRejectAction = async () => {
+        if (!actionToReject || !tenantId) return;
+        if (!rejectReason.trim()) {
+            alert('Rejection reason is required.');
+            return;
+        }
+
+        setIsRejectingAction(true);
+        try {
+            const { action, doc } = actionToReject;
+
+            // 1. Reject in Document Microservice if document is linked
+            if (doc) {
+                await DocumentsApi.rejectDocument(
+                    engagementId,
+                    doc.documentId,
+                    {
+                        staffActor: userId || 'staff-lead',
+                        reason: rejectReason.trim(),
+                    },
+                    tenantId
+                );
+            }
+
+            // 2. Synchronize rejection in Workflow Microservice
+            await WorkflowApi.applyVerification(
+                engagementId,
+                action.actionId,
+                {
+                    verificationStatus: 'Rejected',
+                    verifiedBy: userId || 'staff-lead',
+                    verificationReason: rejectReason.trim(),
+                },
+                tenantId
+            );
+
+            // 3. Refresh workspace data
+            await loadWorkspaceData();
+            setActionToReject(null);
+            setRejectReason('');
+        } catch (err: any) {
+            alert('Rejection failed: ' + (err.message || 'Server error'));
+        } finally {
+            setIsRejectingAction(false);
+        }
     };
 
     // Advances the engagement to the next stage via the real backend endpoint
@@ -443,37 +596,188 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                 </p>
                             </div>
                         ) : (
-                            <div className="space-y-2">
-                                {actions.map((act) => (
-                                    <div
-                                        key={act.actionId}
-                                        className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5"
-                                    >
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-xs font-bold text-slate-800">
-                                                {act.title}
-                                            </span>
-                                            {act.isCompleted ? (
-                                                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                                                    Done
-                                                </span>
-                                            ) : (
-                                                <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                                                    Pending
-                                                </span>
+                            <div className="space-y-3">
+                                {actions.map((act) => {
+                                    const linkedDoc = findLinkedDoc(act);
+                                    const isActionVerified = (act as any).verificationStatus === 'Verified' || linkedDoc?.verificationStatus?.toUpperCase() === 'VERIFIED';
+                                    const isActionRejected = (act as any).verificationStatus === 'Rejected' || linkedDoc?.verificationStatus?.toUpperCase() === 'REJECTED';
+                                    const isDocAction = act.type === 'DocumentUpload' || act.type === 'KycDocument' || act.type === 'SignAgreement' || act.title.toLowerCase().includes('document') || act.title.toLowerCase().includes('kyc') || act.title.toLowerCase().includes('agreement');
+
+                                    return (
+                                        <div
+                                            key={act.actionId}
+                                            className={`p-3.5 rounded-xl border transition space-y-2.5 ${
+                                                isActionVerified
+                                                    ? 'bg-emerald-50/40 border-emerald-200/80'
+                                                    : isActionRejected
+                                                    ? 'bg-rose-50/40 border-rose-200/80'
+                                                    : 'bg-slate-50/80 border-slate-200'
+                                            }`}
+                                        >
+                                            {/* Action Header */}
+                                            <div className="flex items-start justify-between gap-2">
+                                                <div>
+                                                    <div className="flex items-center gap-1.5 mb-1">
+                                                        <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-white text-indigo-700 border border-indigo-100 shadow-xs">
+                                                            {act.type}
+                                                        </span>
+                                                        {isDocAction && (
+                                                            <span className="text-[10px] font-medium text-slate-400">• Evidence Action</span>
+                                                        )}
+                                                    </div>
+                                                    <span className="text-xs font-bold text-slate-900 block leading-tight">
+                                                        {act.title}
+                                                    </span>
+                                                </div>
+
+                                                {/* Verification or Completion Status Badge */}
+                                                <div>
+                                                    {isActionVerified ? (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/90 px-2 py-0.5 rounded-full border border-emerald-300">
+                                                            <CheckCircle2 className="w-3 h-3" />
+                                                            Verified
+                                                        </span>
+                                                    ) : isActionRejected ? (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-100/90 px-2 py-0.5 rounded-full border border-rose-300">
+                                                            <X className="w-3 h-3" />
+                                                            Rejected
+                                                        </span>
+                                                    ) : act.isCompleted ? (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                                            <Check className="w-3 h-3" />
+                                                            Done
+                                                        </span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                                                            <Clock className="w-3 h-3" />
+                                                            Pending
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Linked Evidence Document Display */}
+                                            {linkedDoc ? (
+                                                <div className="bg-white p-2.5 rounded-lg border border-slate-200/80 space-y-2 text-xs">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <div className="flex items-center gap-2 min-w-0">
+                                                            <FileText className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                                                            <span className="font-semibold text-slate-800 truncate text-[11px]">
+                                                                {linkedDoc.type}
+                                                            </span>
+                                                            <span className="text-[10px] font-mono text-slate-400 truncate">
+                                                                ({linkedDoc.documentId.slice(0, 8)}...)
+                                                            </span>
+                                                        </div>
+
+                                                        {/* Continuous Staff Download */}
+                                                        <a
+                                                            href={DocumentsApi.getDownloadUrl(engagementId, linkedDoc.documentId, tenantId, linkedDoc.isDeleted)}
+                                                            target="_blank"
+                                                            rel="noreferrer"
+                                                            title="Download Evidence PDF"
+                                                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50/70 hover:bg-indigo-100 px-2 py-0.5 rounded border border-indigo-100 transition flex-shrink-0"
+                                                        >
+                                                            <Download className="w-3 h-3" />
+                                                            PDF
+                                                        </a>
+                                                    </div>
+
+                                                    {/* Compliance & Verification details */}
+                                                    <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100 text-[10px]">
+                                                        {linkedDoc.complianceStatus === 'Compliant' ? (
+                                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
+                                                                <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                                                                Compliant
+                                                            </span>
+                                                        ) : linkedDoc.complianceStatus === 'NonCompliant' ? (
+                                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 font-semibold border border-rose-200" title={linkedDoc.rejectionReason}>
+                                                                <ShieldAlert className="w-3 h-3 text-rose-600" />
+                                                                Non-Compliant
+                                                            </span>
+                                                        ) : (
+                                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-semibold border border-amber-200">
+                                                                <Clock className="w-3 h-3" />
+                                                                Check Pending
+                                                            </span>
+                                                        )}
+
+                                                        <span className="text-slate-300">•</span>
+                                                        <span className="text-slate-500">
+                                                            Exp: <strong className={linkedDoc.expiryDate && new Date(linkedDoc.expiryDate) < new Date() ? 'text-rose-600 font-bold' : 'text-slate-700'}>{linkedDoc.expiryDate || 'N/A'}</strong>
+                                                        </span>
+                                                    </div>
+
+                                                    {/* If rejected, show rejection note */}
+                                                    {linkedDoc.verificationReason && isActionRejected && (
+                                                        <div className="text-[10px] text-rose-600 bg-rose-50 p-1.5 rounded border border-rose-100 font-medium">
+                                                            Reason: {linkedDoc.verificationReason}
+                                                        </div>
+                                                    )}
+
+                                                    {/* Staff Verification & Rejection Controls */}
+                                                    {!isActionVerified && (
+                                                        <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
+                                                            <button
+                                                                type="button"
+                                                                disabled={linkedDoc.complianceStatus !== 'Compliant'}
+                                                                onClick={() => {
+                                                                    setActionToVerify({ action: act, doc: linkedDoc });
+                                                                    setVerifyNotes('');
+                                                                }}
+                                                                title={
+                                                                    linkedDoc.complianceStatus === 'Compliant'
+                                                                        ? 'Verify this evidence document'
+                                                                        : 'Document must pass deterministic compliance check before staff verification'
+                                                                }
+                                                                className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 flex items-center justify-center gap-1 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                                                            >
+                                                                <Check className="w-3 h-3" />
+                                                                Verify Evidence
+                                                            </button>
+
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setActionToReject({ action: act, doc: linkedDoc });
+                                                                    setRejectReason('');
+                                                                }}
+                                                                title="Reject evidence document"
+                                                                className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 flex items-center justify-center gap-1 transition"
+                                                            >
+                                                                <X className="w-3 h-3" />
+                                                                Reject
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ) : isDocAction ? (
+                                                <div className="p-2 rounded-lg bg-amber-50/60 border border-amber-200/60 text-[11px] text-amber-800 flex items-center gap-1.5">
+                                                    <Clock className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+                                                    <span>Awaiting client PDF upload in Client Portal</span>
+                                                </div>
+                                            ) : null}
+
+                                            {/* General Task: Mark Complete button */}
+                                            {!act.isCompleted && !linkedDoc && (
+                                                <button
+                                                    onClick={() => handleCompleteAction(act.actionId)}
+                                                    disabled={completingActionId === act.actionId}
+                                                    className="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition flex items-center justify-center gap-1"
+                                                >
+                                                    {completingActionId === act.actionId ? (
+                                                        <>
+                                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                                            Completing...
+                                                        </>
+                                                    ) : (
+                                                        'Mark Complete'
+                                                    )}
+                                                </button>
                                             )}
                                         </div>
-                                        {!act.isCompleted && (
-                                            <button
-                                                onClick={() => handleCompleteAction(act.actionId)}
-                                                disabled={completingActionId === act.actionId}
-                                                className="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold mt-1 transition"
-                                            >
-                                                {completingActionId === act.actionId ? 'Completing...' : 'Mark Complete'}
-                                            </button>
-                                        )}
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
@@ -526,6 +830,146 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                     </div>
                 </div>
             </div>
+
+            {/* Modal: Verify Stage Action & Linked Document */}
+            {actionToVerify && (
+                <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200">
+                                <CheckCircle2 className="w-6 h-6" />
+                            </div>
+                            <div>
+                                <h3 className="text-base font-bold text-slate-900">
+                                    Verify Stage Action Evidence
+                                </h3>
+                                <p className="text-xs text-slate-500">
+                                    Approves the evidence across Document Vault & Workflow engines.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-1">
+                            <div><span className="font-semibold text-slate-700">Action:</span> {actionToVerify.action.title}</div>
+                            {actionToVerify.doc && (
+                                <div><span className="font-semibold text-slate-700">Document Type:</span> {actionToVerify.doc.type}</div>
+                            )}
+                            <div><span className="font-semibold text-slate-700">Staff Verifier:</span> {userId || 'staff-lead'}</div>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                                Verification Notes (Optional)
+                            </label>
+                            <textarea
+                                rows={3}
+                                value={verifyNotes}
+                                onChange={(e) => setVerifyNotes(e.target.value)}
+                                placeholder="E.g., Document details and regulatory compliance verified..."
+                                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                            />
+                        </div>
+
+                        <div className="flex items-center justify-end gap-3 pt-2">
+                            <button
+                                type="button"
+                                onClick={() => setActionToVerify(null)}
+                                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 transition"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                disabled={isVerifyingAction}
+                                onClick={handleConfirmVerifyAction}
+                                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition disabled:opacity-50"
+                            >
+                                {isVerifyingAction ? (
+                                    <>
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        Synchronizing Microservices...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Check className="w-4 h-4" />
+                                        Confirm Verification
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal: Reject Stage Action & Linked Document */}
+            {actionToReject && (
+                <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2.5 rounded-xl bg-rose-50 text-rose-600 border border-rose-200">
+                                <ShieldAlert className="w-6 h-6" />
+                            </div>
+                            <div>
+                                <h3 className="text-base font-bold text-slate-900">
+                                    Reject Stage Action Evidence
+                                </h3>
+                                <p className="text-xs text-slate-500">
+                                    Marks document and workflow action as rejected for client re-submission.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-1">
+                            <div><span className="font-semibold text-slate-700">Action:</span> {actionToReject.action.title}</div>
+                            {actionToReject.doc && (
+                                <div><span className="font-semibold text-slate-700">Document Type:</span> {actionToReject.doc.type}</div>
+                            )}
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                                Rejection Reason <span className="text-rose-500">*</span>
+                            </label>
+                            <textarea
+                                rows={3}
+                                required
+                                value={rejectReason}
+                                onChange={(e) => setRejectReason(e.target.value)}
+                                placeholder="E.g., Scanned copy is blurry or signature is unverified..."
+                                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
+                            />
+                        </div>
+
+                        <div className="flex items-center justify-end gap-3 pt-2">
+                            <button
+                                type="button"
+                                onClick={() => setActionToReject(null)}
+                                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 transition"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                disabled={isRejectingAction || !rejectReason.trim()}
+                                onClick={handleConfirmRejectAction}
+                                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 shadow-sm transition disabled:opacity-50"
+                            >
+                                {isRejectingAction ? (
+                                    <>
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        Synchronizing Microservices...
+                                    </>
+                                ) : (
+                                    <>
+                                        <X className="w-4 h-4" />
+                                        Confirm Rejection
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

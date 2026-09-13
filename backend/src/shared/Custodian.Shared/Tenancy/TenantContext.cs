@@ -25,9 +25,28 @@ public static class TenantContextExtensions
         app.Use(async (context, next) =>
         {
             var tenantContext = context.RequestServices.GetRequiredService<TenantContext>();
-            tenantContext.TenantId =
-                context.User.FindFirstValue(TenantContext.ClaimName)
-                ?? context.Request.Headers[TenantContext.HeaderName].FirstOrDefault();
+            var claimTenant = context.User.FindFirst(TenantContext.ClaimName)?.Value
+                           ?? context.User.FindFirst("tenantId")?.Value;
+            var headerTenant = context.Request.Headers[TenantContext.HeaderName].FirstOrDefault();
+
+            if (!string.IsNullOrWhiteSpace(claimTenant))
+            {
+                var cleanClaimTenant = claimTenant.Trim();
+                if (!string.IsNullOrWhiteSpace(headerTenant) &&
+                    !string.Equals(headerTenant.Trim(), cleanClaimTenant, StringComparison.OrdinalIgnoreCase))
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsync("{\"message\":\"Cross-tenant access forbidden. Caller does not belong to the requested tenant.\"}");
+                    return;
+                }
+
+                tenantContext.TenantId = cleanClaimTenant;
+            }
+            else
+            {
+                tenantContext.TenantId = headerTenant?.Trim();
+            }
 
             await next();
         });

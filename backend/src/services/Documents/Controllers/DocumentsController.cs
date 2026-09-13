@@ -1,10 +1,13 @@
 using Custodian.Documents.DTOs;
 using Custodian.Documents.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
+
 namespace Custodian.Documents.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/engagements/{engagementId:guid}/documents")]
 public class DocumentsController : ControllerBase
@@ -33,10 +36,15 @@ public class DocumentsController : ControllerBase
         [FromForm] DocumentUploadDto uploadDto,
         [FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
         if (!ModelState.IsValid)
@@ -60,39 +68,55 @@ public class DocumentsController : ControllerBase
     }
 
     /// <summary>
-    /// Lists all document metadata records associated with the specified engagement.
+    /// Lists document metadata records associated with the specified engagement, supporting query filtering and soft-delete visibility.
     /// </summary>
     [HttpGet]
     public async Task<ActionResult<IEnumerable<DocumentResponseDto>>> GetDocumentsByEngagement(
         [FromRoute] Guid engagementId,
-        [FromQuery] string? tenantId)
+        [FromQuery] string? tenantId = null,
+        [FromQuery] DocumentFilterDto? filter = null)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
-        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return Forbid();
         }
 
-        var results = await _documentService.GetDocumentsByEngagementAsync(engagementId, effectiveTenantId);
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var results = filter != null
+            ? await _documentService.GetDocumentsByEngagementAsync(engagementId, effectiveTenantId, filter)
+            : await _documentService.GetDocumentsByEngagementAsync(engagementId, effectiveTenantId);
         return Ok(results);
     }
 
     /// <summary>
-    /// Retrieves metadata for a specific document.
+    /// Retrieves metadata for a specific document. Soft-deleted documents return 404 unless includeDeleted is true.
     /// </summary>
     [HttpGet("{documentId:guid}")]
     public async Task<ActionResult<DocumentResponseDto>> GetDocumentById(
         [FromRoute] Guid engagementId,
         [FromRoute] Guid documentId,
-        [FromQuery] string? tenantId)
+        [FromQuery] string? tenantId = null,
+        [FromQuery] bool includeDeleted = false)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
-        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return Forbid();
         }
 
-        var result = await _documentService.GetDocumentByIdAsync(engagementId, documentId, effectiveTenantId);
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var result = includeDeleted
+            ? await _documentService.GetDocumentByIdAsync(engagementId, documentId, effectiveTenantId, includeDeleted: true)
+            : await _documentService.GetDocumentByIdAsync(engagementId, documentId, effectiveTenantId);
         if (result == null)
         {
             return NotFound(new { message = $"Document '{documentId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
@@ -102,21 +126,30 @@ public class DocumentsController : ControllerBase
     }
 
     /// <summary>
-    /// Downloads the binary PDF content for a specific document.
+    /// Downloads the binary content for a specific document returning original bytes and content type.
+    /// Soft-deleted documents return 404 unless includeDeleted is true.
     /// </summary>
     [HttpGet("{documentId:guid}/download")]
     public async Task<IActionResult> DownloadDocument(
         [FromRoute] Guid engagementId,
         [FromRoute] Guid documentId,
-        [FromQuery] string? tenantId)
+        [FromQuery] string? tenantId = null,
+        [FromQuery] bool includeDeleted = false)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
-        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
         {
-            return BadRequest(new { message = "Tenant identification is required via X-Tenant-ID header, JWT claim, or tenantId parameter." });
+            return Forbid();
         }
 
-        var metadata = await _documentService.GetDocumentByIdAsync(engagementId, documentId, effectiveTenantId);
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var metadata = includeDeleted
+            ? await _documentService.GetDocumentByIdAsync(engagementId, documentId, effectiveTenantId, includeDeleted: true)
+            : await _documentService.GetDocumentByIdAsync(engagementId, documentId, effectiveTenantId);
         if (metadata == null)
         {
             return NotFound(new { message = $"Document metadata for '{documentId}' was not found." });
@@ -128,37 +161,324 @@ public class DocumentsController : ControllerBase
             return NotFound(new { message = $"Binary file content for document '{documentId}' was not found in storage." });
         }
 
-        return File(fileStream, metadata.ContentType ?? "application/pdf", metadata.FileName);
+        var contentType = !string.IsNullOrWhiteSpace(metadata.ContentType) ? metadata.ContentType : "application/octet-stream";
+        return File(fileStream, contentType, metadata.FileName);
     }
 
     /// <summary>
-    /// Resolves tenant ID from HTTP X-Tenant-ID header, JWT claims, or query parameter fallback.
+    /// Staff verification endpoint: Manually marks an automatically compliant document as Verified.
+    /// Restricted to authorized staff (Owner, Staff).
+    /// Precondition: Document must already be automatically compliant.
     /// </summary>
-    private string? ResolveTenantId(string? queryTenantId)
+    [HttpPost("{documentId:guid}/verify")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<DocumentResponseDto>> VerifyDocument(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid documentId,
+        [FromBody] VerifyDocumentRequestDto dto,
+        [FromQuery] string? tenantId)
     {
-        // 1. Check HTTP header X-Tenant-ID
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        dto.StaffActor ??= ResolveStaffActor();
+
+        try
+        {
+            var result = await _documentService.VerifyDocumentAsync(engagementId, documentId, effectiveTenantId, dto);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Document '{documentId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Document verification precondition failed for document {DocumentId}", documentId);
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Staff rejection endpoint: Manually rejects document verification with a mandatory reason.
+    /// Restricted to authorized staff (Owner, Staff).
+    /// Precondition: Document must already be automatically compliant.
+    /// </summary>
+    [HttpPost("{documentId:guid}/reject")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<DocumentResponseDto>> RejectDocument(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid documentId,
+        [FromBody] RejectDocumentRequestDto dto,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        if (string.IsNullOrWhiteSpace(dto.Reason))
+        {
+            return BadRequest(new { message = "Rejection reason is required." });
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        dto.StaffActor ??= ResolveStaffActor();
+
+        try
+        {
+            var result = await _documentService.RejectDocumentVerificationAsync(engagementId, documentId, effectiveTenantId, dto);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Document '{documentId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Document verification precondition failed for document {DocumentId}", documentId);
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Staff metadata update endpoint: Updates editable metadata fields for a specific document without silently rerunning validation.
+    /// Restricted to authorized staff (Owner, Staff).
+    /// </summary>
+    [HttpPut("{documentId:guid}/metadata")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<DocumentResponseDto>> UpdateDocumentMetadata(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid documentId,
+        [FromBody] UpdateDocumentMetadataDto dto,
+        [FromQuery] string? tenantId = null)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var staffActor = ResolveStaffActor();
+
+        try
+        {
+            var result = await _documentService.UpdateDocumentMetadataAsync(engagementId, documentId, effectiveTenantId, dto, staffActor);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Document '{documentId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Document metadata update failed for document {DocumentId}", documentId);
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Staff soft-delete endpoint: Soft-deletes a document, retaining physical storage file and historical evidence.
+    /// Restricted to authorized staff (Owner, Staff).
+    /// </summary>
+    [HttpDelete("{documentId:guid}")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<DocumentResponseDto>> SoftDeleteDocument(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid documentId,
+        [FromQuery] string? tenantId = null)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        var staffActor = ResolveStaffActor();
+
+        try
+        {
+            var result = await _documentService.SoftDeleteDocumentAsync(engagementId, documentId, effectiveTenantId, staffActor);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Document '{documentId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Document soft-delete failed for document {DocumentId}", documentId);
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    private ActionResult? CheckStaffAuthorization()
+    {
+        // 1. If ClaimsPrincipal is authenticated, check role claims
+        if (User?.Identity?.IsAuthenticated == true)
+        {
+            var isStaff = User.IsInRole("Owner") || User.IsInRole("Staff") ||
+                          User.Claims.Any(c => c.Type == System.Security.Claims.ClaimTypes.Role &&
+                              (c.Value.Equals("Owner", StringComparison.OrdinalIgnoreCase) || c.Value.Equals("Staff", StringComparison.OrdinalIgnoreCase)));
+
+            return isStaff ? null : Forbid();
+        }
+
+        // 2. Check X-User-Role header fallback for direct testing / service-to-service calls
+        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Role", out var roleHeader))
+        {
+            var role = roleHeader.ToString();
+            var isStaff = role.Equals("Owner", StringComparison.OrdinalIgnoreCase) || role.Equals("Staff", StringComparison.OrdinalIgnoreCase);
+            return isStaff ? null : Forbid();
+        }
+
+        // 3. Neither authenticated claim nor valid role header found
+        return Unauthorized(new { message = "Authentication required. Only authorized staff can verify or reject documents." });
+    }
+
+    private string? ResolveStaffActor()
+    {
+        var actor = User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? User?.FindFirst("sub")?.Value
+            ?? User?.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
+            ?? User?.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
+
+        if (!string.IsNullOrWhiteSpace(actor))
+        {
+            return actor.Trim();
+        }
+
+        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Id", out var userHeader))
+        {
+            return userHeader.ToString().Trim();
+        }
+
+        return "StaffUser";
+    }
+
+    /// <summary>
+    /// Resolves tenant ID server-side from HttpContext JWT claims if authenticated.
+    /// Strictly rejects cross-tenant requests where a caller specifies a different tenant ID than their JWT claim.
+    /// Falls back to request header/query parameter only in unauthenticated test mock contexts.
+    /// </summary>
+    private (string? TenantId, bool IsForbidden) TryResolveTenantId(string? queryTenantId)
+    {
+        var jwtClaimTenant = User?.FindFirst("tenant_id")?.Value ?? User?.FindFirst("tenantId")?.Value;
+        if (!string.IsNullOrWhiteSpace(jwtClaimTenant))
+        {
+            var cleanJwtTenant = jwtClaimTenant.Trim();
+
+            // Check if query tenant parameter conflicts
+            if (!string.IsNullOrWhiteSpace(queryTenantId) &&
+                !string.Equals(queryTenantId.Trim(), cleanJwtTenant, StringComparison.OrdinalIgnoreCase))
+            {
+                return (null, true);
+            }
+
+            // Check if header tenant conflicts
+            if (Request?.Headers != null && Request.Headers.TryGetValue("X-Tenant-ID", out var headerVal))
+            {
+                var headerTenant = headerVal.ToString().Trim();
+                if (!string.IsNullOrWhiteSpace(headerTenant) &&
+                    !string.Equals(headerTenant, cleanJwtTenant, StringComparison.OrdinalIgnoreCase))
+                {
+                    return (null, true);
+                }
+            }
+
+            return (cleanJwtTenant, false);
+        }
+
+        // 1. Check HTTP header X-Tenant-ID (for unauthenticated test contexts)
         if (Request?.Headers != null && Request.Headers.TryGetValue("X-Tenant-ID", out var headerValue))
         {
             var headerTenant = headerValue.ToString();
             if (!string.IsNullOrWhiteSpace(headerTenant))
             {
-                return headerTenant.Trim();
+                return (headerTenant.Trim(), false);
             }
         }
 
-        // 2. Check JWT Claims
-        var jwtClaimTenant = User?.FindFirst("tenant_id")?.Value ?? User?.FindFirst("tenantId")?.Value;
-        if (!string.IsNullOrWhiteSpace(jwtClaimTenant))
-        {
-            return jwtClaimTenant.Trim();
-        }
-
-        // 3. Fallback to Query String Parameter
+        // 2. Fallback to Query String Parameter
         if (!string.IsNullOrWhiteSpace(queryTenantId))
         {
-            return queryTenantId.Trim();
+            return (queryTenantId.Trim(), false);
         }
 
-        return null;
+        return (null, false);
     }
 }

@@ -2,10 +2,12 @@ using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Custodian.Workflow.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/[controller]")]
 public class EngagementsController : ControllerBase
@@ -27,7 +29,12 @@ public class EngagementsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        var effectiveTenantId = ResolveTenantId(request.TenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(request.TenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
             return BadRequest("Tenant identification is required.");
@@ -55,7 +62,12 @@ public class EngagementsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<EngagementResponse>> GetEngagementById(Guid id, [FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
             return BadRequest("tenantId parameter or JWT tenant claim is required for tenant isolation.");
@@ -74,7 +86,12 @@ public class EngagementsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<EngagementResponse>>> GetEngagements([FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
             return BadRequest("tenantId parameter or JWT tenant claim is required for tenant isolation.");
@@ -93,7 +110,12 @@ public class EngagementsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        var effectiveTenantId = ResolveTenantId(request.TenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(request.TenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
             return BadRequest("Tenant identification is required.");
@@ -138,7 +160,12 @@ public class EngagementsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        var effectiveTenantId = ResolveTenantId(request.TenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(request.TenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
             return BadRequest("Tenant identification is required.");
@@ -198,7 +225,12 @@ public class EngagementsController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteEngagement(Guid id, [FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
             return BadRequest("tenantId parameter or JWT tenant claim is required for tenant isolation.");
@@ -227,18 +259,27 @@ public class EngagementsController : ControllerBase
 
     /// <summary>
     /// Resolves tenant ID server-side from HttpContext JWT claims if authenticated.
-    /// Falls back to request parameter if claims are not populated.
+    /// Strictly rejects cross-tenant requests where a caller specifies a different tenant ID than their JWT claim.
+    /// Falls back to request parameter only in unauthenticated test contexts.
     /// </summary>
-    private string? ResolveTenantId(string? requestTenantId)
+    private (string? TenantId, bool IsForbidden) TryResolveTenantId(string? requestTenantId)
     {
         var jwtTenantId = User?.FindFirst("tenant_id")?.Value ?? User?.FindFirst("tenantId")?.Value;
 
         if (!string.IsNullOrWhiteSpace(jwtTenantId))
         {
-            return jwtTenantId; // Authenticated JWT claim takes precedence
+            var cleanJwtTenant = jwtTenantId.Trim();
+            if (!string.IsNullOrWhiteSpace(requestTenantId) &&
+                !string.Equals(requestTenantId.Trim(), cleanJwtTenant, StringComparison.OrdinalIgnoreCase))
+            {
+                // Cross-tenant access attempted by authenticated user -> 403 Forbidden
+                return (null, true);
+            }
+
+            return (cleanJwtTenant, false);
         }
 
-        return requestTenantId;
+        return (!string.IsNullOrWhiteSpace(requestTenantId) ? requestTenantId.Trim() : null, false);
     }
 
     private static EngagementResponse MapToResponse(Engagement e) => new()

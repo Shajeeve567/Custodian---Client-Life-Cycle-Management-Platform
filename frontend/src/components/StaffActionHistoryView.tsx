@@ -206,11 +206,25 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
                                         <span className="internal-only-badge">🔒 Staff Internal</span>
                                     )}
                                 </div>
-                                {getStatusBadge(action.status)}
+                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                    {action.verificationStatus === 'Verified' && (
+                                        <span className="action-badge badge-verified">✓ Verified</span>
+                                    )}
+                                    {action.verificationStatus === 'Rejected' && (
+                                        <span className="action-badge badge-rejected">✕ Rejected</span>
+                                    )}
+                                    {getStatusBadge(action.status)}
+                                </div>
                             </div>
 
                             {action.description && (
                                 <p className="action-description">{action.description}</p>
+                            )}
+
+                            {action.verificationReason && (
+                                <p className="action-verification-reason" style={{ fontSize: '0.8rem', color: action.verificationStatus === 'Rejected' ? '#f87171' : '#34d399', margin: '4px 0 10px 0' }}>
+                                    {action.verificationStatus === 'Rejected' ? 'Rejection Reason' : 'Verification Notes'}: {action.verificationReason}
+                                </p>
                             )}
 
                             {/* Action Meta Info */}

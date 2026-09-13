@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text;
 using Custodian.Documents.Controllers;
 using Custodian.Documents.DTOs;
@@ -233,4 +234,599 @@ public class DocumentsControllerTests
 
         Assert.IsType<NotFoundObjectResult>(actionResult);
     }
+
+    private void SetUserRole(string role, string userId = "staff-user-1", string tenantId = "tenant-1")
+    {
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, userId),
+            new Claim(ClaimTypes.Role, role),
+            new Claim("tenant_id", tenantId)
+        };
+        var identity = new ClaimsIdentity(claims, "TestAuth");
+        _controller.ControllerContext.HttpContext.User = new ClaimsPrincipal(identity);
+    }
+
+    private void SetupUserJwtClaim(string tenantIdClaim)
+    {
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantIdClaim)
+        }, "TestAuthType"));
+
+        _controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext { User = user }
+        };
+    }
+
+    [Fact]
+    public async Task VerifyDocument_AuthorizedStaff_Returns200OkWithVerifiedDoc()
+    {
+        SetUserRole("Staff", "staff-alice");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var requestDto = new VerifyDocumentRequestDto { StaffNotes = "Looks good" };
+        var responseDto = new DocumentResponseDto
+        {
+            DocumentId = documentId,
+            VerificationStatus = Custodian.Shared.Contracts.DocumentVerificationStatus.Verified,
+            VerifiedBy = "staff-alice",
+            ComplianceStatus = Custodian.Documents.Compliance.ComplianceStatus.Compliant
+        };
+
+        _documentServiceMock
+            .Setup(s => s.VerifyDocumentAsync(engagementId, documentId, tenantId, requestDto))
+            .ReturnsAsync(responseDto);
+
+        var actionResult = await _controller.VerifyDocument(engagementId, documentId, requestDto, tenantId);
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var result = Assert.IsType<DocumentResponseDto>(okResult.Value);
+        Assert.Equal(Custodian.Shared.Contracts.DocumentVerificationStatus.Verified, result.VerificationStatus);
+    }
+
+    [Fact]
+    public async Task VerifyDocument_ClientRole_Returns403Forbidden()
+    {
+        SetUserRole("Client", "client-bob");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var requestDto = new VerifyDocumentRequestDto { StaffNotes = "Trying to verify myself" };
+
+        var actionResult = await _controller.VerifyDocument(engagementId, documentId, requestDto, tenantId);
+
+        Assert.IsType<ForbidResult>(actionResult.Result);
+    }
+
+    [Fact]
+    public async Task VerifyDocument_PreconditionFailed_Returns400BadRequest()
+    {
+        SetUserRole("Staff", "staff-alice");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var requestDto = new VerifyDocumentRequestDto();
+
+        _documentServiceMock
+            .Setup(s => s.VerifyDocumentAsync(engagementId, documentId, tenantId, requestDto))
+            .ThrowsAsync(new InvalidOperationException("Document is not automatically compliant."));
+
+        var actionResult = await _controller.VerifyDocument(engagementId, documentId, requestDto, tenantId);
+
+        var badRequestResult = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
+        Assert.NotNull(badRequestResult.Value);
+    }
+
+    [Fact]
+    public async Task RejectDocument_AuthorizedStaffWithReason_Returns200Ok()
+    {
+        SetUserRole("Staff", "staff-alice");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var requestDto = new RejectDocumentRequestDto { Reason = "Document is unreadable." };
+        var responseDto = new DocumentResponseDto
+        {
+            DocumentId = documentId,
+            VerificationStatus = Custodian.Shared.Contracts.DocumentVerificationStatus.Rejected,
+            VerificationReason = "Document is unreadable."
+        };
+
+        _documentServiceMock
+            .Setup(s => s.RejectDocumentVerificationAsync(engagementId, documentId, tenantId, requestDto))
+            .ReturnsAsync(responseDto);
+
+        var actionResult = await _controller.RejectDocument(engagementId, documentId, requestDto, tenantId);
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var result = Assert.IsType<DocumentResponseDto>(okResult.Value);
+        Assert.Equal(Custodian.Shared.Contracts.DocumentVerificationStatus.Rejected, result.VerificationStatus);
+    }
+
+    [Fact]
+    public async Task RejectDocument_MissingReason_Returns400BadRequest()
+    {
+        SetUserRole("Staff", "staff-alice");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var requestDto = new RejectDocumentRequestDto { Reason = "" };
+
+        var actionResult = await _controller.RejectDocument(engagementId, documentId, requestDto, tenantId);
+
+        Assert.IsType<BadRequestObjectResult>(actionResult.Result);
+    }
+
+    [Fact]
+    public async Task RejectDocument_NonStaffRole_Returns403Forbidden()
+    {
+        SetUserRole("Client", "client-bob");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var requestDto = new RejectDocumentRequestDto { Reason = "Reason" };
+
+        var actionResult = await _controller.RejectDocument(engagementId, documentId, requestDto, tenantId);
+
+        Assert.IsType<ForbidResult>(actionResult.Result);
+    }
+
+    // ==========================================
+    // TENANT ISOLATION TESTS (CSTD-12 & CSTD-269)
+    // ==========================================
+
+    [Fact]
+    public async Task GetDocumentsByEngagement_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+
+        // Act
+        var result = await _controller.GetDocumentsByEngagement(engagementId, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _documentServiceMock.Verify(s => s.GetDocumentsByEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetDocumentsByEngagement_WithoutTenantQuery_UsesJwtClaimAndReturns200OK()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var docs = new List<DocumentResponseDto>
+        {
+            new DocumentResponseDto
+            {
+                DocumentId = Guid.NewGuid(),
+                EngagementId = engagementId,
+                TenantId = "tenant-AUTHENTICATED",
+                FileName = "test.pdf"
+            }
+        };
+
+        _documentServiceMock
+            .Setup(s => s.GetDocumentsByEngagementAsync(engagementId, "tenant-AUTHENTICATED"))
+            .ReturnsAsync(docs);
+
+        // Act
+        var result = await _controller.GetDocumentsByEngagement(engagementId, tenantId: null);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        _documentServiceMock.Verify(s => s.GetDocumentsByEngagementAsync(engagementId, "tenant-AUTHENTICATED"), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetDocumentById_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+
+        // Act
+        var result = await _controller.GetDocumentById(engagementId, documentId, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _documentServiceMock.Verify(s => s.GetDocumentByIdAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DownloadDocument_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+
+        // Act
+        var result = await _controller.DownloadDocument(engagementId, documentId, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result);
+        _documentServiceMock.Verify(s => s.GetDocumentByIdAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UploadDocument_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var uploadDto = new DocumentUploadDto
+        {
+            File = CreateDummyFormFile(),
+            Type = "Identity",
+            UploaderId = "user-1"
+        };
+
+        // Act
+        var result = await _controller.UploadDocument(engagementId, uploadDto, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _documentServiceMock.Verify(s => s.UploadDocumentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<DocumentUploadDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task VerifyDocument_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange: Authenticated staff belonging to tenant-AUTHENTICATED
+        SetUserRole("Staff", "staff-alice", "tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var requestDto = new VerifyDocumentRequestDto();
+
+        // Act
+        var result = await _controller.VerifyDocument(engagementId, documentId, requestDto, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _documentServiceMock.Verify(s => s.VerifyDocumentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<VerifyDocumentRequestDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RejectDocument_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        // Arrange: Authenticated staff belonging to tenant-AUTHENTICATED
+        SetUserRole("Staff", "staff-alice", "tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var requestDto = new RejectDocumentRequestDto { Reason = "Illegible scan" };
+
+        // Act
+        var result = await _controller.RejectDocument(engagementId, documentId, requestDto, tenantId: "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _documentServiceMock.Verify(s => s.RejectDocumentVerificationAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<RejectDocumentRequestDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetDocumentsByEngagement_WithFilterDto_PassesFilterToServiceAndReturns200Ok()
+    {
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-filter";
+        var filter = new DocumentFilterDto
+        {
+            Type = "Passport",
+            ComplianceStatus = "Compliant",
+            IncludeDeleted = true
+        };
+
+        var list = new List<DocumentResponseDto>
+        {
+            new() { DocumentId = Guid.NewGuid(), EngagementId = engagementId, TenantId = tenantId, Type = "Passport", ComplianceStatus = "Compliant" }
+        };
+
+        _documentServiceMock
+            .Setup(s => s.GetDocumentsByEngagementAsync(engagementId, tenantId, filter))
+            .ReturnsAsync(list);
+
+        var actionResult = await _controller.GetDocumentsByEngagement(engagementId, tenantId, filter);
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var returnedList = Assert.IsAssignableFrom<IEnumerable<DocumentResponseDto>>(okResult.Value);
+        Assert.Single(returnedList);
+        _documentServiceMock.Verify(s => s.GetDocumentsByEngagementAsync(engagementId, tenantId, filter), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetDocumentById_SoftDeletedDocument_WithoutIncludeDeleted_Returns404NotFound()
+    {
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        // Service returns null when includeDeleted is false for soft-deleted doc
+        _documentServiceMock
+            .Setup(s => s.GetDocumentByIdAsync(engagementId, documentId, tenantId))
+            .ReturnsAsync((DocumentResponseDto?)null);
+
+        var actionResult = await _controller.GetDocumentById(engagementId, documentId, tenantId, includeDeleted: false);
+
+        Assert.IsType<NotFoundObjectResult>(actionResult.Result);
+    }
+
+    [Fact]
+    public async Task GetDocumentById_SoftDeletedDocument_WithIncludeDeleted_Returns200Ok()
+    {
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var docDto = new DocumentResponseDto
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            FileName = "deleted.pdf",
+            IsDeleted = true,
+            DeletedAt = DateTime.UtcNow,
+            DeletedBy = "staff-admin"
+        };
+
+        _documentServiceMock
+            .Setup(s => s.GetDocumentByIdAsync(engagementId, documentId, tenantId, true))
+            .ReturnsAsync(docDto);
+
+        var actionResult = await _controller.GetDocumentById(engagementId, documentId, tenantId, includeDeleted: true);
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var resultDto = Assert.IsType<DocumentResponseDto>(okResult.Value);
+        Assert.True(resultDto.IsDeleted);
+        Assert.Equal(documentId, resultDto.DocumentId);
+    }
+
+    [Fact]
+    public async Task DownloadDocument_SoftDeleted_WithoutIncludeDeleted_Returns404NotFound()
+    {
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        _documentServiceMock
+            .Setup(s => s.GetDocumentByIdAsync(engagementId, documentId, tenantId))
+            .ReturnsAsync((DocumentResponseDto?)null);
+
+        var actionResult = await _controller.DownloadDocument(engagementId, documentId, tenantId, includeDeleted: false);
+
+        Assert.IsType<NotFoundObjectResult>(actionResult);
+    }
+
+    [Fact]
+    public async Task DownloadDocument_SoftDeleted_WithIncludeDeleted_ReturnsFileStreamResult()
+    {
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+        var storagePath = "uploads/tenant-1/deleted.pdf";
+
+        var docDto = new DocumentResponseDto
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            FileName = "original_deleted.pdf",
+            ContentType = "application/pdf",
+            StoragePath = storagePath,
+            IsDeleted = true
+        };
+
+        var fileBytes = Encoding.UTF8.GetBytes("%PDF-1.4 raw bytes");
+        var fileStream = new MemoryStream(fileBytes);
+
+        _documentServiceMock
+            .Setup(s => s.GetDocumentByIdAsync(engagementId, documentId, tenantId, true))
+            .ReturnsAsync(docDto);
+
+        _storageServiceMock
+            .Setup(s => s.GetFileAsync(storagePath))
+            .ReturnsAsync(fileStream);
+
+        var actionResult = await _controller.DownloadDocument(engagementId, documentId, tenantId, includeDeleted: true);
+
+        var fileResult = Assert.IsType<FileStreamResult>(actionResult);
+        Assert.Equal("application/pdf", fileResult.ContentType);
+        Assert.Equal("original_deleted.pdf", fileResult.FileDownloadName);
+    }
+
+    [Fact]
+    public async Task UpdateDocumentMetadata_AuthorizedStaff_Returns200OkWithUpdatedDto()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+        var dto = new UpdateDocumentMetadataDto { Type = "UpdatedType", IssueDate = DateTime.UtcNow };
+
+        var updatedDoc = new DocumentResponseDto
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "UpdatedType"
+        };
+
+        _documentServiceMock
+            .Setup(s => s.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto, "staff-1"))
+            .ReturnsAsync(updatedDoc);
+
+        var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, tenantId);
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var resultDto = Assert.IsType<DocumentResponseDto>(okResult.Value);
+        Assert.Equal("UpdatedType", resultDto.Type);
+    }
+
+    [Fact]
+    public async Task UpdateDocumentMetadata_NonStaffRole_Returns403Forbidden()
+    {
+        SetUserRole("Client", "client-user-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var dto = new UpdateDocumentMetadataDto { Type = "UpdatedType" };
+
+        var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, "tenant-1");
+
+        Assert.IsType<ForbidResult>(actionResult.Result);
+        _documentServiceMock.Verify(s => s.UpdateDocumentMetadataAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UpdateDocumentMetadataDto>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateDocumentMetadata_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var dto = new UpdateDocumentMetadataDto { Type = "UpdatedType" };
+
+        var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, "tenant-ATTACKER");
+
+        Assert.IsType<ForbidResult>(actionResult.Result);
+        _documentServiceMock.Verify(s => s.UpdateDocumentMetadataAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UpdateDocumentMetadataDto>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateDocumentMetadata_DocumentNotFound_Returns404NotFound()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+        var dto = new UpdateDocumentMetadataDto { Type = "UpdatedType" };
+
+        _documentServiceMock
+            .Setup(s => s.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto, "staff-1"))
+            .ReturnsAsync((DocumentResponseDto?)null);
+
+        var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, tenantId);
+
+        Assert.IsType<NotFoundObjectResult>(actionResult.Result);
+    }
+
+    [Fact]
+    public async Task UpdateDocumentMetadata_SoftDeletedDoc_Returns400BadRequest()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+        var dto = new UpdateDocumentMetadataDto { Type = "UpdatedType" };
+
+        _documentServiceMock
+            .Setup(s => s.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto, "staff-1"))
+            .ThrowsAsync(new InvalidOperationException($"Cannot update metadata for soft-deleted document '{documentId}'."));
+
+        var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, tenantId);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
+        Assert.NotNull(badRequest.Value);
+    }
+
+    [Fact]
+    public async Task SoftDeleteDocument_AuthorizedStaff_Returns200OkWithSoftDeletedDto()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var deletedDto = new DocumentResponseDto
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            IsDeleted = true,
+            DeletedAt = DateTime.UtcNow,
+            DeletedBy = "staff-1"
+        };
+
+        _documentServiceMock
+            .Setup(s => s.SoftDeleteDocumentAsync(engagementId, documentId, tenantId, "staff-1"))
+            .ReturnsAsync(deletedDto);
+
+        var actionResult = await _controller.SoftDeleteDocument(engagementId, documentId, tenantId);
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var resultDto = Assert.IsType<DocumentResponseDto>(okResult.Value);
+        Assert.True(resultDto.IsDeleted);
+        Assert.Equal("staff-1", resultDto.DeletedBy);
+    }
+
+    [Fact]
+    public async Task SoftDeleteDocument_NonStaffRole_Returns403Forbidden()
+    {
+        SetUserRole("Client", "client-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+
+        var actionResult = await _controller.SoftDeleteDocument(engagementId, documentId, "tenant-1");
+
+        Assert.IsType<ForbidResult>(actionResult.Result);
+        _documentServiceMock.Verify(s => s.SoftDeleteDocumentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SoftDeleteDocument_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+
+        var actionResult = await _controller.SoftDeleteDocument(engagementId, documentId, "tenant-ATTACKER");
+
+        Assert.IsType<ForbidResult>(actionResult.Result);
+        _documentServiceMock.Verify(s => s.SoftDeleteDocumentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SoftDeleteDocument_AlreadyDeletedDoc_Returns400BadRequest()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        _documentServiceMock
+            .Setup(s => s.SoftDeleteDocumentAsync(engagementId, documentId, tenantId, "staff-1"))
+            .ThrowsAsync(new InvalidOperationException($"Document '{documentId}' is already deleted."));
+
+        var actionResult = await _controller.SoftDeleteDocument(engagementId, documentId, tenantId);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
+        Assert.NotNull(badRequest.Value);
+    }
+
+    [Fact]
+    public async Task SoftDeleteDocument_DocumentNotFound_Returns404NotFound()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        _documentServiceMock
+            .Setup(s => s.SoftDeleteDocumentAsync(engagementId, documentId, tenantId, "staff-1"))
+            .ReturnsAsync((DocumentResponseDto?)null);
+
+        var actionResult = await _controller.SoftDeleteDocument(engagementId, documentId, tenantId);
+
+        Assert.IsType<NotFoundObjectResult>(actionResult.Result);
+    }
 }
+

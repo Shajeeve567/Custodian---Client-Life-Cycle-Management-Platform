@@ -98,7 +98,7 @@ export interface UpdateEngagementStageRequest {
     stage: EngagementStage;
 }
 
-export type ActionType = 'KycDocument' | 'SignAgreement' | 'CustomTask';
+export type ActionType = 'KycDocument' | 'SignAgreement' | 'CustomTask' | 'DocumentUpload';
 
 export interface ClientAction {
     actionId: string;
@@ -106,21 +106,113 @@ export interface ClientAction {
     tenantId: string;
     title: string;
     description: string;
-    type: ActionType;
-    assignedRole: UserRole;
+    type: ActionType | string;
+    status?: string;
+    stageNumber?: number;
+    deadlineUtc?: string | null;
+    assignedRole?: UserRole;
     isInternalOnly: boolean;
-    isCompleted: boolean;
+    isCompleted?: boolean;
     createdAt: string;
     completedAt?: string | null;
+    completedByActor?: string | null;
 }
 
 export interface CreateClientActionRequest {
     engagementId: string;
     title: string;
-    description: string;
-    type: ActionType;
-    assignedRole: UserRole;
-    isInternalOnly: boolean;
+    description?: string;
+    type: ActionType | string;
+    stageNumber?: number;
+    deadlineUtc?: string | null;
+    assignedRole?: UserRole;
+    isInternalOnly?: boolean;
+}
+
+export interface ClientSafeAction {
+    actionId: string;
+    title: string;
+    description?: string | null;
+    type: string;
+    status: string;
+    stageNumber: number;
+    deadlineUtc?: string | null;
+    isOverdue: boolean;
+    daysRemaining?: number | null;
+    rejectionReason?: string | null;
+    verificationStatus?: string | null;
+}
+
+export interface ClientPortalStage {
+    stageNumber: number;
+    name: string;
+    tagline: string;
+    status: 'Completed' | 'Current' | 'Upcoming' | string;
+}
+
+export interface ClientPortalDashboard {
+    engagementId: string;
+    status: EngagementStatus | string;
+    createdAt: string;
+    currentStageNumber: number;
+    currentStageName: string;
+    currentStageTagline: string;
+    conditionStatus: string;
+    conditionDescription: string;
+    progressPercentage: number;
+    completedTasksCount: number;
+    totalTasksCount: number;
+    primaryNextAction?: ClientSafeAction | null;
+    pendingActions: ClientSafeAction[];
+    stages: ClientPortalStage[];
+}
+
+export interface UploadActionEvidenceRequest {
+    uploaderActor: string;
+    documentId?: string;
+    complianceStatus?: string;
+    rejectionReason?: string;
+    verificationStatus?: string;
+    verificationReason?: string;
+    verifiedBy?: string;
+}
+
+export interface ReviewActionRequest {
+    status: 'Completed' | 'Rejected' | string;
+    reviewerActor: string;
+    reviewNote?: string;
+    verificationStatus?: string;
+    verificationReason?: string;
+}
+
+export interface ApplyActionVerificationRequest {
+    verificationStatus: 'Verified' | 'Rejected' | string;
+    verifiedBy: string;
+    verificationReason?: string;
+}
+
+export interface DocumentFilter {
+    type?: string;
+    complianceStatus?: string;
+    verificationStatus?: string;
+    uploaderId?: string;
+    includeDeleted?: boolean;
+}
+
+export interface VerifyDocumentRequest {
+    staffNotes?: string;
+    staffActor?: string;
+}
+
+export interface RejectDocumentRequest {
+    reason: string;
+    staffActor?: string;
+}
+
+export interface UpdateDocumentMetadataRequest {
+    type?: string;
+    issueDate?: string;
+    expiryDate?: string;
 }
 
 export interface AuditEvent {
@@ -141,8 +233,22 @@ export interface DocumentMetadata {
     tenantId: string;
     type: string;
     uploaderId: string;
-    issueDate: string;
-    expiryDate: string;
+    issueDate?: string;
+    expiryDate?: string;
+    fileName?: string;
+    contentType?: string;
+    fileSize?: number;
+    storagePath?: string;
     uploadedAt: string;
     filePath?: string;
+    complianceStatus?: string;
+    rejectionReason?: string;
+    validatedAt?: string;
+    verificationStatus?: string;
+    verifiedBy?: string | null;
+    verifiedAt?: string | null;
+    verificationReason?: string | null;
+    isDeleted?: boolean;
+    deletedAt?: string | null;
+    deletedBy?: string | null;
 }

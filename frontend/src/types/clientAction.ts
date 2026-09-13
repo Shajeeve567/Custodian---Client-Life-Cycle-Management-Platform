@@ -13,6 +13,10 @@ export interface ClientActionResponse {
   completedAt?: string;
   createdAt: string;
   sourceMetadata?: string;
+  verificationStatus?: string;
+  verificationReason?: string;
+  stageNumber?: number;
+  deadlineUtc?: string | null;
 }
 
 export interface CreateClientActionPayload {
