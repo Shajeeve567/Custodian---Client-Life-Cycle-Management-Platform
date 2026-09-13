@@ -578,4 +578,105 @@ public class ClientPortalServiceTests
             .FirstAsync(a => a.EngagementId == engagementId && a.StageNumber == 1);
         Assert.Equal(ClientActionStatus.Completed, stage1Action.Status);
     }
+
+    [Fact]
+    public async Task GetDashboard_WhenOnlyStage1ActionsExist_SeedsMissingStages2Through5()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+        var clientId = "client-alpha";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = clientId,
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
+        });
+
+        // Add ONLY Stage 1 action (completed)
+        db.ClientActions.Add(new ClientAction
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Existing Intake Form",
+            Status = ClientActionStatus.Completed,
+            StageNumber = 1,
+            IsInternalOnly = false,
+            AssignedToRole = "Client",
+            Source = "LifecycleDefault"
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientPortalService(db);
+
+        // Act
+        var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+
+        // Assert: Missing stages 2-5 should be automatically seeded!
+        Assert.NotNull(dashboard);
+        // Stage 1 was complete, so dashboard should now be at Stage 2 with seeded KYC task!
+        Assert.Equal(2, dashboard.CurrentStageNumber);
+        Assert.NotNull(dashboard.PrimaryNextAction);
+        Assert.Equal("Identity Verification (KYC Passport / ID)", dashboard.PrimaryNextAction.Title);
+
+        var allActions = await db.ClientActions
+            .Where(a => a.EngagementId == engagementId)
+            .ToListAsync();
+        Assert.True(allActions.Count > 1);
+        Assert.Contains(allActions, a => a.StageNumber == 2);
+        Assert.Contains(allActions, a => a.StageNumber == 3);
+        Assert.Contains(allActions, a => a.StageNumber == 4);
+        Assert.Contains(allActions, a => a.StageNumber == 5);
+    }
+
+    [Fact]
+    public async Task GetActiveDashboardForClientAsync_PrioritizesLatestDraftOverOldClosedEngagement()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var tenantId = "tenant-test";
+        var clientId = "client-alpha";
+
+        var oldClosedId = Guid.NewGuid();
+        var newDraftId = Guid.NewGuid();
+
+        db.Engagements.AddRange(
+            new Engagement
+            {
+                EngagementId = oldClosedId,
+                TenantId = tenantId,
+                ClientId = clientId,
+                StaffId = "staff-1",
+                Status = EngagementStatus.Closed,
+                Stage = EngagementStage.Closure,
+                CreatedAt = DateTime.UtcNow.AddDays(-10)
+            },
+            new Engagement
+            {
+                EngagementId = newDraftId,
+                TenantId = tenantId,
+                ClientId = clientId,
+                StaffId = "staff-1",
+                Status = EngagementStatus.Draft,
+                Stage = EngagementStage.DocumentCollection,
+                CreatedAt = DateTime.UtcNow
+            }
+        );
+        await db.SaveChangesAsync();
+
+        var service = new ClientPortalService(db);
+
+        // Act
+        var dashboard = await service.GetActiveDashboardForClientAsync(tenantId, clientId);
+
+        // Assert: Should resolve the active/draft engagement (Stage 2), not the old closed engagement!
+        Assert.NotNull(dashboard);
+        Assert.Equal(newDraftId, dashboard.EngagementId);
+        Assert.Equal(2, dashboard.CurrentStageNumber);
+    }
 }

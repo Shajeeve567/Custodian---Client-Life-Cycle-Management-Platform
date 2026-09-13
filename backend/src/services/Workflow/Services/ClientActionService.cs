@@ -100,6 +100,31 @@ public class ClientActionService : IClientActionService
         action.CompletedByActor = dto.CompletedByActor;
         action.CompletedAt = DateTime.UtcNow;
 
+        // Auto-advance engagement stage if all client-facing actions for this stage are now completed
+        var engagement = await _dbContext.Engagements
+            .FirstOrDefaultAsync(e => e.EngagementId == action.EngagementId && e.TenantId == tenantId);
+
+        if (engagement != null && engagement.Status != EngagementStatus.Closed && engagement.Status != EngagementStatus.Cancelled)
+        {
+            var currentStageNum = (int)engagement.Stage + 1;
+            if (action.StageNumber == currentStageNum)
+            {
+                // Check if any other non-internal actions for this stage remain incomplete
+                var hasIncompleteTasks = await _dbContext.ClientActions
+                    .AnyAsync(a => a.EngagementId == action.EngagementId &&
+                                   a.TenantId == tenantId &&
+                                   a.StageNumber == currentStageNum &&
+                                   a.ActionId != action.ActionId &&
+                                   !a.IsInternalOnly &&
+                                   a.Status != ClientActionStatus.Completed);
+
+                if (!hasIncompleteTasks && (int)engagement.Stage < 4)
+                {
+                    engagement.Stage = (EngagementStage)((int)engagement.Stage + 1);
+                }
+            }
+        }
+
         await _dbContext.SaveChangesAsync();
 
         return MapToResponseDto(action, isClientView: false);

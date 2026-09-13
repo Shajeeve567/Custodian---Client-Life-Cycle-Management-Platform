@@ -55,11 +55,12 @@ public class ClientPortalService : IClientPortalService
             return null;
         }
 
-        // Find the client's most recent active (or latest) engagement in this tenant
+        // Exclude cancelled engagements, prioritize non-closed (active/draft) over closed, then latest created
         var engagement = await _dbContext.Engagements
             .AsNoTracking()
             .Where(e => e.TenantId == tenantId && e.ClientId == clientId.Trim())
-            .OrderByDescending(e => e.Status == EngagementStatus.Started)
+            .Where(e => e.Status != EngagementStatus.Cancelled)
+            .OrderByDescending(e => e.Status != EngagementStatus.Closed)
             .ThenByDescending(e => e.CreatedAt)
             .FirstOrDefaultAsync();
 
@@ -78,11 +79,12 @@ public class ClientPortalService : IClientPortalService
             return null;
         }
 
-        // Fallback for staff preview: find latest active (or recent) engagement in the workspace
+        // Fallback for staff preview: find latest active (or recent) non-cancelled engagement in the workspace
         var engagement = await _dbContext.Engagements
             .AsNoTracking()
             .Where(e => e.TenantId == tenantId)
-            .OrderByDescending(e => e.Status == EngagementStatus.Started)
+            .Where(e => e.Status != EngagementStatus.Cancelled)
+            .OrderByDescending(e => e.Status != EngagementStatus.Closed)
             .ThenByDescending(e => e.CreatedAt)
             .FirstOrDefaultAsync();
 
@@ -109,6 +111,21 @@ public class ClientPortalService : IClientPortalService
             await _dbContext.ClientActions.AddRangeAsync(seeded);
             await _dbContext.SaveChangesAsync();
             allActions = seeded;
+        }
+        else if (allActions.Any(a => a.Source == "LifecycleDefault"))
+        {
+            var existingStageNumbers = allActions.Select(a => a.StageNumber).ToHashSet();
+            var missingDefaultActions = SeedDefaultLifecycleActions(engagement)
+                .Where(defaultAct => !existingStageNumbers.Contains(defaultAct.StageNumber))
+                .ToList();
+
+            if (missingDefaultActions.Count > 0)
+            {
+                await _dbContext.ClientActions.AddRangeAsync(missingDefaultActions);
+                await _dbContext.SaveChangesAsync();
+                allActions.AddRange(missingDefaultActions);
+                allActions = allActions.OrderBy(a => a.StageNumber).ThenBy(a => a.CreatedAt).ToList();
+            }
         }
 
         // Determine Current Onboarding Stage (1 to 5)

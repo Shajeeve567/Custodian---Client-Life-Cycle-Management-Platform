@@ -58,6 +58,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [isAdvancingStage, setIsAdvancingStage] = useState(false);
     const [stageAdvanceSuccess, setStageAdvanceSuccess] = useState<string | null>(null);
     const [stageAdvanceError, setStageAdvanceError] = useState<string | null>(null);
+    const [stageFilterMode, setStageFilterMode] = useState<'stage' | 'all'>('stage');
 
     // Stage Action Verification Modals State
     const [actionToVerify, setActionToVerify] = useState<{ action: ClientAction; doc?: DocumentMetadata } | null>(null);
@@ -102,8 +103,14 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             const engagements = await WorkflowApi.getEngagements(tenantId).catch(() => [] as Engagement[]);
             const foundEng = engagements.find((e) => e.engagementId === engagementId);
             if (foundEng) {
-                setEngagement(foundEng);
-                setSelectedStageKey((prev) => prev ?? foundEng.stage);
+                setEngagement((prevEng) => {
+                    if (prevEng && prevEng.stage !== foundEng.stage) {
+                        setSelectedStageKey(foundEng.stage);
+                    } else if (!prevEng) {
+                        setSelectedStageKey((prev) => prev ?? foundEng.stage);
+                    }
+                    return foundEng;
+                });
             }
 
             if (token) {
@@ -159,9 +166,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
         setCompletingActionId(actionId);
         try {
             await WorkflowApi.completeAction(actionId, tenantId, engagementId, userId || 'staff-lead');
-            setActions((prev) =>
-                prev.map((a) => (a.actionId === actionId ? { ...a, isCompleted: true, status: 'Completed' } : a))
-            );
+            await loadWorkspaceData();
         } catch (err) {
             console.warn('Fallback local action completion:', err);
             setActions((prev) =>
@@ -322,6 +327,14 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                 </button>
 
                 <div className="flex items-center gap-2.5">
+                    <button
+                        onClick={() => navigate(`/portal?engagementId=${engagementId}`)}
+                        className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-50 to-purple-50 hover:from-indigo-100 hover:to-purple-100 border border-indigo-200 text-xs font-semibold text-indigo-700 flex items-center gap-2 shadow-xs transition"
+                        title="Open Client Portal view for this engagement"
+                    >
+                        <ExternalLink className="w-4 h-4 text-indigo-600" />
+                        <span>Preview in Client Portal</span>
+                    </button>
                     <button
                         onClick={() => navigate('/documents')}
                         className="px-3.5 py-2 rounded-xl bg-white/80 backdrop-blur-xs border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 flex items-center gap-2 shadow-xs transition"
@@ -547,6 +560,74 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             </div>
                         )}
 
+                        {/* Upcoming Stage Activation Banner: When viewing the immediate next stage */}
+                        {!isViewingCurrentStage && selectedStageDef.order === currentStageOrder + 1 && !isTerminalStatus && (
+                            <div className="pt-4 border-t border-indigo-100 bg-indigo-50/60 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                                <div>
+                                    <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                                        <span>Next Upcoming Stage</span>
+                                        <span className="px-2 py-0.5 rounded bg-indigo-200/70 text-indigo-800 text-[10px] font-bold">Stage {selectedStageDef.order}</span>
+                                    </div>
+                                    <p className="text-[11px] text-indigo-700 mt-1">
+                                        Engagement is currently active at Stage {currentStageOrder}. Advance engagement to Stage {selectedStageDef.order} ({selectedStageDef.name}) to activate tasks on the Client Portal.
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleAdvanceStage}
+                                    disabled={isAdvancingStage}
+                                    className="px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-sm bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white shadow-indigo-500/25 disabled:opacity-60 disabled:cursor-not-allowed shrink-0"
+                                >
+                                    {isAdvancingStage ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            <span>Advancing...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <span>Advance to Stage {selectedStageDef.order} Now</span>
+                                            <ChevronRight className="w-4 h-4" />
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Completed Past Stage Notice */}
+                        {!isViewingCurrentStage && selectedStageDef.order < currentStageOrder && (
+                            <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                                <span className="flex items-center gap-1.5 text-emerald-700 font-semibold">
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                    Stage {selectedStageDef.order} is completed.
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedStageKey(engagement?.stage ?? null)}
+                                    className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1"
+                                >
+                                    <span>Jump to Active Stage {currentStageOrder}</span>
+                                    <ArrowRight className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Future Stage Sequential Notice */}
+                        {!isViewingCurrentStage && selectedStageDef.order > currentStageOrder + 1 && (
+                            <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                                <span className="text-slate-500">
+                                    Stages must proceed sequentially. Complete Stage {currentStageOrder} before unlocking Stage {selectedStageDef.order}.
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedStageKey(engagement?.stage ?? null)}
+                                    className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1"
+                                >
+                                    <span>Back to Stage {currentStageOrder}</span>
+                                    <ArrowRight className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                        )}
+
                         {isViewingCurrentStage && isTerminalStatus && (
                             <div className="pt-4 border-t border-slate-100 text-xs text-slate-500">
                                 Engagement status is <span className="font-semibold">{engagement?.status}</span> — stage can no longer advance.
@@ -574,30 +655,97 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                 {/* Right: Stage Actions & Vaults (4 Cols) */}
                 <div className="lg:col-span-4 space-y-4">
                     {/* Action Queue */}
-                    <div className="bg-white/90 backdrop-blur-md p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-3">
-                        <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                                <Activity className="w-4 h-4 text-indigo-600" />
-                                Stage Action Queue
-                            </h3>
-                            <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">
-                                {actions.length} Tasks
-                            </span>
-                        </div>
+                    {(() => {
+                        const currentStageActions = actions.filter((a) => (a.stageNumber || 1) === currentStageOrder);
+                        const hasCurrentStageActions = currentStageActions.length > 0;
+                        const allCurrentStageActionsCompleted = hasCurrentStageActions && currentStageActions.every(
+                            (a) => a.isCompleted || a.status === 'Completed' || (a as any).verificationStatus === 'Verified'
+                        );
 
-                        {actions.length === 0 ? (
-                            <div className="p-4 rounded-xl bg-slate-50 text-center space-y-1">
-                                <CheckCircle2 className="w-6 h-6 text-emerald-600 mx-auto" />
-                                <div className="text-xs font-semibold text-slate-800">
-                                    All Stage Actions Up-To-Date
+                        const stageSelectedActions = actions.filter((a) => (a.stageNumber || 1) === selectedStageDef.order);
+                        const displayActions = stageFilterMode === 'stage' ? stageSelectedActions : actions;
+
+                        return (
+                            <div className="bg-white/90 backdrop-blur-md p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-3">
+                                {/* Stage Completion Callout Banner */}
+                                {allCurrentStageActionsCompleted && nextStage && !isTerminalStatus && (
+                                    <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 text-xs shadow-xs space-y-2">
+                                        <div className="flex items-center gap-2 font-bold text-emerald-900">
+                                            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                                            <span>All Stage {currentStageOrder} Tasks Completed!</span>
+                                        </div>
+                                        <p className="text-emerald-700 text-[11px] leading-relaxed">
+                                            All deliverables for Stage {currentStageOrder} ({ENGAGEMENT_STAGES[currentStageOrder - 1]?.name}) are complete. Advance to unlock Stage {getStageDefinition(nextStage).order}: {getStageDefinition(nextStage).name} for the client.
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={handleAdvanceStage}
+                                            disabled={isAdvancingStage}
+                                            className="w-full py-2 px-3 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition flex items-center justify-center gap-2 shadow-xs disabled:opacity-60"
+                                        >
+                                            {isAdvancingStage ? (
+                                                <>
+                                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                    <span>Advancing to Stage {getStageDefinition(nextStage).order}...</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <span>Advance to Stage {getStageDefinition(nextStage).order}: {getStageDefinition(nextStage).name}</span>
+                                                    <ChevronRight className="w-3.5 h-3.5" />
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
+                                )}
+
+                                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                                    <div className="flex items-center gap-1.5">
+                                        <Activity className="w-4 h-4 text-indigo-600" />
+                                        <h3 className="text-sm font-bold text-slate-900">Stage Action Queue</h3>
+                                    </div>
+                                    <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[11px]">
+                                        <button
+                                            type="button"
+                                            onClick={() => setStageFilterMode('stage')}
+                                            className={`px-2 py-0.5 rounded-md transition ${
+                                                stageFilterMode === 'stage'
+                                                    ? 'bg-white text-indigo-700 shadow-xs font-semibold'
+                                                    : 'text-slate-600 hover:text-slate-900'
+                                            }`}
+                                        >
+                                            Stage {selectedStageDef.order} ({stageSelectedActions.length})
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setStageFilterMode('all')}
+                                            className={`px-2 py-0.5 rounded-md transition ${
+                                                stageFilterMode === 'all'
+                                                    ? 'bg-white text-indigo-700 shadow-xs font-semibold'
+                                                    : 'text-slate-600 hover:text-slate-900'
+                                            }`}
+                                        >
+                                            All ({actions.length})
+                                        </button>
+                                    </div>
                                 </div>
-                                <p className="text-[11px] text-slate-500">
-                                    No pending gate stalls or unhandled client blockers.
-                                </p>
-                            </div>
-                        ) : (
-                            <div className="space-y-3">
-                                {actions.map((act) => {
+
+                                {displayActions.length === 0 ? (
+                                    <div className="p-4 rounded-xl bg-slate-50 text-center space-y-1">
+                                        <CheckCircle2 className="w-6 h-6 text-emerald-600 mx-auto" />
+                                        <div className="text-xs font-semibold text-slate-800">
+                                            {stageFilterMode === 'stage'
+                                                ? `No Tasks Configured for Stage ${selectedStageDef.order}`
+                                                : 'All Stage Actions Up-To-Date'}
+                                        </div>
+                                        <p className="text-[11px] text-slate-500">
+                                            {stageFilterMode === 'stage'
+                                                ? 'Switch to "All" or advance stage to view pipeline actions.'
+                                                : 'No pending gate stalls or unhandled client blockers.'}
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {displayActions.map((act) => {
                                     const linkedDoc = findLinkedDoc(act);
                                     const isActionVerified = (act as any).verificationStatus === 'Verified' || linkedDoc?.verificationStatus?.toUpperCase() === 'VERIFIED';
                                     const isActionRejected = (act as any).verificationStatus === 'Rejected' || linkedDoc?.verificationStatus?.toUpperCase() === 'REJECTED';
@@ -759,7 +907,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                             ) : null}
 
                                             {/* General Task: Mark Complete button */}
-                                            {!act.isCompleted && !linkedDoc && (
+                                            {!act.isCompleted && act.status !== 'Completed' && !linkedDoc && (
                                                 <button
                                                     onClick={() => handleCompleteAction(act.actionId)}
                                                     disabled={completingActionId === act.actionId}
@@ -781,6 +929,8 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             </div>
                         )}
                     </div>
+                );
+            })()}
 
                     {/* Integrated Artifact Launchers */}
                     <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
