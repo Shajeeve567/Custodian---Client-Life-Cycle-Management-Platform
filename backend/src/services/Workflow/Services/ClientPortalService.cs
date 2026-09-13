@@ -107,15 +107,15 @@ public class ClientPortalService : IClientPortalService
 
         if (allActions.Count == 0)
         {
-            var seeded = SeedDefaultLifecycleActions(engagement);
+            var seeded = ClientActionService.GenerateDefaultLifecycleActions(engagement.EngagementId, engagement.TenantId);
             await _dbContext.ClientActions.AddRangeAsync(seeded);
             await _dbContext.SaveChangesAsync();
             allActions = seeded;
         }
-        else if (allActions.Any(a => a.Source == "LifecycleDefault"))
+        else if (allActions.Any(a => a.Source == "LifecycleDefault") || allActions.All(a => a.StageNumber == 1))
         {
             var existingStageNumbers = allActions.Select(a => a.StageNumber).ToHashSet();
-            var missingDefaultActions = SeedDefaultLifecycleActions(engagement)
+            var missingDefaultActions = ClientActionService.GenerateDefaultLifecycleActions(engagement.EngagementId, engagement.TenantId)
                 .Where(defaultAct => !existingStageNumbers.Contains(defaultAct.StageNumber))
                 .ToList();
 
@@ -259,111 +259,7 @@ public class ClientPortalService : IClientPortalService
 
     private static List<ClientAction> SeedDefaultLifecycleActions(Engagement engagement)
     {
-        var now = DateTime.UtcNow;
-        return new List<ClientAction>
-        {
-            // Stage 1: Onboarding
-            new ClientAction
-            {
-                ActionId = Guid.NewGuid(),
-                EngagementId = engagement.EngagementId,
-                TenantId = engagement.TenantId,
-                Title = "Client Intake & Kickoff Assessment",
-                Description = "Review engagement terms, confirm primary point of contact, and outline project objectives.",
-                Type = "CustomTask",
-                Status = ClientActionStatus.Pending,
-                StageNumber = 1,
-                DeadlineUtc = now.AddDays(3),
-                Source = "LifecycleDefault",
-                IsInternalOnly = false,
-                AssignedToRole = "Client",
-                CreatedAt = now
-            },
-            // Stage 2: Document Collection
-            new ClientAction
-            {
-                ActionId = Guid.NewGuid(),
-                EngagementId = engagement.EngagementId,
-                TenantId = engagement.TenantId,
-                Title = "Identity Verification (KYC Passport / ID)",
-                Description = "Upload certified government-issued photo ID or international passport for compliance verification.",
-                Type = "KycDocument",
-                Status = ClientActionStatus.Pending,
-                StageNumber = 2,
-                DeadlineUtc = now.AddDays(7),
-                Source = "LifecycleDefault",
-                IsInternalOnly = false,
-                AssignedToRole = "Client",
-                CreatedAt = now.AddSeconds(1)
-            },
-            new ClientAction
-            {
-                ActionId = Guid.NewGuid(),
-                EngagementId = engagement.EngagementId,
-                TenantId = engagement.TenantId,
-                Title = "Signed Master Services Agreement",
-                Description = "Upload signed onboarding contract and service agreements for custodian legal records.",
-                Type = "SignAgreement",
-                Status = ClientActionStatus.Pending,
-                StageNumber = 2,
-                DeadlineUtc = now.AddDays(14),
-                Source = "LifecycleDefault",
-                IsInternalOnly = false,
-                AssignedToRole = "Client",
-                CreatedAt = now.AddSeconds(2)
-            },
-            // Stage 3: Verification
-            new ClientAction
-            {
-                ActionId = Guid.NewGuid(),
-                EngagementId = engagement.EngagementId,
-                TenantId = engagement.TenantId,
-                Title = "Compliance Review & Verification Evaluation",
-                Description = "Custodian compliance team evaluates submitted KYC documentation and legal agreements.",
-                Type = "CustomTask",
-                Status = ClientActionStatus.Pending,
-                StageNumber = 3,
-                DeadlineUtc = now.AddDays(21),
-                Source = "LifecycleDefault",
-                IsInternalOnly = false,
-                AssignedToRole = "Staff",
-                CreatedAt = now.AddSeconds(3)
-            },
-            // Stage 4: Execution
-            new ClientAction
-            {
-                ActionId = Guid.NewGuid(),
-                EngagementId = engagement.EngagementId,
-                TenantId = engagement.TenantId,
-                Title = "Service Delivery Milestone Sign-off",
-                Description = "Confirm completion of primary engagement deliverables and operational milestone acceptance.",
-                Type = "CustomTask",
-                Status = ClientActionStatus.Pending,
-                StageNumber = 4,
-                DeadlineUtc = now.AddDays(30),
-                Source = "LifecycleDefault",
-                IsInternalOnly = false,
-                AssignedToRole = "Client",
-                CreatedAt = now.AddSeconds(4)
-            },
-            // Stage 5: Closure
-            new ClientAction
-            {
-                ActionId = Guid.NewGuid(),
-                EngagementId = engagement.EngagementId,
-                TenantId = engagement.TenantId,
-                Title = "Final Handoff & Ledger Seal",
-                Description = "Receive audited compliance report, engagement deliverables receipt, and finalize lifecycle records.",
-                Type = "CustomTask",
-                Status = ClientActionStatus.Pending,
-                StageNumber = 5,
-                DeadlineUtc = now.AddDays(35),
-                Source = "LifecycleDefault",
-                IsInternalOnly = false,
-                AssignedToRole = "Client",
-                CreatedAt = now.AddSeconds(5)
-            }
-        };
+        return ClientActionService.GenerateDefaultLifecycleActions(engagement.EngagementId, engagement.TenantId);
     }
 
     private static (ClientAction? Primary, List<ClientAction> Others) SelectStageBasedActions(
@@ -391,18 +287,26 @@ public class ClientPortalService : IClientPortalService
         }
         else
         {
-            // 2. Look in subsequent stages if current stage has no pending actions
-            var nextStagesPending = clientPending
-                .Where(a => a.StageNumber > currentStageNumber)
-                .OrderBy(a => a.StageNumber)
-                .ThenBy(a => a.DeadlineUtc.HasValue ? 0 : 1)
-                .ThenBy(a => a.DeadlineUtc)
-                .ThenBy(a => a.CreatedAt)
-                .ToList();
+            // If current stage has actions waiting for review, client cannot skip to future stages
+            var hasUnderReviewInCurrentStage = clientActions.Any(a =>
+                a.StageNumber == currentStageNumber &&
+                a.Status == ClientActionStatus.Uploaded);
 
-            if (nextStagesPending.Count > 0)
+            if (!hasUnderReviewInCurrentStage)
             {
-                primary = nextStagesPending[0];
+                // 2. Look in subsequent stages if current stage has no pending or under-review actions
+                var nextStagesPending = clientPending
+                    .Where(a => a.StageNumber > currentStageNumber)
+                    .OrderBy(a => a.StageNumber)
+                    .ThenBy(a => a.DeadlineUtc.HasValue ? 0 : 1)
+                    .ThenBy(a => a.DeadlineUtc)
+                    .ThenBy(a => a.CreatedAt)
+                    .ToList();
+
+                if (nextStagesPending.Count > 0)
+                {
+                    primary = nextStagesPending[0];
+                }
             }
         }
 
