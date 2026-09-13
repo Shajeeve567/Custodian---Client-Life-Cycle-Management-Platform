@@ -475,4 +475,107 @@ public class ClientPortalServiceTests
         Assert.Equal(staffReason, dashboard.PrimaryNextAction.RejectionReason);
         Assert.Equal(DocumentVerificationStatus.Rejected, dashboard.PrimaryNextAction.VerificationStatus);
     }
+
+    [Fact]
+    public async Task GetDashboard_WhenNoActionsExist_AutoSeedsLifecycleDefaultActions()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+        var clientId = "client-alpha";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = clientId,
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientPortalService(db);
+
+        // Act
+        var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+
+        // Assert
+        Assert.NotNull(dashboard);
+        Assert.Equal(1, dashboard.CurrentStageNumber);
+        Assert.NotNull(dashboard.PrimaryNextAction);
+        Assert.Equal("Client Intake & Kickoff Assessment", dashboard.PrimaryNextAction.Title);
+
+        // Verify actions were persisted to database
+        var persistedActions = await db.ClientActions
+            .Where(a => a.EngagementId == engagementId)
+            .ToListAsync();
+        Assert.NotEmpty(persistedActions);
+        Assert.Contains(persistedActions, a => a.StageNumber == 2 && a.Title.Contains("Identity Verification"));
+    }
+
+    [Fact]
+    public async Task GetDashboard_WhenStaffAdvancesEngagementStage_SynchronizesCurrentStageAndPrimaryAction()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+        var clientId = "client-alpha";
+
+        // Staff moves engagement to Stage 2 (DocumentCollection)
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = clientId,
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.DocumentCollection
+        });
+
+        // Stage 1 task is still in Pending
+        db.ClientActions.AddRange(
+            new ClientAction
+            {
+                EngagementId = engagementId,
+                TenantId = tenantId,
+                Title = "Old Stage 1 Intake",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 1,
+                IsInternalOnly = false,
+                AssignedToRole = "Client"
+            },
+            new ClientAction
+            {
+                EngagementId = engagementId,
+                TenantId = tenantId,
+                Title = "Upload Identity Proof",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 2,
+                IsInternalOnly = false,
+                AssignedToRole = "Client",
+                DeadlineUtc = DateTime.UtcNow.AddDays(5)
+            }
+        );
+        await db.SaveChangesAsync();
+
+        var service = new ClientPortalService(db);
+
+        // Act
+        var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+
+        // Assert
+        Assert.NotNull(dashboard);
+        Assert.Equal(2, dashboard.CurrentStageNumber);
+        Assert.NotNull(dashboard.PrimaryNextAction);
+        Assert.Equal("Upload Identity Proof", dashboard.PrimaryNextAction.Title);
+        Assert.Equal(2, dashboard.PrimaryNextAction.StageNumber);
+
+        // Previous stage pending action should be marked Completed since staff advanced stage
+        var stage1Action = await db.ClientActions
+            .FirstAsync(a => a.EngagementId == engagementId && a.StageNumber == 1);
+        Assert.Equal(ClientActionStatus.Completed, stage1Action.Status);
+    }
 }

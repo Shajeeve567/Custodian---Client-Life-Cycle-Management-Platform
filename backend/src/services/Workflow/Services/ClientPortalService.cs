@@ -98,11 +98,37 @@ public class ClientPortalService : IClientPortalService
     private async Task<ClientPortalDashboardDto> BuildDashboardDtoAsync(Engagement engagement)
     {
         var allActions = await _dbContext.ClientActions
-            .AsNoTracking()
             .Where(a => a.EngagementId == engagement.EngagementId && a.TenantId == engagement.TenantId)
             .OrderBy(a => a.StageNumber)
             .ThenBy(a => a.CreatedAt)
             .ToListAsync();
+
+        if (allActions.Count == 0)
+        {
+            var seeded = SeedDefaultLifecycleActions(engagement);
+            await _dbContext.ClientActions.AddRangeAsync(seeded);
+            await _dbContext.SaveChangesAsync();
+            allActions = seeded;
+        }
+
+        // Determine Current Onboarding Stage (1 to 5)
+        var currentStageNumber = DetermineCurrentStage(engagement, allActions);
+
+        // If staff advanced past earlier stages, mark any earlier pending client actions as completed
+        var earlierPending = allActions
+            .Where(a => a.StageNumber < currentStageNumber && a.Status == ClientActionStatus.Pending)
+            .ToList();
+
+        if (earlierPending.Count > 0)
+        {
+            foreach (var act in earlierPending)
+            {
+                act.Status = ClientActionStatus.Completed;
+                act.CompletedByActor = "Staff";
+                act.CompletedAt = DateTime.UtcNow;
+            }
+            await _dbContext.SaveChangesAsync();
+        }
 
         // Client-facing actions: strictly exclude internal-only tasks
         var clientVisibleActions = allActions.Where(a => !a.IsInternalOnly).ToList();
@@ -125,23 +151,21 @@ public class ClientPortalService : IClientPortalService
             progressPercentage = 0;
         }
 
-        // 2. Determine Current Onboarding Stage (1 to 5)
-        var currentStageNumber = DetermineCurrentStage(engagement, clientVisibleActions);
         var currentStageDef = StageDefinitions.FirstOrDefault(s => s.StageNumber == currentStageNumber);
         var currentStageName = currentStageDef.Name ?? $"Stage {currentStageNumber}";
         var currentStageTagline = currentStageDef.Tagline ?? string.Empty;
 
-        // 3. Determine Primary Next Action based on Onboarding Stage
+        // 2. Determine Primary Next Action based on Onboarding Stage
         var (primaryAction, otherPendingActions) = SelectStageBasedActions(clientVisibleActions, currentStageNumber);
 
-        // 4. Determine Condition Status & Description
+        // 3. Determine Condition Status & Description
         var (conditionStatus, conditionDescription) = EvaluateConditionStatus(
             engagement,
             currentStageNumber,
             primaryAction,
             clientVisibleActions);
 
-        // 5. Build 5-stage stepper overview
+        // 4. Build 5-stage stepper overview
         var stages = StageDefinitions.Select(s =>
         {
             string status;
@@ -188,26 +212,141 @@ public class ClientPortalService : IClientPortalService
 
     private static int DetermineCurrentStage(Engagement engagement, List<ClientAction> actions)
     {
-        if (engagement.Status == EngagementStatus.Closed)
+        if (engagement.Status == EngagementStatus.Closed || engagement.Stage == EngagementStage.Closure)
         {
             return 5;
         }
 
-        // Find the earliest stage that has pending, uploaded, or rejected actions (not completed)
-        var earliestUnfinishedStage = actions
+        // Canonical persisted stage on the engagement model (0-indexed: Onboarding=0 -> Stage 1, DocumentCollection=1 -> Stage 2, etc.)
+        var canonicalStage = Math.Clamp((int)engagement.Stage + 1, 1, 5);
+
+        // Find the earliest stage that has unfinished actions (Pending, Uploaded, or Rejected)
+        var unfinishedStages = actions
             .Where(a => a.Status != ClientActionStatus.Completed)
             .Select(a => a.StageNumber)
-            .DefaultIfEmpty(0)
-            .Min();
+            .ToList();
 
-        if (earliestUnfinishedStage >= 1 && earliestUnfinishedStage <= 5)
+        if (unfinishedStages.Count > 0)
         {
-            return earliestUnfinishedStage;
+            var earliestUnfinishedStage = unfinishedStages.Min();
+            if (earliestUnfinishedStage >= 1 && earliestUnfinishedStage <= 5)
+            {
+                // If staff advanced engagement beyond earliest unfinished action, canonical stage takes precedence.
+                // If all earlier stage actions are completed and next stage has unfinished actions, advance to that stage.
+                return Math.Max(canonicalStage, earliestUnfinishedStage);
+            }
         }
 
-        // If all existing actions are completed, find highest completed stage and advance if < 5
-        var highestActionStage = actions.Select(a => a.StageNumber).DefaultIfEmpty(1).Max();
-        return Math.Clamp(highestActionStage, 1, 5);
+        return canonicalStage;
+    }
+
+    private static List<ClientAction> SeedDefaultLifecycleActions(Engagement engagement)
+    {
+        var now = DateTime.UtcNow;
+        return new List<ClientAction>
+        {
+            // Stage 1: Onboarding
+            new ClientAction
+            {
+                ActionId = Guid.NewGuid(),
+                EngagementId = engagement.EngagementId,
+                TenantId = engagement.TenantId,
+                Title = "Client Intake & Kickoff Assessment",
+                Description = "Review engagement terms, confirm primary point of contact, and outline project objectives.",
+                Type = "CustomTask",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 1,
+                DeadlineUtc = now.AddDays(3),
+                Source = "LifecycleDefault",
+                IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CreatedAt = now
+            },
+            // Stage 2: Document Collection
+            new ClientAction
+            {
+                ActionId = Guid.NewGuid(),
+                EngagementId = engagement.EngagementId,
+                TenantId = engagement.TenantId,
+                Title = "Identity Verification (KYC Passport / ID)",
+                Description = "Upload certified government-issued photo ID or international passport for compliance verification.",
+                Type = "KycDocument",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 2,
+                DeadlineUtc = now.AddDays(7),
+                Source = "LifecycleDefault",
+                IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CreatedAt = now.AddSeconds(1)
+            },
+            new ClientAction
+            {
+                ActionId = Guid.NewGuid(),
+                EngagementId = engagement.EngagementId,
+                TenantId = engagement.TenantId,
+                Title = "Signed Master Services Agreement",
+                Description = "Upload signed onboarding contract and service agreements for custodian legal records.",
+                Type = "SignAgreement",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 2,
+                DeadlineUtc = now.AddDays(14),
+                Source = "LifecycleDefault",
+                IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CreatedAt = now.AddSeconds(2)
+            },
+            // Stage 3: Verification
+            new ClientAction
+            {
+                ActionId = Guid.NewGuid(),
+                EngagementId = engagement.EngagementId,
+                TenantId = engagement.TenantId,
+                Title = "Compliance Review & Verification Evaluation",
+                Description = "Custodian compliance team evaluates submitted KYC documentation and legal agreements.",
+                Type = "CustomTask",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 3,
+                DeadlineUtc = now.AddDays(21),
+                Source = "LifecycleDefault",
+                IsInternalOnly = false,
+                AssignedToRole = "Staff",
+                CreatedAt = now.AddSeconds(3)
+            },
+            // Stage 4: Execution
+            new ClientAction
+            {
+                ActionId = Guid.NewGuid(),
+                EngagementId = engagement.EngagementId,
+                TenantId = engagement.TenantId,
+                Title = "Service Delivery Milestone Sign-off",
+                Description = "Confirm completion of primary engagement deliverables and operational milestone acceptance.",
+                Type = "CustomTask",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 4,
+                DeadlineUtc = now.AddDays(30),
+                Source = "LifecycleDefault",
+                IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CreatedAt = now.AddSeconds(4)
+            },
+            // Stage 5: Closure
+            new ClientAction
+            {
+                ActionId = Guid.NewGuid(),
+                EngagementId = engagement.EngagementId,
+                TenantId = engagement.TenantId,
+                Title = "Final Handoff & Ledger Seal",
+                Description = "Receive audited compliance report, engagement deliverables receipt, and finalize lifecycle records.",
+                Type = "CustomTask",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 5,
+                DeadlineUtc = now.AddDays(35),
+                Source = "LifecycleDefault",
+                IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CreatedAt = now.AddSeconds(5)
+            }
+        };
     }
 
     private static (ClientAction? Primary, List<ClientAction> Others) SelectStageBasedActions(
