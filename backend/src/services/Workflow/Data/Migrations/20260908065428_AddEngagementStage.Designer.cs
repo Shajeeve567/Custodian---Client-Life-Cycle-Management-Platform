@@ -4,6 +4,7 @@ using Custodian.Workflow.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Workflow.Data.Migrations
 {
     [DbContext(typeof(WorkflowDbContext))]
-    partial class WorkflowDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260908065428_AddEngagementStage")]
+    partial class AddEngagementStage
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -48,10 +51,6 @@ namespace Workflow.Data.Migrations
                         .HasColumnType("datetime(6)")
                         .HasColumnName("created_at");
 
-                    b.Property<DateTime?>("DeadlineUtc")
-                        .HasColumnType("datetime(6)")
-                        .HasColumnName("deadline_utc");
-
                     b.Property<string>("Description")
                         .HasColumnType("longtext")
                         .HasColumnName("description");
@@ -73,12 +72,6 @@ namespace Workflow.Data.Migrations
                     b.Property<string>("SourceMetadata")
                         .HasColumnType("longtext")
                         .HasColumnName("source_metadata");
-
-                    b.Property<int>("StageNumber")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int")
-                        .HasDefaultValue(1)
-                        .HasColumnName("stage_number");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -111,9 +104,6 @@ namespace Workflow.Data.Migrations
 
                     b.HasIndex("TenantId")
                         .HasDatabaseName("idx_action_tenant_id");
-
-                    b.HasIndex("EngagementId", "StageNumber")
-                        .HasDatabaseName("idx_action_engagement_stage");
 
                     b.HasIndex("TenantId", "EngagementId")
                         .HasDatabaseName("idx_action_tenant_engagement");

@@ -41,6 +41,9 @@ public class AuditPublisher : IAuditPublisher
                 _logger.LogWarning("Failed to publish audit event '{Type}' for engagement '{EngagementId}'. Status code: {StatusCode}",
                     type, engagementId, response.StatusCode);
             }
+            _logger.LogInformation(
+                "Published '{Type}' event for engagement '{EngagementId}' using HTTP transport",
+                type, engagementId);
         }
         catch (Exception ex)
         {
@@ -59,6 +62,7 @@ public class AuditPublisher : IAuditPublisher
             new
             {
                 status = engagement.Status.ToString(),
+                stage = engagement.Stage.ToString(),
                 clientId = engagement.ClientId,
                 staffId = engagement.StaffId,
                 createdAt = engagement.CreatedAt

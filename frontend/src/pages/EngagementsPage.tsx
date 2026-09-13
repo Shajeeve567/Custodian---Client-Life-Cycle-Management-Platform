@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { IdentityApi, WorkflowApi, ApiError } from '../services/api';
 import { Engagement, ClientProfile, UserAccountResponse } from '../types';
+import { getStageDefinition } from '../constants/engagementStages';
 import { DashboardLayout } from '../components/DashboardLayout';
 import { TeamManagementModal } from '../components/TeamManagementModal';
 import { EngagementInspectionModal } from '../components/EngagementInspectionModal';
@@ -36,7 +37,9 @@ interface DisplayWorkspaceItem {
     nextAction: string;
     custodians: string;
     slaScore: string;
-    phase: string;
+    stageOrder: number;
+    stageName: string;
+    stageProgressPercentage: number;
     createdAt: string;
     rawEngagement: Engagement;
 }
@@ -194,6 +197,7 @@ export const EngagementsPage: React.FC = () => {
 
         const staffHandler = teamMembers.find((m) => m.id === eng.staffId);
         const custodianLabel = staffHandler?.email ? staffHandler.email.split('@')[0] : (eng.staffId ? `${eng.staffId.slice(0, 10)}...` : 'Unassigned');
+        const stageDef = getStageDefinition(eng.stage);
 
         return {
             id: eng.engagementId,
@@ -202,10 +206,12 @@ export const EngagementsPage: React.FC = () => {
             title: 'Client Onboarding & Compliance Architecture',
             initials,
             status: eng.status,
-            nextAction: eng.status === 'Closed' ? 'COMPLETED' : 'NEXT: INTAKE CHECKLIST',
+            nextAction: eng.status === 'Closed' ? 'COMPLETED' : `STAGE: ${stageDef.name.toUpperCase()}`,
             custodians: custodianLabel,
             slaScore: '98.5%',
-            phase: eng.status === 'Closed' ? 'Stage 5 Closure' : 'Stage 1 Onboarding',
+            stageOrder: stageDef.order,
+            stageName: stageDef.name,
+            stageProgressPercentage: eng.stageProgressPercentage,
             createdAt: new Date(eng.createdAt).toLocaleDateString(),
             rawEngagement: eng
         };
@@ -415,17 +421,18 @@ export const EngagementsPage: React.FC = () => {
                                 {/* Card Body: Stage Progress */}
                                 <div className="space-y-2.5 p-3 rounded-xl bg-slate-50/80 border border-slate-100">
                                     <div className="flex items-center justify-between text-xs">
-                                        <span className="font-semibold text-slate-600">Onboarding Stage</span>
-                                        <span className="font-bold text-indigo-600">Stage 1 of 5</span>
+                                        <span className="font-semibold text-slate-600">{ws.stageName}</span>
+                                        <span className="font-bold text-indigo-600">Stage {ws.stageOrder} of 5</span>
                                     </div>
 
-                                    {/* 5-segment mini progress bar */}
+                                    {/* 5-segment mini progress bar, filled up to the engagement's real current stage */}
                                     <div className="grid grid-cols-5 gap-1">
-                                        <div className="h-1.5 rounded-full bg-indigo-600" />
-                                        <div className="h-1.5 rounded-full bg-slate-200" />
-                                        <div className="h-1.5 rounded-full bg-slate-200" />
-                                        <div className="h-1.5 rounded-full bg-slate-200" />
-                                        <div className="h-1.5 rounded-full bg-slate-200" />
+                                        {[1, 2, 3, 4, 5].map((segment) => (
+                                            <div
+                                                key={segment}
+                                                className={`h-1.5 rounded-full ${segment <= ws.stageOrder ? 'bg-indigo-600' : 'bg-slate-200'}`}
+                                            />
+                                        ))}
                                     </div>
 
                                     <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
@@ -470,6 +477,10 @@ export const EngagementsPage: React.FC = () => {
                 onProceedToWorkspace={(engId) => {
                     setInspectedEngagement(null);
                     navigate(`/workspace/${engId}`);
+                }}
+                onDeleted={() => {
+                    setInspectedEngagement(null);
+                    loadAllData();
                 }}
             />
 

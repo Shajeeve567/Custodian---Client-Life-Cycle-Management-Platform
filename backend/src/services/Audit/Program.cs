@@ -2,6 +2,7 @@ using Custodian.Audit.Data;
 using Custodian.Audit.Repositories;
 using Custodian.Audit.Services;
 using Custodian.Shared.Auth;
+using Custodian.Audit.Services.Kafka;
 using Custodian.Shared.Http;
 using Custodian.Shared.Tenancy;
 using Microsoft.EntityFrameworkCore;
@@ -38,6 +39,10 @@ builder.Services.AddDbContext<AuditDbContext>(options =>
 // Register Application Services & Repositories
 builder.Services.AddScoped<IAuditEventRepository, AuditEventRepository>();
 builder.Services.AddScoped<IAuditEventService, AuditEventService>();
+
+// Configure Kafka Background Consumer (mirrors Identity's registration pattern)
+builder.Services.Configure<KafkaOptions>(builder.Configuration.GetSection(KafkaOptions.SectionName));
+builder.Services.AddHostedService<KafkaAuditEventConsumer>();
 
 var app = builder.Build();
 
