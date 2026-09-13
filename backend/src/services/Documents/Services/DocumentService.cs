@@ -375,6 +375,43 @@ public class DocumentService : IDocumentService
         return MapToResponseDto(document);
     }
 
+    public async Task<DocumentResponseDto?> SoftDeleteDocumentAsync(
+        Guid engagementId,
+        Guid documentId,
+        string tenantId,
+        string? staffActor)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return null;
+        }
+
+        var document = await _dbContext.Documents
+            .FirstOrDefaultAsync(d => d.DocumentId == documentId && d.EngagementId == engagementId && d.TenantId == tenantId);
+
+        if (document == null)
+        {
+            return null;
+        }
+
+        if (document.IsDeleted)
+        {
+            throw new InvalidOperationException($"Document '{documentId}' is already deleted.");
+        }
+
+        document.IsDeleted = true;
+        document.DeletedAt = DateTime.UtcNow;
+        document.DeletedBy = !string.IsNullOrWhiteSpace(staffActor) ? staffActor.Trim() : "StaffUser";
+
+        // AC: Soft delete retains history/file per MVP.
+        // Storage file is explicitly NOT deleted to preserve evidentiary history.
+        // DbContext document entity is explicitly NOT removed.
+
+        await _dbContext.SaveChangesAsync();
+
+        return MapToResponseDto(document);
+    }
+
     private static DocumentResponseDto MapToResponseDto(DocumentMetadata entity)
 
     {

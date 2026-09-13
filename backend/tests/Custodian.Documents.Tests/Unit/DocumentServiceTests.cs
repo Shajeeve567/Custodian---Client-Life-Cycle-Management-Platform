@@ -1222,6 +1222,114 @@ public class DocumentServiceTests
         await Assert.ThrowsAsync<ArgumentException>(() =>
             service.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, updateDto));
     }
+
+    [Fact]
+    public async Task SoftDeleteDocumentAsync_ValidDocument_SetsIsDeletedAndTimestamps_PreservesFileAndHistory()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-softdelete";
+        var storagePath = "uploads/tenant-softdelete/doc.pdf";
+
+        var doc = new DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Passport",
+            FileName = "passport.pdf",
+            ContentType = "application/pdf",
+            FileSize = 1024,
+            StoragePath = storagePath,
+            ComplianceStatus = ComplianceStatus.Compliant,
+            VerificationStatus = DocumentVerificationStatus.Verified,
+            VerifiedBy = "staff-alice",
+            VerifiedAt = DateTime.UtcNow.AddHours(-1),
+            VerificationReason = "Verified legible",
+            IsDeleted = false
+        };
+
+        dbContext.Documents.Add(doc);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        var result = await service.SoftDeleteDocumentAsync(engagementId, documentId, tenantId, "staff-bob");
+
+        Assert.NotNull(result);
+        Assert.True(result.IsDeleted);
+        Assert.NotNull(result.DeletedAt);
+        Assert.Equal("staff-bob", result.DeletedBy);
+
+        // AC: Soft delete retains history/file per MVP
+        // 1. Verify file in storage is NEVER deleted
+        storageMock.Verify(s => s.DeleteFileAsync(It.IsAny<string>()), Times.Never);
+
+        // 2. Verify database record is NOT deleted
+        var persisted = await dbContext.Documents.FindAsync(documentId);
+        Assert.NotNull(persisted);
+        Assert.True(persisted.IsDeleted);
+        Assert.NotNull(persisted.DeletedAt);
+        Assert.Equal("staff-bob", persisted.DeletedBy);
+
+        // 3. Verify history and evidence metadata are fully retained
+        Assert.Equal("Passport", persisted.Type);
+        Assert.Equal("passport.pdf", persisted.FileName);
+        Assert.Equal(storagePath, persisted.StoragePath);
+        Assert.Equal(ComplianceStatus.Compliant, persisted.ComplianceStatus);
+        Assert.Equal(DocumentVerificationStatus.Verified, persisted.VerificationStatus);
+        Assert.Equal("staff-alice", persisted.VerifiedBy);
+        Assert.Equal("Verified legible", persisted.VerificationReason);
+    }
+
+    [Fact]
+    public async Task SoftDeleteDocumentAsync_AlreadyDeleted_ThrowsInvalidOperationException()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-softdelete";
+
+        var doc = new DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Identity",
+            IsDeleted = true,
+            DeletedAt = DateTime.UtcNow.AddMinutes(-5),
+            DeletedBy = "staff-initial"
+        };
+
+        dbContext.Documents.Add(doc);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.SoftDeleteDocumentAsync(engagementId, documentId, tenantId, "staff-second"));
+    }
+
+    [Fact]
+    public async Task SoftDeleteDocumentAsync_NonExistentDocument_ReturnsNull()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        var result = await service.SoftDeleteDocumentAsync(Guid.NewGuid(), Guid.NewGuid(), "tenant-1", "staff-user");
+
+        Assert.Null(result);
+    }
 }
 
 

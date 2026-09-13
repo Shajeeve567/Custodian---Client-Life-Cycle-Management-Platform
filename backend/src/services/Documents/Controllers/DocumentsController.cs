@@ -337,6 +337,53 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Staff soft-delete endpoint: Soft-deletes a document, retaining physical storage file and historical evidence.
+    /// Restricted to authorized staff (Owner, Staff).
+    /// </summary>
+    [HttpDelete("{documentId:guid}")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<DocumentResponseDto>> SoftDeleteDocument(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid documentId,
+        [FromQuery] string? tenantId = null)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        var staffActor = ResolveStaffActor();
+
+        try
+        {
+            var result = await _documentService.SoftDeleteDocumentAsync(engagementId, documentId, effectiveTenantId, staffActor);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Document '{documentId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Document soft-delete failed for document {DocumentId}", documentId);
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     private ActionResult? CheckStaffAuthorization()
     {
         // 1. If ClaimsPrincipal is authenticated, check role claims

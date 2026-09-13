@@ -737,5 +737,96 @@ public class DocumentsControllerTests
         var badRequest = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
         Assert.NotNull(badRequest.Value);
     }
+
+    [Fact]
+    public async Task SoftDeleteDocument_AuthorizedStaff_Returns200OkWithSoftDeletedDto()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var deletedDto = new DocumentResponseDto
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            IsDeleted = true,
+            DeletedAt = DateTime.UtcNow,
+            DeletedBy = "staff-1"
+        };
+
+        _documentServiceMock
+            .Setup(s => s.SoftDeleteDocumentAsync(engagementId, documentId, tenantId, "staff-1"))
+            .ReturnsAsync(deletedDto);
+
+        var actionResult = await _controller.SoftDeleteDocument(engagementId, documentId, tenantId);
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var resultDto = Assert.IsType<DocumentResponseDto>(okResult.Value);
+        Assert.True(resultDto.IsDeleted);
+        Assert.Equal("staff-1", resultDto.DeletedBy);
+    }
+
+    [Fact]
+    public async Task SoftDeleteDocument_NonStaffRole_Returns403Forbidden()
+    {
+        SetUserRole("Client", "client-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+
+        var actionResult = await _controller.SoftDeleteDocument(engagementId, documentId, "tenant-1");
+
+        Assert.IsType<ForbidResult>(actionResult.Result);
+        _documentServiceMock.Verify(s => s.SoftDeleteDocumentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SoftDeleteDocument_MismatchedTenantQuery_Returns403Forbidden()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-AUTHENTICATED");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+
+        var actionResult = await _controller.SoftDeleteDocument(engagementId, documentId, "tenant-ATTACKER");
+
+        Assert.IsType<ForbidResult>(actionResult.Result);
+        _documentServiceMock.Verify(s => s.SoftDeleteDocumentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SoftDeleteDocument_AlreadyDeletedDoc_Returns400BadRequest()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        _documentServiceMock
+            .Setup(s => s.SoftDeleteDocumentAsync(engagementId, documentId, tenantId, "staff-1"))
+            .ThrowsAsync(new InvalidOperationException($"Document '{documentId}' is already deleted."));
+
+        var actionResult = await _controller.SoftDeleteDocument(engagementId, documentId, tenantId);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
+        Assert.NotNull(badRequest.Value);
+    }
+
+    [Fact]
+    public async Task SoftDeleteDocument_DocumentNotFound_Returns404NotFound()
+    {
+        SetUserRole("Staff", "staff-1", "tenant-1");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        _documentServiceMock
+            .Setup(s => s.SoftDeleteDocumentAsync(engagementId, documentId, tenantId, "staff-1"))
+            .ReturnsAsync((DocumentResponseDto?)null);
+
+        var actionResult = await _controller.SoftDeleteDocument(engagementId, documentId, tenantId);
+
+        Assert.IsType<NotFoundObjectResult>(actionResult.Result);
+    }
 }
 
