@@ -75,7 +75,12 @@ if (app.Environment.IsDevelopment())
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetService<WorkflowDbContext>();
-    dbContext?.Database.EnsureCreated();
+    // Migrate (not EnsureCreated): applies any pending EF migration to an existing
+    // database, including creating it fresh if it doesn't exist yet. EnsureCreated
+    // only creates a brand-new database from the current model and silently does
+    // nothing to a database that already exists, so later migrations (e.g. adding
+    // the Stage column) would never actually reach it.
+    dbContext?.Database.Migrate();
 }
 
 app.UseCors();

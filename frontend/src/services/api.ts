@@ -1,6 +1,7 @@
 import {
     Engagement,
     EngagementStatus,
+    EngagementStage,
     CreateEngagementRequest,
     ClientAction,
     CreateClientActionRequest,
@@ -228,8 +229,19 @@ export const WorkflowApi = {
         });
     },
 
+    // 3. Advance Engagement Stage: PUT /api/Engagements/{id}/stage { tenantId, stage }
+    // Only sequential, forward-only transitions succeed server-side (CSTD-17 AC4) —
+    // a 400/409 ApiError here reflects a real backend validation rule, not a client bug.
+    async updateStage(engagementId: string, stage: EngagementStage, tenantId: string): Promise<Engagement> {
+        return request<Engagement>(`${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/stage`, {
+            method: 'PUT',
+            skipAuthHeader: true,
+            body: JSON.stringify({ tenantId, stage }),
+        });
+    },
+
     async deleteEngagement(engagementId: string, tenantId: string): Promise<void> {
-        return request<void>(`${API_BASE.WORKFLOW}/api/Engagements/${engagementId}`, {
+        return request<void>(`${API_BASE.WORKFLOW}/api/Engagements/${engagementId}?tenantId=${encodeURIComponent(tenantId)}`, {
             method: 'DELETE',
             skipAuthHeader: true,
         });
