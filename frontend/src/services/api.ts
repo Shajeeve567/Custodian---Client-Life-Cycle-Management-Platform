@@ -245,7 +245,7 @@ export const WorkflowApi = {
     async updateStage(engagementId: string, stage: EngagementStage, tenantId: string): Promise<Engagement> {
         return request<Engagement>(`${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/stage`, {
             method: 'PUT',
-            skipAuthHeader: true,
+            headers: { 'X-Tenant-ID': tenantId },
             body: JSON.stringify({ tenantId, stage }),
         });
     },
