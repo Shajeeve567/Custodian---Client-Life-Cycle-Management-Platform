@@ -2,6 +2,7 @@ using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Gates;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -14,11 +15,13 @@ public class EngagementsController : ControllerBase
 {
     private readonly IEngagementRepository _repository;
     private readonly IAuditPublisher _auditPublisher;
+    private readonly IGateEvaluator _gateEvaluator;
 
-    public EngagementsController(IEngagementRepository repository, IAuditPublisher auditPublisher)
+    public EngagementsController(IEngagementRepository repository, IAuditPublisher auditPublisher, IGateEvaluator gateEvaluator)
     {
         _repository = repository;
         _auditPublisher = auditPublisher;
+        _gateEvaluator = gateEvaluator;
     }
 
     [HttpPost]
@@ -198,6 +201,20 @@ public class EngagementsController : ControllerBase
             return BadRequest(new
             {
                 message = $"Invalid stage transition from '{engagement.Stage}' to '{newStage}'."
+            });
+        }
+
+        // Subtask CSTD-18: Gate Evaluation — mandatory gates (required documents, and in
+        // future Approval/Payment conditions) must be satisfied before the transition
+        // proceeds. Runs after the cheap in-memory checks above, since it may call out to
+        // the Documents service.
+        var gateResult = await _gateEvaluator.EvaluateAsync(engagement.EngagementId, effectiveTenantId, newStage);
+        if (!gateResult.IsSatisfied)
+        {
+            return BadRequest(new
+            {
+                message = gateResult.Reason,
+                requirements = gateResult.Requirements
             });
         }
 
