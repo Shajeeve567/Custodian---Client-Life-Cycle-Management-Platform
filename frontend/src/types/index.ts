@@ -71,12 +71,18 @@ export interface InviteUserRequest {
 
 export type EngagementStatus = 'Draft' | 'Started' | 'Closed' | 'Cancelled';
 
+// The 5 canonical engagement pipeline stages (CSTD-17). Must match the backend's
+// EngagementStage enum exactly (Workflow service, Models/EngagementStage.cs).
+export type EngagementStage = 'Onboarding' | 'DocumentCollection' | 'Verification' | 'Execution' | 'Closure';
+
 export interface Engagement {
     engagementId: string;
     tenantId: string;
     clientId: string;
     staffId: string;
     status: EngagementStatus;
+    stage: EngagementStage;
+    stageProgressPercentage: number;
     createdAt: string;
     closedAt?: string | null;
 }
@@ -85,6 +91,11 @@ export interface CreateEngagementRequest {
     tenantId: string;
     clientId: string;
     staffId: string;
+}
+
+export interface UpdateEngagementStageRequest {
+    tenantId: string;
+    stage: EngagementStage;
 }
 
 export type ActionType = 'KycDocument' | 'SignAgreement' | 'CustomTask';

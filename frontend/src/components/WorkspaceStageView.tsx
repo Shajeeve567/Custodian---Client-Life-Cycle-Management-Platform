@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { WorkflowApi, IdentityApi } from '../services/api';
-import { Engagement, ClientProfile, UserAccountResponse, ClientAction } from '../types';
+import { Engagement, ClientProfile, UserAccountResponse, ClientAction, EngagementStage } from '../types';
+import { ENGAGEMENT_STAGES, getStageDefinition, getStageIndex, getNextStage } from '../constants/engagementStages';
 import {
     ArrowLeft,
     CheckCircle2,
@@ -13,89 +14,15 @@ import {
     ExternalLink,
     Loader2,
     CheckCircle,
+    AlertTriangle,
     Layers,
-    Lock,
-    User,
-    Building2,
-    Calendar,
-    ArrowRight
+    Lock
 } from 'lucide-react';
 
 interface WorkspaceStageViewProps {
     engagementId: string;
     onBack?: () => void;
 }
-
-interface StageDefinition {
-    id: number;
-    name: string;
-    tagline: string;
-    description: string;
-    checklist: { id: string; label: string; defaultDone?: boolean }[];
-}
-
-const ONBOARDING_STAGES: StageDefinition[] = [
-    {
-        id: 1,
-        name: 'Intake & Onboarding',
-        tagline: 'Client baseline & kickoff criteria',
-        description: 'Establish initial client identity, assign lead custodian, collect service parameters, and configure secure communications.',
-        checklist: [
-            { id: 'c1-1', label: 'Client company profile & primary contacts registered', defaultDone: true },
-            { id: 'c1-2', label: 'Assigned custodian and secondary staff handler confirmed', defaultDone: true },
-            { id: 'c1-3', label: 'Service level agreement & operational scope baseline established' },
-            { id: 'c1-4', label: 'Kickoff intake form submitted by client contact' }
-        ]
-    },
-    {
-        id: 2,
-        name: 'Compliance Evidence & Verification',
-        tagline: 'Deterministic document & KYC validation',
-        description: 'Collect mandatory compliance documents, verify corporate status, conduct deterministic validation, and securely store proofs in Document Vault.',
-        checklist: [
-            { id: 'c2-1', label: 'Certificate of Incorporation / Corporate Charter uploaded' },
-            { id: 'c2-2', label: 'Beneficial Ownership (UBO) declaration signed' },
-            { id: 'c2-3', label: 'Authorized representative identity & proof of address validated' },
-            { id: 'c2-4', label: 'Deterministic document verification completed in Document Vault' }
-        ]
-    },
-    {
-        id: 3,
-        name: 'Gate Evaluation & Approvals',
-        tagline: 'Milestone criteria & dual signoff',
-        description: 'Verify all gate requirements have been met, confirm financial escrow/deposit terms, and execute dual-custodian review before live operations.',
-        checklist: [
-            { id: 'c3-1', label: 'Financial retainer / escrow deposit verification confirmed' },
-            { id: 'c3-2', label: 'Risk assessment & compliance score evaluated' },
-            { id: 'c3-3', label: 'Dual-custodian sign-off executed (Lead Custodian + SecOps)' },
-            { id: 'c3-4', label: 'Stage 3 Milestone Gate token generated' }
-        ]
-    },
-    {
-        id: 4,
-        name: 'SLA Radar & Intervention',
-        tagline: 'Latency monitoring & stall prevention',
-        description: 'Continuous monitoring of request response times, stall alert detection, and automatic intervention routing to prevent SLA degradation.',
-        checklist: [
-            { id: 'c4-1', label: 'SLA response monitor active (current latency: < 24ms)' },
-            { id: 'c4-2', label: 'Zero critical stall warnings in operational queue' },
-            { id: 'c4-3', label: 'Escalation notification channels verified' },
-            { id: 'c4-4', label: 'Weekly SLA assurance scorecard generated (> 98.5% adherence)' }
-        ]
-    },
-    {
-        id: 5,
-        name: 'Readiness, Handoff & Closure',
-        tagline: 'Final delivery & immutable audit seal',
-        description: 'Compile final deliverables, emit immutable audit ledger seal, deliver client self-service portal credentials, and seal engagement.',
-        checklist: [
-            { id: 'c5-1', label: 'Final engagement deliverables validated and accepted by client' },
-            { id: 'c5-2', label: 'Client self-service portal access handed off' },
-            { id: 'c5-3', label: 'Immutable audit log hash chain sealed and archived' },
-            { id: 'c5-4', label: 'Formal engagement completion certificate issued' }
-        ]
-    }
-];
 
 export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     engagementId,
@@ -111,19 +38,14 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [actions, setActions] = useState<ClientAction[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
-    // Active stage state (1 to 5)
-    const [activeStageId, setActiveStageId] = useState<number>(1);
-    const [currentPipelineStage, setCurrentPipelineStage] = useState<number>(1);
-
-    // Checklist toggles state
-    const [checklistState, setChecklistState] = useState<Record<string, boolean>>({
-        'c1-1': true,
-        'c1-2': true,
-    });
+    // Which stage card the user is currently viewing details for (not necessarily
+    // the engagement's actual current stage — clicking a card just previews it).
+    const [selectedStageKey, setSelectedStageKey] = useState<EngagementStage | null>(null);
 
     const [completingActionId, setCompletingActionId] = useState<string | null>(null);
     const [isAdvancingStage, setIsAdvancingStage] = useState(false);
     const [stageAdvanceSuccess, setStageAdvanceSuccess] = useState<string | null>(null);
+    const [stageAdvanceError, setStageAdvanceError] = useState<string | null>(null);
 
     // Load Workspace Data
     const loadWorkspaceData = useCallback(async () => {
@@ -135,10 +57,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             const foundEng = engagements.find((e) => e.engagementId === engagementId);
             if (foundEng) {
                 setEngagement(foundEng);
-                if (foundEng.status === 'Closed') {
-                    setCurrentPipelineStage(5);
-                    setActiveStageId(5);
-                }
+                setSelectedStageKey((prev) => prev ?? foundEng.stage);
             }
 
             if (token) {
@@ -182,13 +101,6 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
         loadWorkspaceData();
     }, [loadWorkspaceData]);
 
-    const handleToggleChecklist = (checkId: string) => {
-        setChecklistState((prev) => ({
-            ...prev,
-            [checkId]: !prev[checkId]
-        }));
-    };
-
     const handleCompleteAction = async (actionId: string) => {
         setCompletingActionId(actionId);
         setTimeout(() => {
@@ -199,19 +111,31 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
         }, 500);
     };
 
-    const handleAdvanceStage = () => {
-        if (currentPipelineStage >= 5) return;
+    // Advances the engagement to the next stage via the real backend endpoint
+    // (PUT /api/Engagements/{id}/stage). The server enforces sequential,
+    // forward-only transitions (CSTD-17 AC4) — this is the source of truth,
+    // not anything computed locally in this component.
+    const handleAdvanceStage = async () => {
+        if (!engagement || !tenantId) return;
+        const next = getNextStage(engagement.stage);
+        if (!next) return;
+
         setIsAdvancingStage(true);
+        setStageAdvanceError(null);
         setStageAdvanceSuccess(null);
 
-        setTimeout(() => {
-            const nextStage = currentPipelineStage + 1;
-            setCurrentPipelineStage(nextStage);
-            setActiveStageId(nextStage);
-            setIsAdvancingStage(false);
-            setStageAdvanceSuccess(`Stage ${currentPipelineStage} Gate Cleared • Entering Stage ${nextStage}: ${ONBOARDING_STAGES[nextStage - 1].name}`);
+        try {
+            const updated = await WorkflowApi.updateStage(engagement.engagementId, next, tenantId);
+            setEngagement(updated);
+            setSelectedStageKey(updated.stage);
+            const nextDef = getStageDefinition(updated.stage);
+            setStageAdvanceSuccess(`Advanced to Stage ${nextDef.order}: ${nextDef.name}`);
             setTimeout(() => setStageAdvanceSuccess(null), 4000);
-        }, 600);
+        } catch (err: any) {
+            setStageAdvanceError(err?.message || 'Failed to advance stage.');
+        } finally {
+            setIsAdvancingStage(false);
+        }
     };
 
     // Client display info
@@ -225,10 +149,12 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
         .toUpperCase() || 'CL';
     const engagementCode = `ENG-${engagementId.slice(0, 6).toUpperCase()}`;
 
-    const selectedStageDef = ONBOARDING_STAGES.find((s) => s.id === activeStageId) || ONBOARDING_STAGES[0];
-    const stageChecklistItems = selectedStageDef.checklist;
-    const completedItemsCount = stageChecklistItems.filter((i) => checklistState[i.id]).length;
-    const progressPercent = Math.round((completedItemsCount / stageChecklistItems.length) * 100);
+    const currentStageOrder = getStageIndex(engagement?.stage) + 1; // 0 if unknown, else 1-5
+    const selectedStageDef = getStageDefinition(selectedStageKey ?? engagement?.stage);
+    const progressPercent = engagement?.stageProgressPercentage ?? 0;
+    const isTerminalStatus = engagement?.status === 'Closed' || engagement?.status === 'Cancelled';
+    const nextStage = engagement ? getNextStage(engagement.stage) : null;
+    const isViewingCurrentStage = selectedStageDef.key === engagement?.stage;
 
     return (
         <div className="space-y-6">
@@ -274,9 +200,13 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             <span className="px-2.5 py-0.5 rounded text-xs font-mono font-semibold bg-slate-100 text-slate-700 border border-slate-200">
                                 {engagementCode}
                             </span>
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                Active Pipeline
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+                                isTerminalStatus
+                                    ? 'bg-slate-100 text-slate-600 border-slate-200'
+                                    : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${isTerminalStatus ? 'bg-slate-400' : 'bg-emerald-500'}`} />
+                                {engagement?.status || 'Active Pipeline'}
                             </span>
                         </div>
                         <p className="text-xs text-slate-500 mt-1">
@@ -295,45 +225,45 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                         </span>
                     </div>
 
-                    <div className="p-3 bg-emerald-50/80 rounded-xl border border-emerald-200/80 text-xs">
-                        <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block">
-                            SLA HEALTH
+                    <div className="p-3 bg-indigo-50/80 rounded-xl border border-indigo-200/80 text-xs">
+                        <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider block">
+                            STAGE PROGRESS
                         </span>
-                        <span className="font-bold text-emerald-700 block mt-0.5">
-                            98.8% Optimal
+                        <span className="font-bold text-indigo-700 block mt-0.5">
+                            {progressPercent}% Complete
                         </span>
                     </div>
                 </div>
             </div>
 
-            {/* 5-Stage Orchestration Stepper */}
+            {/* 5-Stage Pipeline Stepper */}
             <div className="bg-white/90 backdrop-blur-md p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                     <div>
                         <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                             <Layers className="w-5 h-5 text-indigo-600" />
-                            5-Stage Onboarding Progression
+                            5-Stage Engagement Pipeline
                         </h2>
                         <p className="text-xs text-slate-500 mt-0.5">
-                            Deterministic lifecycle progression from intake verification to handoff & closure.
+                            Onboarding → Document Collection → Verification → Execution → Closure.
                         </p>
                     </div>
                     <span className="px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                        Current: Stage {currentPipelineStage} of 5
+                        Current: Stage {currentStageOrder || 1} of 5
                     </span>
                 </div>
 
                 {/* 5 Step Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                    {ONBOARDING_STAGES.map((st) => {
-                        const isPassed = st.id < currentPipelineStage;
-                        const isCurrent = st.id === currentPipelineStage;
-                        const isSelected = st.id === activeStageId;
+                    {ENGAGEMENT_STAGES.map((st) => {
+                        const isPassed = st.order < currentStageOrder;
+                        const isCurrent = st.order === currentStageOrder;
+                        const isSelected = st.key === (selectedStageKey ?? engagement?.stage);
 
                         return (
                             <button
-                                key={st.id}
-                                onClick={() => setActiveStageId(st.id)}
+                                key={st.key}
+                                onClick={() => setSelectedStageKey(st.key)}
                                 className={`text-left p-3.5 rounded-xl border transition ${
                                     isSelected
                                         ? 'bg-indigo-50/70 border-indigo-300 ring-2 ring-indigo-500/20 shadow-xs'
@@ -354,7 +284,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                 : 'bg-slate-200 text-slate-600'
                                         }`}
                                     >
-                                        {isPassed ? '✓' : st.id}
+                                        {isPassed ? '✓' : st.order}
                                     </span>
                                     {isPassed && (
                                         <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">
@@ -379,26 +309,32 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                 </div>
             </div>
 
-            {/* Stage Alert */}
+            {/* Stage Alerts */}
             {stageAdvanceSuccess && (
                 <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-900 text-xs font-semibold flex items-center gap-2">
                     <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
                     <span>{stageAdvanceSuccess}</span>
                 </div>
             )}
+            {stageAdvanceError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-900 text-xs font-semibold flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                    <span>{stageAdvanceError}</span>
+                </div>
+            )}
 
             {/* Stage Deep Dive: Two Columns */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                {/* Left: Gate Checklist & Criteria (8 Cols) */}
+                {/* Left: Stage Details & Advancement (8 Cols) */}
                 <div className="lg:col-span-8 space-y-4">
                     <div className="bg-white/90 backdrop-blur-md p-6 rounded-2xl border border-slate-200/90 shadow-xs space-y-5">
                         {/* Stage Header */}
                         <div>
                             <div className="flex items-center gap-2 mb-1.5">
                                 <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-700 uppercase tracking-wider">
-                                    Stage {selectedStageDef.id} Gate Requirements
+                                    Stage {selectedStageDef.order}
                                 </span>
-                                {selectedStageDef.id === currentPipelineStage && (
+                                {isViewingCurrentStage && (
                                     <span className="text-xs font-semibold text-emerald-700 flex items-center gap-1">
                                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Active Operational Target
                                     </span>
@@ -412,14 +348,15 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             </p>
                         </div>
 
-                        {/* Progress Bar */}
+                        {/* Progress Bar — derived from the backend's real stageProgressPercentage,
+                            never computed locally, so it can't drift from the engagement's actual stage */}
                         <div className="pt-2 border-t border-slate-100">
                             <div className="flex items-center justify-between text-xs mb-1.5">
                                 <span className="font-bold text-slate-500 uppercase tracking-wider">
-                                    Gate Verification Progress
+                                    Overall Engagement Progress
                                 </span>
                                 <span className="font-bold text-indigo-600">
-                                    {completedItemsCount} / {stageChecklistItems.length} Requirements Satisfied ({progressPercent}%)
+                                    {progressPercent}%
                                 </span>
                             </div>
                             <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
@@ -430,57 +367,17 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             </div>
                         </div>
 
-                        {/* Interactive Gate Criteria Checklist */}
-                        <div className="space-y-2.5 pt-2">
-                            {stageChecklistItems.map((item) => {
-                                const isChecked = !!checklistState[item.id];
-                                return (
-                                    <label
-                                        key={item.id}
-                                        className={`flex items-start gap-3 p-3.5 rounded-xl border transition cursor-pointer ${
-                                            isChecked
-                                                ? 'bg-indigo-50/40 border-indigo-200 text-slate-900'
-                                                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                                        }`}
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={isChecked}
-                                            onChange={() => handleToggleChecklist(item.id)}
-                                            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                        />
-                                        <div className="flex-1">
-                                            <span className={`text-xs ${isChecked ? 'font-semibold text-slate-900' : 'text-slate-700'}`}>
-                                                {item.label}
-                                            </span>
-                                        </div>
-                                        {isChecked && (
-                                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                                                Verified
-                                            </span>
-                                        )}
-                                    </label>
-                                );
-                            })}
-                        </div>
-
                         {/* Advance Stage Footer */}
-                        {selectedStageDef.id === currentPipelineStage && currentPipelineStage < 5 && (
+                        {isViewingCurrentStage && nextStage && !isTerminalStatus && (
                             <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
                                 <span className="text-xs text-slate-500">
-                                    {progressPercent === 100
-                                        ? 'All milestone gate criteria satisfied. Ready to advance.'
-                                        : 'Satisfy all stage criteria to unlock gate advancement.'}
+                                    Ready to advance to the next stage in the pipeline.
                                 </span>
                                 <button
                                     type="button"
                                     onClick={handleAdvanceStage}
-                                    disabled={progressPercent < 100 || isAdvancingStage}
-                                    className={`px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-sm ${
-                                        progressPercent === 100
-                                            ? 'bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white shadow-indigo-500/25 cursor-pointer'
-                                            : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                                    }`}
+                                    disabled={isAdvancingStage}
+                                    className="px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-sm bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white shadow-indigo-500/25 disabled:opacity-60 disabled:cursor-not-allowed"
                                 >
                                     {isAdvancingStage ? (
                                         <>
@@ -489,7 +386,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                         </>
                                     ) : (
                                         <>
-                                            <span>Advance to Stage {currentPipelineStage + 1}</span>
+                                            <span>Advance to Stage {getStageDefinition(nextStage).order}: {getStageDefinition(nextStage).name}</span>
                                             <ChevronRight className="w-4 h-4" />
                                         </>
                                     )}
@@ -497,10 +394,16 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             </div>
                         )}
 
-                        {selectedStageDef.id === 5 && currentPipelineStage === 5 && (
+                        {isViewingCurrentStage && isTerminalStatus && (
+                            <div className="pt-4 border-t border-slate-100 text-xs text-slate-500">
+                                Engagement status is <span className="font-semibold">{engagement?.status}</span> — stage can no longer advance.
+                            </div>
+                        )}
+
+                        {isViewingCurrentStage && engagement?.stage === 'Closure' && !isTerminalStatus && (
                             <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
                                 <span className="text-xs text-slate-500">
-                                    Final stage sign-off ready.
+                                    Final stage reached.
                                 </span>
                                 <button
                                     type="button"

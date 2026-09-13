@@ -1,5 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Engagement, ClientProfile, UserAccountResponse } from '../types';
+import { ENGAGEMENT_STAGES, getStageIndex } from '../constants/engagementStages';
+import { WorkflowApi, ApiError } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import {
     X,
     Building2,
@@ -10,7 +13,10 @@ import {
     Shield,
     Layers,
     User,
-    CheckCircle2
+    CheckCircle2,
+    Trash2,
+    AlertTriangle,
+    Loader2
 } from 'lucide-react';
 
 interface EngagementInspectionModalProps {
@@ -20,6 +26,7 @@ interface EngagementInspectionModalProps {
     client?: ClientProfile;
     staffMember?: UserAccountResponse;
     onProceedToWorkspace: (engagementId: string) => void;
+    onDeleted: (engagementId: string) => void;
 }
 
 export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps> = ({
@@ -29,8 +36,37 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
     client,
     staffMember,
     onProceedToWorkspace,
+    onDeleted,
 }) => {
+    const { tenantId } = useAuth();
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
+
     if (!isOpen || !engagement) return null;
+
+    // Mirrors the backend's own rule (EngagementLifecycleValidator.CanDelete,
+    // Workflow/Services/EngagementLifecycleValidator.cs): only a Draft engagement
+    // can be physically deleted, so Started/Closed/Cancelled keep their audit trail.
+    const canDelete = engagement.status === 'Draft';
+
+    const handleDelete = async () => {
+        if (!tenantId) return;
+        if (!window.confirm(`Delete engagement ${engagement.engagementId.slice(0, 8)}? This cannot be undone.`)) {
+            return;
+        }
+
+        setIsDeleting(true);
+        setDeleteError(null);
+        try {
+            await WorkflowApi.deleteEngagement(engagement.engagementId, tenantId);
+            onDeleted(engagement.engagementId);
+            onClose();
+        } catch (err: any) {
+            setDeleteError(err instanceof ApiError ? err.message : (err?.message || 'Failed to delete engagement.'));
+        } finally {
+            setIsDeleting(false);
+        }
+    };
 
     const clientName = client?.name || `Client ${engagement.clientId.slice(0, 8)}`;
     const initials = clientName
@@ -42,15 +78,9 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
 
     const engagementCode = `ENG-${engagement.engagementId.slice(0, 6).toUpperCase()}`;
 
-    const stages = [
-        { num: 1, title: 'Intake & Onboarding', status: 'Active' },
-        { num: 2, title: 'Compliance Evidence', status: 'Upcoming' },
-        { num: 3, title: 'Gate Evaluation', status: 'Upcoming' },
-        { num: 4, title: 'SLA Radar', status: 'Upcoming' },
-        { num: 5, title: 'Readiness & Closure', status: 'Upcoming' },
-    ];
-
-    const currentStageIndex = engagement.status === 'Closed' ? 4 : 0;
+    // Derived from the engagement's real, persisted stage (CSTD-17) — not a guess
+    // based on status. -1 falls back to 0 (first stage) if stage is ever missing.
+    const currentStageIndex = Math.max(0, getStageIndex(engagement.stage));
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/40 backdrop-blur-sm">
@@ -98,16 +128,16 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
 
                     <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-semibold">
                         <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse" />
-                        <span>NEXT: INTAKE CHECKLIST & STAKEHOLDER SETUP</span>
+                        <span>{engagement.stageProgressPercentage}% THROUGH THE PIPELINE</span>
                     </div>
                 </div>
 
-                {/* 5-Stage Onboarding Roadmap Stepper */}
+                {/* 5-Stage Engagement Pipeline */}
                 <div className="space-y-2.5">
                     <div className="flex items-center justify-between text-xs">
                         <span className="font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
                             <Layers className="w-4 h-4 text-indigo-600" />
-                            5-Stage Onboarding Progression
+                            5-Stage Engagement Pipeline
                         </span>
                         <span className="font-semibold text-indigo-600">
                             Stage {currentStageIndex + 1} of 5 Active
@@ -115,12 +145,12 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
-                        {stages.map((st, idx) => {
+                        {ENGAGEMENT_STAGES.map((st, idx) => {
                             const isCurrent = idx === currentStageIndex;
                             const isPassed = idx < currentStageIndex;
                             return (
                                 <div
-                                    key={st.num}
+                                    key={st.key}
                                     className={`p-3 rounded-xl border text-center transition ${
                                         isCurrent
                                             ? 'bg-indigo-50/70 border-indigo-300 ring-2 ring-indigo-500/20 shadow-xs'
@@ -138,10 +168,10 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
                                                 : 'bg-slate-200 text-slate-600'
                                         }`}
                                     >
-                                        {isPassed ? '✓' : st.num}
+                                        {isPassed ? '✓' : st.order}
                                     </div>
                                     <div className="text-xs font-semibold text-slate-800 truncate">
-                                        {st.title}
+                                        {st.name}
                                     </div>
                                     <div className="text-[10px] text-slate-500 mt-0.5">
                                         {isCurrent ? 'Active Stage' : isPassed ? 'Completed' : 'Upcoming'}
@@ -194,26 +224,50 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
                     </div>
                 </div>
 
+                {deleteError && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                        <span>{deleteError}</span>
+                    </div>
+                )}
+
                 {/* Modal Footer Actions */}
-                <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+                <div className="flex items-center justify-between gap-3 pt-4 border-t border-slate-100">
                     <button
                         type="button"
-                        onClick={onClose}
-                        className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold transition"
+                        onClick={handleDelete}
+                        disabled={!canDelete || isDeleting}
+                        title={canDelete ? 'Permanently delete this draft engagement' : `Engagements in '${engagement.status}' status cannot be deleted — only Draft engagements can be removed`}
+                        className="px-4 py-2.5 rounded-xl border text-xs font-semibold flex items-center gap-2 transition border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                     >
-                        Cancel
+                        {isDeleting ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                            <Trash2 className="w-4 h-4" />
+                        )}
+                        <span>Delete Engagement</span>
                     </button>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            onProceedToWorkspace(engagement.engagementId);
-                            onClose();
-                        }}
-                        className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white text-xs font-bold flex items-center gap-2 shadow-sm shadow-indigo-500/25 transition"
-                    >
-                        <span>Proceed into Workspace</span>
-                        <ArrowRight className="w-4 h-4" />
-                    </button>
+
+                    <div className="flex items-center gap-3">
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold transition"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                onProceedToWorkspace(engagement.engagementId);
+                                onClose();
+                            }}
+                            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white text-xs font-bold flex items-center gap-2 shadow-sm shadow-indigo-500/25 transition"
+                        >
+                            <span>Proceed into Workspace</span>
+                            <ArrowRight className="w-4 h-4" />
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

@@ -49,8 +49,21 @@ public class AuditEventService : IAuditEventService
             throw new ArgumentException("Payload must be a valid JSON string.", nameof(request.Payload));
         }
 
+        // Idempotency: if the caller supplied an EventId (the Kafka consumer does,
+        // carrying it through from the KafkaEnvelope), check whether it's already
+        // been recorded before inserting again. Kafka delivers at-least-once, so a
+        // redelivered message must not create a second audit row.
+        if (request.EventId.HasValue)
+        {
+            var existing = await _repository.GetByIdAsync(request.EventId.Value, effectiveTenantId);
+            if (existing != null)
+            {
+                return MapToResponse(existing);
+            }
+        }
+
         var utcNow = DateTime.UtcNow;
-        var eventId = Guid.NewGuid();
+        var eventId = request.EventId ?? Guid.NewGuid();
 
         // Calculate tamper-evident hash
         string hashInput = $"{eventId}:{request.EngagementId}:{effectiveTenantId}:{request.Actor}:{request.Type}:{utcNow:O}:{validPayload}";

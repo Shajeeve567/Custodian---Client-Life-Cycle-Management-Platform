@@ -118,6 +118,54 @@ public class EngagementsControllerUnitTests
         Assert.Equal(400, badRequest.StatusCode);
     }
 
+    [Fact]
+    public async Task CreateEngagement_ValidRequest_ShouldDefaultToInitialStage()
+    {
+        // Arrange
+        var request = new CreateEngagementRequest
+        {
+            TenantId = "tenant-001",
+            ClientId = "client-001",
+            StaffId = "staff-001"
+        };
+
+        _mockRepo.Setup(r => r.CreateAsync(It.IsAny<Engagement>()))
+                 .ReturnsAsync((Engagement e) => e);
+
+        // Act
+        var actionResult = await _controller.CreateEngagement(request);
+
+        // Assert: New engagements start at the first pipeline stage with 0% progress
+        var createdResult = Assert.IsType<CreatedAtActionResult>(actionResult.Result);
+        var response = Assert.IsType<EngagementResponse>(createdResult.Value);
+        Assert.Equal("Onboarding", response.Stage);
+        Assert.Equal(0, response.StageProgressPercentage);
+    }
+
+    [Fact]
+    public async Task CreateEngagement_ValidRequest_ShouldIncludeStageInGenesisPayload()
+    {
+        // Arrange
+        var request = new CreateEngagementRequest
+        {
+            TenantId = "tenant-001",
+            ClientId = "client-001",
+            StaffId = "staff-001"
+        };
+
+        _mockRepo.Setup(r => r.CreateAsync(It.IsAny<Engagement>()))
+                 .ReturnsAsync((Engagement e) => e);
+
+        // Act
+        await _controller.CreateEngagement(request);
+
+        // Assert: The Genesis audit event is published with the initial stage on the engagement
+        _mockAuditPublisher.Verify(a => a.PublishGenesisEventAsync(
+            It.Is<Engagement>(e => e.Stage == EngagementStage.Onboarding),
+            "tenant-001"
+        ), Times.Once);
+    }
+
     // ==========================================
     // 2. GET ENGAGEMENT BY ID TESTS
     // ==========================================
@@ -148,6 +196,8 @@ public class EngagementsControllerUnitTests
 
         var response = Assert.IsType<EngagementResponse>(okResult.Value);
         Assert.Equal(engagementId, response.EngagementId);
+        Assert.Equal("Onboarding", response.Stage);
+        Assert.Equal(0, response.StageProgressPercentage);
     }
 
     [Fact]
@@ -302,7 +352,165 @@ public class EngagementsControllerUnitTests
     }
 
     // ==========================================
-    // 6. TENANT ISOLATION & JWT CLAIM PRECEDENCE TESTS (Subtask 4)
+    // 6. UPDATE STAGE & PROGRESS TESTS (CSTD-17)
+    // ==========================================
+
+    private static Engagement MakeEngagement(Guid id, EngagementStatus status, EngagementStage stage) => new()
+    {
+        EngagementId = id,
+        TenantId = "tenant-001",
+        ClientId = "c1",
+        StaffId = "s1",
+        Status = status,
+        Stage = stage
+    };
+
+    [Fact]
+    public async Task UpdateStage_ValidSequentialTransition_ShouldReturn200OK()
+    {
+        // Arrange: Engagement at the first stage
+        var engagementId = Guid.NewGuid();
+        var engagement = MakeEngagement(engagementId, EngagementStatus.Started, EngagementStage.Onboarding);
+
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, "tenant-001")).ReturnsAsync(engagement);
+        _mockRepo.Setup(r => r.UpdateAsync(It.IsAny<Engagement>())).ReturnsAsync(engagement);
+
+        var request = new UpdateEngagementStageRequest { TenantId = "tenant-001", Stage = "DocumentCollection" };
+
+        // Act: Advance one stage forward
+        var actionResult = await _controller.UpdateStage(engagementId, request);
+
+        // Assert: Expect 200 OK with updated stage and derived progress
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var response = Assert.IsType<EngagementResponse>(okResult.Value);
+        Assert.Equal("DocumentCollection", response.Stage);
+        Assert.Equal(25, response.StageProgressPercentage);
+    }
+
+    [Fact]
+    public async Task UpdateStage_SkipAhead_ShouldReturn400BadRequest()
+    {
+        // Arrange: Attempt to skip from stage 1 directly to stage 3
+        var engagementId = Guid.NewGuid();
+        var engagement = MakeEngagement(engagementId, EngagementStatus.Started, EngagementStage.Onboarding);
+
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, "tenant-001")).ReturnsAsync(engagement);
+
+        var request = new UpdateEngagementStageRequest { TenantId = "tenant-001", Stage = "Verification" };
+
+        // Act
+        var actionResult = await _controller.UpdateStage(engagementId, request);
+
+        // Assert: Expect 400 Bad Request, skipping stages is not allowed
+        var badRequest = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
+        Assert.Equal(400, badRequest.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateStage_Backwards_ShouldReturn400BadRequest()
+    {
+        // Arrange: Attempt to move backwards from stage 2 to stage 1
+        var engagementId = Guid.NewGuid();
+        var engagement = MakeEngagement(engagementId, EngagementStatus.Started, EngagementStage.DocumentCollection);
+
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, "tenant-001")).ReturnsAsync(engagement);
+
+        var request = new UpdateEngagementStageRequest { TenantId = "tenant-001", Stage = "Onboarding" };
+
+        // Act
+        var actionResult = await _controller.UpdateStage(engagementId, request);
+
+        // Assert: Expect 400 Bad Request, backwards transitions are not allowed
+        var badRequest = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
+        Assert.Equal(400, badRequest.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateStage_FromTerminalStage_ShouldReturn400BadRequest()
+    {
+        // Arrange: Engagement already at the final stage
+        var engagementId = Guid.NewGuid();
+        var engagement = MakeEngagement(engagementId, EngagementStatus.Started, EngagementStage.Closure);
+
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, "tenant-001")).ReturnsAsync(engagement);
+
+        var request = new UpdateEngagementStageRequest { TenantId = "tenant-001", Stage = "Onboarding" };
+
+        // Act
+        var actionResult = await _controller.UpdateStage(engagementId, request);
+
+        // Assert: Expect 400 Bad Request, the final stage is terminal
+        var badRequest = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
+        Assert.Equal(400, badRequest.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(EngagementStatus.Closed)]
+    [InlineData(EngagementStatus.Cancelled)]
+    public async Task UpdateStage_OnClosedOrCancelledEngagement_ShouldReturn409Conflict(EngagementStatus status)
+    {
+        // Arrange: Engagement whose Status is terminal
+        var engagementId = Guid.NewGuid();
+        var engagement = MakeEngagement(engagementId, status, EngagementStage.Onboarding);
+
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, "tenant-001")).ReturnsAsync(engagement);
+
+        var request = new UpdateEngagementStageRequest { TenantId = "tenant-001", Stage = "DocumentCollection" };
+
+        // Act
+        var actionResult = await _controller.UpdateStage(engagementId, request);
+
+        // Assert: Expect 409 Conflict, a Closed/Cancelled engagement's stage cannot move
+        var conflictResult = Assert.IsType<ConflictObjectResult>(actionResult.Result);
+        Assert.Equal(409, conflictResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateStage_InvalidStageName_ShouldReturn400BadRequest()
+    {
+        // Arrange
+        var engagementId = Guid.NewGuid();
+        var engagement = MakeEngagement(engagementId, EngagementStatus.Started, EngagementStage.Onboarding);
+
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, "tenant-001")).ReturnsAsync(engagement);
+
+        var request = new UpdateEngagementStageRequest { TenantId = "tenant-001", Stage = "NotARealStage" };
+
+        // Act
+        var actionResult = await _controller.UpdateStage(engagementId, request);
+
+        // Assert: Expect 400 Bad Request for an unrecognized stage name
+        var badRequest = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
+        Assert.Equal(400, badRequest.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateStage_ValidTransition_ShouldPublishStageChangeAuditEvent()
+    {
+        // Arrange
+        var engagementId = Guid.NewGuid();
+        var engagement = MakeEngagement(engagementId, EngagementStatus.Started, EngagementStage.Onboarding);
+
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, "tenant-001")).ReturnsAsync(engagement);
+        _mockRepo.Setup(r => r.UpdateAsync(It.IsAny<Engagement>())).ReturnsAsync(engagement);
+
+        var request = new UpdateEngagementStageRequest { TenantId = "tenant-001", Stage = "DocumentCollection" };
+
+        // Act
+        await _controller.UpdateStage(engagementId, request);
+
+        // Assert: A StageChange audit event is published for every successful transition
+        _mockAuditPublisher.Verify(a => a.PublishEventAsync(
+            engagementId,
+            "tenant-001",
+            It.IsAny<string>(),
+            "StageChange",
+            It.IsAny<object>()
+        ), Times.Once);
+    }
+
+    // ==========================================
+    // 7. TENANT ISOLATION & JWT CLAIM PRECEDENCE TESTS (Subtask 4)
     // ==========================================
 
     [Fact]

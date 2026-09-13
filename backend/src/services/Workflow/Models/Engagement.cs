@@ -22,6 +22,9 @@ public class Engagement
     [Required]
     public EngagementStatus Status { get; set; } = EngagementStatus.Draft;
 
+    [Required]
+    public EngagementStage Stage { get; set; } = EngagementStage.Onboarding;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime? ClosedAt { get; set; }
