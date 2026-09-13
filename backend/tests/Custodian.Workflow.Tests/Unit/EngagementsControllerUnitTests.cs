@@ -4,6 +4,7 @@ using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Gates;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
@@ -19,13 +20,23 @@ public class EngagementsControllerUnitTests
 {
     private readonly Mock<IEngagementRepository> _mockRepo;
     private readonly Mock<IAuditPublisher> _mockAuditPublisher;
+    private readonly Mock<IGateEvaluator> _mockGateEvaluator;
     private readonly EngagementsController _controller;
 
     public EngagementsControllerUnitTests()
     {
         _mockRepo = new Mock<IEngagementRepository>();
         _mockAuditPublisher = new Mock<IAuditPublisher>();
-        _controller = new EngagementsController(_mockRepo.Object, _mockAuditPublisher.Object);
+        _mockGateEvaluator = new Mock<IGateEvaluator>();
+
+        // Default: gates are satisfied unless a specific test overrides this, so the
+        // existing transition/tenant-isolation tests are unaffected by the CSTD-18
+        // gate-check addition to UpdateStage.
+        _mockGateEvaluator
+            .Setup(g => g.EvaluateAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<EngagementStage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GateEvaluationResult.Satisfied());
+
+        _controller = new EngagementsController(_mockRepo.Object, _mockAuditPublisher.Object, _mockGateEvaluator.Object);
     }
 
     /// <summary>
@@ -510,7 +521,83 @@ public class EngagementsControllerUnitTests
     }
 
     // ==========================================
-    // 7. TENANT ISOLATION & QA ACCEPTANCE CRITERIA TESTS (CSTD-12 & CSTD-269)
+    // 7. GATE EVALUATION TESTS (CSTD-18)
+    // ==========================================
+
+    [Fact]
+    public async Task UpdateStage_GateBlocked_ShouldReturn400BadRequestWithReason()
+    {
+        // Arrange: transition is otherwise legal, but the gate evaluator blocks it
+        var engagementId = Guid.NewGuid();
+        var engagement = MakeEngagement(engagementId, EngagementStatus.Started, EngagementStage.DocumentCollection);
+
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, "tenant-001")).ReturnsAsync(engagement);
+
+        const string blockReason = "Required document 'KYC_PASSPORT' has not been submitted.";
+        _mockGateEvaluator
+            .Setup(g => g.EvaluateAsync(engagementId, "tenant-001", EngagementStage.Verification, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GateEvaluationResult.Blocked(blockReason, new[] { new GateRequirementResult("KYC_PASSPORT", false, blockReason) }));
+
+        var request = new UpdateEngagementStageRequest { TenantId = "tenant-001", Stage = "Verification" };
+
+        // Act
+        var actionResult = await _controller.UpdateStage(engagementId, request);
+
+        // Assert: 400 Bad Request carrying the gate's human-readable reason
+        var badRequest = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
+        Assert.Equal(400, badRequest.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateStage_GateBlocked_ShouldNotPersistStageOrPublishAuditEvent()
+    {
+        // Arrange
+        var engagementId = Guid.NewGuid();
+        var engagement = MakeEngagement(engagementId, EngagementStatus.Started, EngagementStage.DocumentCollection);
+
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, "tenant-001")).ReturnsAsync(engagement);
+        _mockGateEvaluator
+            .Setup(g => g.EvaluateAsync(engagementId, "tenant-001", EngagementStage.Verification, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GateEvaluationResult.Blocked("Required document 'KYC_PASSPORT' has not been submitted.", Array.Empty<GateRequirementResult>()));
+
+        var request = new UpdateEngagementStageRequest { TenantId = "tenant-001", Stage = "Verification" };
+
+        // Act
+        await _controller.UpdateStage(engagementId, request);
+
+        // Assert: a blocked gate must not mutate the engagement or emit a StageChange event
+        _mockRepo.Verify(r => r.UpdateAsync(It.IsAny<Engagement>()), Times.Never);
+        _mockAuditPublisher.Verify(a => a.PublishEventAsync(
+            It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), "StageChange", It.IsAny<object>()
+        ), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateStage_GateSatisfied_ShouldReturn200OKAndProceed()
+    {
+        // Arrange: transition legal AND gate explicitly satisfied
+        var engagementId = Guid.NewGuid();
+        var engagement = MakeEngagement(engagementId, EngagementStatus.Started, EngagementStage.DocumentCollection);
+
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, "tenant-001")).ReturnsAsync(engagement);
+        _mockRepo.Setup(r => r.UpdateAsync(It.IsAny<Engagement>())).ReturnsAsync(engagement);
+        _mockGateEvaluator
+            .Setup(g => g.EvaluateAsync(engagementId, "tenant-001", EngagementStage.Verification, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GateEvaluationResult.Satisfied());
+
+        var request = new UpdateEngagementStageRequest { TenantId = "tenant-001", Stage = "Verification" };
+
+        // Act
+        var actionResult = await _controller.UpdateStage(engagementId, request);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        _mockRepo.Verify(r => r.UpdateAsync(It.IsAny<Engagement>()), Times.Once);
+    }
+
+    // ==========================================
+    // 8. TENANT ISOLATION & QA ACCEPTANCE CRITERIA TESTS (CSTD-12 & CSTD-269)
     // ==========================================
 
     [Fact]
