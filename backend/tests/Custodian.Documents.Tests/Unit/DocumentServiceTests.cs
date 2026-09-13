@@ -1,4 +1,5 @@
 using System.Text;
+using Custodian.Documents.Compliance;
 using Custodian.Documents.Data;
 using Custodian.Documents.DTOs;
 using Custodian.Documents.Models;
@@ -772,7 +773,7 @@ public class DocumentServiceTests
 
         var service = new DocumentService(dbContext, validator, storageMock.Object);
 
-        var result = await service.GetDocumentByIdAsync(engagementId, documentId, tenantId);
+        var result = await service.GetDocumentByIdAsync(engagementId, documentId, tenantId, includeDeleted: true);
 
         Assert.NotNull(result);
         Assert.True(result.IsDeleted);
@@ -807,6 +808,224 @@ public class DocumentServiceTests
 
         var index = entityType.GetIndexes().FirstOrDefault(i => i.Properties.Any(p => p.Name == nameof(DocumentMetadata.IsDeleted)));
         Assert.NotNull(index);
+    }
+
+    [Fact]
+    public async Task GetDocumentsByEngagementAsync_ExcludesDeletedDocumentsByDefault()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var activeDoc = new DocumentMetadata
+        {
+            DocumentId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Identity",
+            FileName = "active.pdf",
+            IsDeleted = false
+        };
+
+        var deletedDoc = new DocumentMetadata
+        {
+            DocumentId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Identity",
+            FileName = "deleted.pdf",
+            IsDeleted = true,
+            DeletedAt = DateTime.UtcNow
+        };
+
+        dbContext.Documents.AddRange(activeDoc, deletedDoc);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        // Act - default filter (no filter dto)
+        var resultsDefault = (await service.GetDocumentsByEngagementAsync(engagementId, tenantId)).ToList();
+
+        // Act - filter dto with IncludeDeleted = false
+        var resultsExplicitFalse = (await service.GetDocumentsByEngagementAsync(engagementId, tenantId, new DocumentFilterDto { IncludeDeleted = false })).ToList();
+
+        // Assert
+        Assert.Single(resultsDefault);
+        Assert.Equal(activeDoc.DocumentId, resultsDefault[0].DocumentId);
+
+        Assert.Single(resultsExplicitFalse);
+        Assert.Equal(activeDoc.DocumentId, resultsExplicitFalse[0].DocumentId);
+    }
+
+    [Fact]
+    public async Task GetDocumentsByEngagementAsync_IncludesDeletedDocuments_WhenIncludeDeletedIsTrue()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var activeDoc = new DocumentMetadata
+        {
+            DocumentId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Identity",
+            FileName = "active.pdf",
+            IsDeleted = false
+        };
+
+        var deletedDoc = new DocumentMetadata
+        {
+            DocumentId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Identity",
+            FileName = "deleted.pdf",
+            IsDeleted = true,
+            DeletedAt = DateTime.UtcNow
+        };
+
+        dbContext.Documents.AddRange(activeDoc, deletedDoc);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        // Act
+        var results = (await service.GetDocumentsByEngagementAsync(engagementId, tenantId, new DocumentFilterDto { IncludeDeleted = true })).ToList();
+
+        // Assert
+        Assert.Equal(2, results.Count);
+        Assert.Contains(results, r => r.DocumentId == activeDoc.DocumentId && !r.IsDeleted);
+        Assert.Contains(results, r => r.DocumentId == deletedDoc.DocumentId && r.IsDeleted);
+    }
+
+    [Fact]
+    public async Task GetDocumentsByEngagementAsync_FiltersByType_ComplianceStatus_VerificationStatus_AndUploader()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-filter";
+
+        var doc1 = new DocumentMetadata
+        {
+            DocumentId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Passport",
+            ComplianceStatus = ComplianceStatus.Compliant,
+            VerificationStatus = DocumentVerificationStatus.Verified,
+            UploaderId = "user-alice",
+            IsDeleted = false
+        };
+
+        var doc2 = new DocumentMetadata
+        {
+            DocumentId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Passport",
+            ComplianceStatus = ComplianceStatus.Pending,
+            VerificationStatus = DocumentVerificationStatus.Unverified,
+            UploaderId = "user-bob",
+            IsDeleted = false
+        };
+
+        var doc3 = new DocumentMetadata
+        {
+            DocumentId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "UtilityBill",
+            ComplianceStatus = ComplianceStatus.Compliant,
+            VerificationStatus = DocumentVerificationStatus.Unverified,
+            UploaderId = "user-alice",
+            IsDeleted = false
+        };
+
+        dbContext.Documents.AddRange(doc1, doc2, doc3);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        // 1. Filter by Type
+        var typeResults = (await service.GetDocumentsByEngagementAsync(engagementId, tenantId, new DocumentFilterDto { Type = "Passport" })).ToList();
+        Assert.Equal(2, typeResults.Count);
+        Assert.All(typeResults, d => Assert.Equal("Passport", d.Type));
+
+        // 2. Filter by ComplianceStatus
+        var complianceResults = (await service.GetDocumentsByEngagementAsync(engagementId, tenantId, new DocumentFilterDto { ComplianceStatus = ComplianceStatus.Compliant })).ToList();
+        Assert.Equal(2, complianceResults.Count);
+        Assert.All(complianceResults, d => Assert.Equal(ComplianceStatus.Compliant, d.ComplianceStatus));
+
+        // 3. Filter by VerificationStatus
+        var verificationResults = (await service.GetDocumentsByEngagementAsync(engagementId, tenantId, new DocumentFilterDto { VerificationStatus = DocumentVerificationStatus.Verified })).ToList();
+        Assert.Single(verificationResults);
+        Assert.Equal(doc1.DocumentId, verificationResults[0].DocumentId);
+
+        // 4. Filter by UploaderId
+        var uploaderResults = (await service.GetDocumentsByEngagementAsync(engagementId, tenantId, new DocumentFilterDto { UploaderId = "user-alice" })).ToList();
+        Assert.Equal(2, uploaderResults.Count);
+        Assert.All(uploaderResults, d => Assert.Equal("user-alice", d.UploaderId));
+
+        // 5. Combined Filter
+        var combinedResults = (await service.GetDocumentsByEngagementAsync(engagementId, tenantId, new DocumentFilterDto
+        {
+            Type = "Passport",
+            ComplianceStatus = ComplianceStatus.Compliant,
+            VerificationStatus = DocumentVerificationStatus.Verified,
+            UploaderId = "user-alice"
+        })).ToList();
+        Assert.Single(combinedResults);
+        Assert.Equal(doc1.DocumentId, combinedResults[0].DocumentId);
+    }
+
+    [Fact]
+    public async Task GetDocumentByIdAsync_SoftDeletedDocument_ExcludesByDefault_AndReturnsWhenIncludeDeletedTrue()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var deletedDoc = new DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Identity",
+            FileName = "deleted.pdf",
+            IsDeleted = true,
+            DeletedAt = DateTime.UtcNow,
+            DeletedBy = "staff-1"
+        };
+
+        dbContext.Documents.Add(deletedDoc);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        // Excludes by default (includeDeleted = false)
+        var defaultResult = await service.GetDocumentByIdAsync(engagementId, documentId, tenantId);
+        Assert.Null(defaultResult);
+
+        // Returns when includeDeleted = true
+        var includedResult = await service.GetDocumentByIdAsync(engagementId, documentId, tenantId, includeDeleted: true);
+        Assert.NotNull(includedResult);
+        Assert.Equal(documentId, includedResult.DocumentId);
+        Assert.True(includedResult.IsDeleted);
+        Assert.Equal("staff-1", includedResult.DeletedBy);
     }
 }
 

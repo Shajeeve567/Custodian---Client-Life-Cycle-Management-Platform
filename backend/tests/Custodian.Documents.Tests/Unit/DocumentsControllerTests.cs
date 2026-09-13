@@ -515,5 +515,134 @@ public class DocumentsControllerTests
         Assert.IsType<ForbidResult>(result.Result);
         _documentServiceMock.Verify(s => s.RejectDocumentVerificationAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<RejectDocumentRequestDto>()), Times.Never);
     }
+
+    [Fact]
+    public async Task GetDocumentsByEngagement_WithFilterDto_PassesFilterToServiceAndReturns200Ok()
+    {
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-filter";
+        var filter = new DocumentFilterDto
+        {
+            Type = "Passport",
+            ComplianceStatus = "Compliant",
+            IncludeDeleted = true
+        };
+
+        var list = new List<DocumentResponseDto>
+        {
+            new() { DocumentId = Guid.NewGuid(), EngagementId = engagementId, TenantId = tenantId, Type = "Passport", ComplianceStatus = "Compliant" }
+        };
+
+        _documentServiceMock
+            .Setup(s => s.GetDocumentsByEngagementAsync(engagementId, tenantId, filter))
+            .ReturnsAsync(list);
+
+        var actionResult = await _controller.GetDocumentsByEngagement(engagementId, tenantId, filter);
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var returnedList = Assert.IsAssignableFrom<IEnumerable<DocumentResponseDto>>(okResult.Value);
+        Assert.Single(returnedList);
+        _documentServiceMock.Verify(s => s.GetDocumentsByEngagementAsync(engagementId, tenantId, filter), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetDocumentById_SoftDeletedDocument_WithoutIncludeDeleted_Returns404NotFound()
+    {
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        // Service returns null when includeDeleted is false for soft-deleted doc
+        _documentServiceMock
+            .Setup(s => s.GetDocumentByIdAsync(engagementId, documentId, tenantId))
+            .ReturnsAsync((DocumentResponseDto?)null);
+
+        var actionResult = await _controller.GetDocumentById(engagementId, documentId, tenantId, includeDeleted: false);
+
+        Assert.IsType<NotFoundObjectResult>(actionResult.Result);
+    }
+
+    [Fact]
+    public async Task GetDocumentById_SoftDeletedDocument_WithIncludeDeleted_Returns200Ok()
+    {
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        var docDto = new DocumentResponseDto
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            FileName = "deleted.pdf",
+            IsDeleted = true,
+            DeletedAt = DateTime.UtcNow,
+            DeletedBy = "staff-admin"
+        };
+
+        _documentServiceMock
+            .Setup(s => s.GetDocumentByIdAsync(engagementId, documentId, tenantId, true))
+            .ReturnsAsync(docDto);
+
+        var actionResult = await _controller.GetDocumentById(engagementId, documentId, tenantId, includeDeleted: true);
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var resultDto = Assert.IsType<DocumentResponseDto>(okResult.Value);
+        Assert.True(resultDto.IsDeleted);
+        Assert.Equal(documentId, resultDto.DocumentId);
+    }
+
+    [Fact]
+    public async Task DownloadDocument_SoftDeleted_WithoutIncludeDeleted_Returns404NotFound()
+    {
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+
+        _documentServiceMock
+            .Setup(s => s.GetDocumentByIdAsync(engagementId, documentId, tenantId))
+            .ReturnsAsync((DocumentResponseDto?)null);
+
+        var actionResult = await _controller.DownloadDocument(engagementId, documentId, tenantId, includeDeleted: false);
+
+        Assert.IsType<NotFoundObjectResult>(actionResult);
+    }
+
+    [Fact]
+    public async Task DownloadDocument_SoftDeleted_WithIncludeDeleted_ReturnsFileStreamResult()
+    {
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-1";
+        var storagePath = "uploads/tenant-1/deleted.pdf";
+
+        var docDto = new DocumentResponseDto
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            FileName = "original_deleted.pdf",
+            ContentType = "application/pdf",
+            StoragePath = storagePath,
+            IsDeleted = true
+        };
+
+        var fileBytes = Encoding.UTF8.GetBytes("%PDF-1.4 raw bytes");
+        var fileStream = new MemoryStream(fileBytes);
+
+        _documentServiceMock
+            .Setup(s => s.GetDocumentByIdAsync(engagementId, documentId, tenantId, true))
+            .ReturnsAsync(docDto);
+
+        _storageServiceMock
+            .Setup(s => s.GetFileAsync(storagePath))
+            .ReturnsAsync(fileStream);
+
+        var actionResult = await _controller.DownloadDocument(engagementId, documentId, tenantId, includeDeleted: true);
+
+        var fileResult = Assert.IsType<FileStreamResult>(actionResult);
+        Assert.Equal("application/pdf", fileResult.ContentType);
+        Assert.Equal("original_deleted.pdf", fileResult.FileDownloadName);
+    }
 }
 

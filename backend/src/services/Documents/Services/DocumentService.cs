@@ -91,32 +91,94 @@ public class DocumentService : IDocumentService
         return MapToResponseDto(metadata);
     }
 
-    public async Task<IEnumerable<DocumentResponseDto>> GetDocumentsByEngagementAsync(Guid engagementId, string tenantId)
+    public Task<IEnumerable<DocumentResponseDto>> GetDocumentsByEngagementAsync(Guid engagementId, string tenantId)
+    {
+        return GetDocumentsByEngagementAsync(engagementId, tenantId, filter: null);
+    }
+
+    public async Task<IEnumerable<DocumentResponseDto>> GetDocumentsByEngagementAsync(
+        Guid engagementId,
+        string tenantId,
+        DocumentFilterDto? filter)
     {
         if (string.IsNullOrWhiteSpace(tenantId))
         {
             return Enumerable.Empty<DocumentResponseDto>();
         }
 
-        var documents = await _dbContext.Documents
+        var query = _dbContext.Documents
             .AsNoTracking()
-            .Where(d => d.EngagementId == engagementId && d.TenantId == tenantId)
+            .Where(d => d.EngagementId == engagementId && d.TenantId == tenantId);
+
+        if (filter != null)
+        {
+            if (!filter.IncludeDeleted)
+            {
+                query = query.Where(d => !d.IsDeleted);
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter.Type))
+            {
+                var type = filter.Type.Trim();
+                query = query.Where(d => d.Type == type);
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter.ComplianceStatus))
+            {
+                var compStatus = filter.ComplianceStatus.Trim();
+                query = query.Where(d => d.ComplianceStatus == compStatus);
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter.VerificationStatus))
+            {
+                var verStatus = filter.VerificationStatus.Trim();
+                query = query.Where(d => d.VerificationStatus == verStatus);
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter.UploaderId))
+            {
+                var uploaderId = filter.UploaderId.Trim();
+                query = query.Where(d => d.UploaderId == uploaderId);
+            }
+        }
+        else
+        {
+            query = query.Where(d => !d.IsDeleted);
+        }
+
+        var documents = await query
             .OrderByDescending(d => d.UploadedAt)
             .ToListAsync();
 
         return documents.Select(MapToResponseDto);
     }
 
-    public async Task<DocumentResponseDto?> GetDocumentByIdAsync(Guid engagementId, Guid documentId, string tenantId)
+    public Task<DocumentResponseDto?> GetDocumentByIdAsync(Guid engagementId, Guid documentId, string tenantId)
+    {
+        return GetDocumentByIdAsync(engagementId, documentId, tenantId, includeDeleted: false);
+    }
+
+    public async Task<DocumentResponseDto?> GetDocumentByIdAsync(
+        Guid engagementId,
+        Guid documentId,
+        string tenantId,
+        bool includeDeleted)
     {
         if (string.IsNullOrWhiteSpace(tenantId))
         {
             return null;
         }
 
-        var document = await _dbContext.Documents
+        var query = _dbContext.Documents
             .AsNoTracking()
-            .FirstOrDefaultAsync(d => d.DocumentId == documentId && d.EngagementId == engagementId && d.TenantId == tenantId);
+            .Where(d => d.DocumentId == documentId && d.EngagementId == engagementId && d.TenantId == tenantId);
+
+        if (!includeDeleted)
+        {
+            query = query.Where(d => !d.IsDeleted);
+        }
+
+        var document = await query.FirstOrDefaultAsync();
 
         return document == null ? null : MapToResponseDto(document);
     }

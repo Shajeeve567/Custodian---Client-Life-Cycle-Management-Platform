@@ -68,12 +68,13 @@ public class DocumentsController : ControllerBase
     }
 
     /// <summary>
-    /// Lists all document metadata records associated with the specified engagement.
+    /// Lists document metadata records associated with the specified engagement, supporting query filtering and soft-delete visibility.
     /// </summary>
     [HttpGet]
     public async Task<ActionResult<IEnumerable<DocumentResponseDto>>> GetDocumentsByEngagement(
         [FromRoute] Guid engagementId,
-        [FromQuery] string? tenantId)
+        [FromQuery] string? tenantId = null,
+        [FromQuery] DocumentFilterDto? filter = null)
     {
         var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
         if (isForbidden)
@@ -86,18 +87,21 @@ public class DocumentsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
-        var results = await _documentService.GetDocumentsByEngagementAsync(engagementId, effectiveTenantId);
+        var results = filter != null
+            ? await _documentService.GetDocumentsByEngagementAsync(engagementId, effectiveTenantId, filter)
+            : await _documentService.GetDocumentsByEngagementAsync(engagementId, effectiveTenantId);
         return Ok(results);
     }
 
     /// <summary>
-    /// Retrieves metadata for a specific document.
+    /// Retrieves metadata for a specific document. Soft-deleted documents return 404 unless includeDeleted is true.
     /// </summary>
     [HttpGet("{documentId:guid}")]
     public async Task<ActionResult<DocumentResponseDto>> GetDocumentById(
         [FromRoute] Guid engagementId,
         [FromRoute] Guid documentId,
-        [FromQuery] string? tenantId)
+        [FromQuery] string? tenantId = null,
+        [FromQuery] bool includeDeleted = false)
     {
         var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
         if (isForbidden)
@@ -110,7 +114,9 @@ public class DocumentsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
-        var result = await _documentService.GetDocumentByIdAsync(engagementId, documentId, effectiveTenantId);
+        var result = includeDeleted
+            ? await _documentService.GetDocumentByIdAsync(engagementId, documentId, effectiveTenantId, includeDeleted: true)
+            : await _documentService.GetDocumentByIdAsync(engagementId, documentId, effectiveTenantId);
         if (result == null)
         {
             return NotFound(new { message = $"Document '{documentId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
@@ -120,13 +126,15 @@ public class DocumentsController : ControllerBase
     }
 
     /// <summary>
-    /// Downloads the binary PDF content for a specific document.
+    /// Downloads the binary content for a specific document returning original bytes and content type.
+    /// Soft-deleted documents return 404 unless includeDeleted is true.
     /// </summary>
     [HttpGet("{documentId:guid}/download")]
     public async Task<IActionResult> DownloadDocument(
         [FromRoute] Guid engagementId,
         [FromRoute] Guid documentId,
-        [FromQuery] string? tenantId)
+        [FromQuery] string? tenantId = null,
+        [FromQuery] bool includeDeleted = false)
     {
         var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
         if (isForbidden)
@@ -139,7 +147,9 @@ public class DocumentsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
-        var metadata = await _documentService.GetDocumentByIdAsync(engagementId, documentId, effectiveTenantId);
+        var metadata = includeDeleted
+            ? await _documentService.GetDocumentByIdAsync(engagementId, documentId, effectiveTenantId, includeDeleted: true)
+            : await _documentService.GetDocumentByIdAsync(engagementId, documentId, effectiveTenantId);
         if (metadata == null)
         {
             return NotFound(new { message = $"Document metadata for '{documentId}' was not found." });
@@ -151,7 +161,8 @@ public class DocumentsController : ControllerBase
             return NotFound(new { message = $"Binary file content for document '{documentId}' was not found in storage." });
         }
 
-        return File(fileStream, metadata.ContentType ?? "application/pdf", metadata.FileName);
+        var contentType = !string.IsNullOrWhiteSpace(metadata.ContentType) ? metadata.ContentType : "application/octet-stream";
+        return File(fileStream, contentType, metadata.FileName);
     }
 
     /// <summary>
