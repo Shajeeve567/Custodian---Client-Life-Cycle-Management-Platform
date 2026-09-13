@@ -31,11 +31,21 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
     onSuccess,
 }) => {
     const [file, setFile] = useState<File | null>(null);
+    const [issueDate, setIssueDate] = useState<string>('');
+    const [expiryDate, setExpiryDate] = useState<string>('');
     const [isUploading, setIsUploading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [isDragOver, setIsDragOver] = useState<boolean>(false);
 
     if (!isOpen || !action) return null;
+
+    const handleResetAndClose = () => {
+        setFile(null);
+        setIssueDate('');
+        setExpiryDate('');
+        setError(null);
+        onClose();
+    };
 
     const handleFileValidation = (selectedFile: File) => {
         setError(null);
@@ -86,14 +96,26 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
         e.preventDefault();
         if (!file || !engagementId || !tenantId) return;
 
+        if (!issueDate) {
+            setError('Issue Date is mandatory for compliance verification.');
+            return;
+        }
+
+        if (!expiryDate) {
+            setError('Expiry Date is mandatory for compliance verification.');
+            return;
+        }
+
         setIsUploading(true);
         setError(null);
 
         try {
-            // 1. Upload binary PDF to Document Vault Microservice
+            // 1. Upload binary PDF to Document Vault Microservice with mandatory compliance dates
             const formData = new FormData();
             formData.append('File', file);
             formData.append('Type', action.type || 'ComplianceEvidence');
+            formData.append('IssueDate', issueDate);
+            formData.append('ExpiryDate', expiryDate);
             formData.append('UploaderId', userId || 'client-user');
 
             const uploadedDoc = await DocumentsApi.uploadDocument(engagementId, formData, tenantId);
@@ -111,10 +133,17 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
                 tenantId
             );
 
-            // Reset and trigger live portal reload
-            setFile(null);
+            // Trigger live portal reload
             onSuccess();
-            onClose();
+
+            // Provide real-time compliance feedback if engine rejected the evidence
+            if (uploadedDoc?.complianceStatus === 'Rejected') {
+                setError(
+                    `⚠️ Automatic Compliance Check Failed: ${uploadedDoc.rejectionReason || 'Document did not satisfy compliance rules.'} This action has been marked for revision.`
+                );
+            } else {
+                handleResetAndClose();
+            }
         } catch (err: any) {
             setError(err.message || 'Failed to submit document evidence. Please try again.');
         } finally {
@@ -137,7 +166,7 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
                         </div>
                     </div>
                     <button
-                        onClick={onClose}
+                        onClick={handleResetAndClose}
                         disabled={isUploading}
                         className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition"
                     >
@@ -213,11 +242,41 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
                         )}
                     </div>
 
+                    {/* Mandatory Compliance Dates */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                Issue Date <span className="text-rose-500">*</span>
+                            </label>
+                            <input
+                                type="date"
+                                value={issueDate}
+                                onChange={(e) => setIssueDate(e.target.value)}
+                                required
+                                className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800"
+                            />
+                            <p className="text-[10px] text-slate-400 mt-0.5">Required for freshness compliance</p>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                Expiry Date <span className="text-rose-500">*</span>
+                            </label>
+                            <input
+                                type="date"
+                                value={expiryDate}
+                                onChange={(e) => setExpiryDate(e.target.value)}
+                                required
+                                className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800"
+                            />
+                            <p className="text-[10px] text-slate-400 mt-0.5">Required for validity check</p>
+                        </div>
+                    </div>
+
                     {/* Informational note */}
                     <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center gap-2 text-xs text-slate-600">
                         <Shield className="w-4 h-4 text-indigo-600 shrink-0" />
                         <span>
-                            Upon upload, this task transitions to <strong className="text-slate-800">Under Review</strong> for custodian verification.
+                            Upon upload, this document is automatically evaluated by the Compliance Engine and submitted for custodian verification.
                         </span>
                     </div>
 
@@ -225,7 +284,7 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
                     <div className="pt-2 flex items-center justify-end gap-2.5">
                         <button
                             type="button"
-                            onClick={onClose}
+                            onClick={handleResetAndClose}
                             disabled={isUploading}
                             className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
                         >
@@ -233,9 +292,9 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
                         </button>
                         <button
                             type="submit"
-                            disabled={!file || isUploading}
+                            disabled={!file || !issueDate || !expiryDate || isUploading}
                             className={`px-5 py-2 rounded-xl text-xs font-bold text-white flex items-center gap-2 transition shadow-sm ${
-                                file && !isUploading
+                                file && issueDate && expiryDate && !isUploading
                                     ? 'bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 shadow-indigo-500/25 cursor-pointer'
                                     : 'bg-slate-200 text-slate-400 cursor-not-allowed'
                             }`}
@@ -243,7 +302,7 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
                             {isUploading ? (
                                 <>
                                     <Loader2 className="w-4 h-4 animate-spin" />
-                                    <span>Uploading & Submitting...</span>
+                                    <span>Validating & Submitting...</span>
                                 </>
                             ) : (
                                 <>

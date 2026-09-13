@@ -362,6 +362,19 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                             <span className="text-xs font-semibold px-2 py-0.5 rounded bg-white text-slate-700 border border-slate-200">
                                 {primaryNextAction.type}
                             </span>
+                            {primaryNextAction.verificationStatus && (
+                                <span
+                                    className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${
+                                        primaryNextAction.verificationStatus === 'Verified'
+                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                            : primaryNextAction.verificationStatus === 'Rejected'
+                                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                            : 'bg-sky-50 text-sky-700 border-sky-200'
+                                    }`}
+                                >
+                                    {primaryNextAction.verificationStatus}
+                                </span>
+                            )}
                         </div>
 
                         {/* Deadline Tag */}
@@ -399,13 +412,15 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                         </p>
                     </div>
 
-                    {/* Revision Alert Banner if action was rejected by staff */}
-                    {primaryNextAction.status === 'Rejected' && (
+                    {/* Revision Alert Banner if action was rejected by staff or compliance engine */}
+                    {(primaryNextAction.status === 'Rejected' || primaryNextAction.verificationStatus === 'Rejected') && (
                         <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
                             <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                             <div>
                                 <strong className="font-semibold text-amber-950">Revision Requested: </strong>
-                                Custodian verification flagged previous evidence as incomplete or invalid. Please upload an updated PDF document.
+                                {primaryNextAction.rejectionReason
+                                    ? primaryNextAction.rejectionReason
+                                    : 'Custodian verification flagged previous evidence as incomplete or invalid. Please upload an updated PDF document.'}
                             </div>
                         </div>
                     )}
@@ -506,8 +521,26 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white text-slate-600 border border-slate-200">
                                              Stage {action.stageNumber}
                                         </span>
+                                        {action.verificationStatus && (
+                                            <span
+                                                className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                                                    action.verificationStatus === 'Verified'
+                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                        : action.verificationStatus === 'Rejected'
+                                                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                                        : 'bg-sky-50 text-sky-700 border-sky-200'
+                                                }`}
+                                            >
+                                                {action.verificationStatus}
+                                            </span>
+                                        )}
                                     </div>
                                     <p className="text-[11px] text-slate-500 line-clamp-1">{action.description || 'Upcoming onboarding requirement'}</p>
+                                    {action.rejectionReason && (
+                                        <p className="text-[11px] text-amber-700 font-medium">
+                                            Reason: {action.rejectionReason}
+                                        </p>
+                                    )}
                                 </div>
 
                                 <div className="flex items-center gap-2 shrink-0">
