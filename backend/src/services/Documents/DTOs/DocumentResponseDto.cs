@@ -21,5 +21,8 @@ public class DocumentResponseDto
     public string? VerifiedBy { get; set; }
     public DateTime? VerifiedAt { get; set; }
     public string? VerificationReason { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
+    public string? DeletedBy { get; set; }
 }
 

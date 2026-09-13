@@ -99,11 +99,24 @@ public class DocumentDbContext : DbContext
                 .HasColumnName("verification_reason")
                 .HasMaxLength(1000);
 
+            entity.Property(e => e.IsDeleted)
+                .HasColumnName("is_deleted")
+                .IsRequired()
+                .HasDefaultValue(false);
+
+            entity.Property(e => e.DeletedAt)
+                .HasColumnName("deleted_at");
+
+            entity.Property(e => e.DeletedBy)
+                .HasColumnName("deleted_by")
+                .HasMaxLength(100);
+
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => e.EngagementId);
             entity.HasIndex(e => e.Type);
             entity.HasIndex(e => e.ComplianceStatus);
             entity.HasIndex(e => e.VerificationStatus);
+            entity.HasIndex(e => e.IsDeleted);
         });
     }
 }

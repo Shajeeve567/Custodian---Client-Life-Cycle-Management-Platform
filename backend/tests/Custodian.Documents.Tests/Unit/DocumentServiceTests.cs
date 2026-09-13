@@ -1,6 +1,7 @@
 using System.Text;
 using Custodian.Documents.Data;
 using Custodian.Documents.DTOs;
+using Custodian.Documents.Models;
 using Custodian.Documents.Services;
 using Custodian.Shared.Contracts;
 using Custodian.Shared.Messaging;
@@ -699,6 +700,113 @@ public class DocumentServiceTests
 
         Assert.NotNull(result);
         Assert.Equal(DocumentVerificationStatus.Verified, result.VerificationStatus);
+    }
+
+    [Fact]
+    public async Task UploadDocumentAsync_InitializesSoftDeleteFieldsToDefault()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-alpha";
+
+        storageMock
+            .Setup(s => s.SaveFileAsync(It.IsAny<IFormFile>(), tenantId, engagementId, It.IsAny<Guid>()))
+            .ReturnsAsync("uploads/doc.pdf");
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        var dto = new DocumentUploadDto
+        {
+            File = CreateValidPdfFormFile(),
+            Type = "Identity",
+            UploaderId = "user-1"
+        };
+
+        var response = await service.UploadDocumentAsync(engagementId, tenantId, dto);
+
+        Assert.NotNull(response);
+        Assert.False(response.IsDeleted);
+        Assert.Null(response.DeletedAt);
+        Assert.Null(response.DeletedBy);
+
+        // Verify entity in DbContext
+        var entity = await dbContext.Documents.FindAsync(response.DocumentId);
+        Assert.NotNull(entity);
+        Assert.False(entity.IsDeleted);
+        Assert.Null(entity.DeletedAt);
+        Assert.Null(entity.DeletedBy);
+    }
+
+    [Fact]
+    public async Task GetDocumentByIdAsync_MapsSoftDeleteFieldsCorrectly()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-alpha";
+        var deletedAt = DateTime.UtcNow;
+
+        var metadata = new DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Contract",
+            UploaderId = "user-1",
+            FileName = "contract.pdf",
+            ContentType = "application/pdf",
+            StoragePath = "uploads/contract.pdf",
+            IsDeleted = true,
+            DeletedAt = deletedAt,
+            DeletedBy = "staff-admin"
+        };
+
+        dbContext.Documents.Add(metadata);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, validator, storageMock.Object);
+
+        var result = await service.GetDocumentByIdAsync(engagementId, documentId, tenantId);
+
+        Assert.NotNull(result);
+        Assert.True(result.IsDeleted);
+        Assert.Equal(deletedAt, result.DeletedAt);
+        Assert.Equal("staff-admin", result.DeletedBy);
+    }
+
+    [Fact]
+    public void DocumentDbContext_ModelBuilding_ConfiguresSoftDeletePropertiesAndIndex()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var entityType = dbContext.Model.FindEntityType(typeof(DocumentMetadata));
+
+        Assert.NotNull(entityType);
+
+        var isDeletedProp = entityType.FindProperty(nameof(DocumentMetadata.IsDeleted));
+        Assert.NotNull(isDeletedProp);
+        Assert.Equal("is_deleted", isDeletedProp.GetColumnName());
+        Assert.False(isDeletedProp.IsNullable);
+        Assert.Equal(false, isDeletedProp.GetDefaultValue());
+
+        var deletedAtProp = entityType.FindProperty(nameof(DocumentMetadata.DeletedAt));
+        Assert.NotNull(deletedAtProp);
+        Assert.Equal("deleted_at", deletedAtProp.GetColumnName());
+        Assert.True(deletedAtProp.IsNullable);
+
+        var deletedByProp = entityType.FindProperty(nameof(DocumentMetadata.DeletedBy));
+        Assert.NotNull(deletedByProp);
+        Assert.Equal("deleted_by", deletedByProp.GetColumnName());
+        Assert.Equal(100, deletedByProp.GetMaxLength());
+        Assert.True(deletedByProp.IsNullable);
+
+        var index = entityType.GetIndexes().FirstOrDefault(i => i.Properties.Any(p => p.Name == nameof(DocumentMetadata.IsDeleted)));
+        Assert.NotNull(index);
     }
 }
 

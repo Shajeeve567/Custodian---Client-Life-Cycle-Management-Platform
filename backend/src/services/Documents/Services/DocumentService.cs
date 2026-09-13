@@ -79,7 +79,10 @@ public class DocumentService : IDocumentService
             VerificationStatus = DocumentVerificationStatus.Unverified,
             VerifiedBy = null,
             VerifiedAt = null,
-            VerificationReason = null
+            VerificationReason = null,
+            IsDeleted = false,
+            DeletedAt = null,
+            DeletedBy = null
         };
 
         _dbContext.Documents.Add(metadata);
@@ -280,7 +283,10 @@ public class DocumentService : IDocumentService
             VerificationStatus = entity.VerificationStatus,
             VerifiedBy = entity.VerifiedBy,
             VerifiedAt = entity.VerifiedAt,
-            VerificationReason = entity.VerificationReason
+            VerificationReason = entity.VerificationReason,
+            IsDeleted = entity.IsDeleted,
+            DeletedAt = entity.DeletedAt,
+            DeletedBy = entity.DeletedBy
         };
     }
 }
