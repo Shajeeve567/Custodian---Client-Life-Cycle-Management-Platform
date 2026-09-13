@@ -18,6 +18,11 @@ import {
     ClientPortalStage,
     UploadActionEvidenceRequest,
     ReviewActionRequest,
+    ApplyActionVerificationRequest,
+    DocumentFilter,
+    VerifyDocumentRequest,
+    RejectDocumentRequest,
+    UpdateDocumentMetadataRequest,
 } from '../types';
 
 export const API_BASE = {
@@ -300,6 +305,22 @@ export const WorkflowApi = {
             }
         );
     },
+
+    async applyVerification(
+        engagementId: string,
+        actionId: string,
+        data: ApplyActionVerificationRequest,
+        tenantId?: string
+    ): Promise<ClientAction> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/${actionId}/verification?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/${actionId}/verification`;
+        return request<ClientAction>(url, {
+            method: 'PUT',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify(data),
+        });
+    },
 };
 
 /* ==========================================================================
@@ -370,10 +391,24 @@ export const AuditApi = {
 };
 
 export const DocumentsApi = {
-    async getDocuments(engagementId: string, tenantId?: string): Promise<DocumentMetadata[]> {
-        const url = tenantId
-            ? `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents?tenantId=${encodeURIComponent(tenantId)}`
-            : `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents`;
+    async getDocuments(
+        engagementId: string,
+        filterOrTenantId?: DocumentFilter | string,
+        optionalTenantId?: string
+    ): Promise<DocumentMetadata[]> {
+        const filter = typeof filterOrTenantId === 'object' ? filterOrTenantId : undefined;
+        const tenantId = typeof filterOrTenantId === 'string' ? filterOrTenantId : optionalTenantId;
+
+        const params = new URLSearchParams();
+        if (tenantId) params.append('tenantId', tenantId);
+        if (filter?.type) params.append('type', filter.type);
+        if (filter?.complianceStatus) params.append('complianceStatus', filter.complianceStatus);
+        if (filter?.verificationStatus) params.append('verificationStatus', filter.verificationStatus);
+        if (filter?.uploaderId) params.append('uploaderId', filter.uploaderId);
+        if (filter?.includeDeleted !== undefined) params.append('includeDeleted', String(filter.includeDeleted));
+
+        const query = params.toString();
+        const url = `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents${query ? `?${query}` : ''}`;
         return request<DocumentMetadata[]>(url, {
             headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
         });
@@ -390,9 +425,71 @@ export const DocumentsApi = {
         });
     },
 
-    getDownloadUrl(engagementId: string, documentId: string, tenantId?: string): string {
+    async verifyDocument(
+        engagementId: string,
+        documentId: string,
+        req: VerifyDocumentRequest,
+        tenantId?: string
+    ): Promise<DocumentMetadata> {
+        const url = tenantId
+            ? `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents/${documentId}/verify?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents/${documentId}/verify`;
+        return request<DocumentMetadata>(url, {
+            method: 'POST',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify(req),
+        });
+    },
+
+    async rejectDocument(
+        engagementId: string,
+        documentId: string,
+        req: RejectDocumentRequest,
+        tenantId?: string
+    ): Promise<DocumentMetadata> {
+        const url = tenantId
+            ? `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents/${documentId}/reject?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents/${documentId}/reject`;
+        return request<DocumentMetadata>(url, {
+            method: 'POST',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify(req),
+        });
+    },
+
+    async updateDocumentMetadata(
+        engagementId: string,
+        documentId: string,
+        req: UpdateDocumentMetadataRequest,
+        tenantId?: string
+    ): Promise<DocumentMetadata> {
+        const url = tenantId
+            ? `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents/${documentId}/metadata?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents/${documentId}/metadata`;
+        return request<DocumentMetadata>(url, {
+            method: 'PUT',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify(req),
+        });
+    },
+
+    async deleteDocument(engagementId: string, documentId: string, tenantId?: string): Promise<DocumentMetadata> {
+        const url = tenantId
+            ? `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents/${documentId}?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents/${documentId}`;
+        return request<DocumentMetadata>(url, {
+            method: 'DELETE',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+        });
+    },
+
+    getDownloadUrl(engagementId: string, documentId: string, tenantId?: string, includeDeleted: boolean = false): string {
+        const params = new URLSearchParams();
+        if (tenantId) params.append('tenantId', tenantId);
+        if (includeDeleted) params.append('includeDeleted', 'true');
+        const query = params.toString();
         const base = `${API_BASE.DOCUMENTS}/api/engagements/${engagementId}/documents/${documentId}/download`;
-        return tenantId ? `${base}?tenantId=${encodeURIComponent(tenantId)}` : base;
+        return query ? `${base}?${query}` : base;
     },
 };
 

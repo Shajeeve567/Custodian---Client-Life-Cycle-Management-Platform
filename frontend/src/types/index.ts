@@ -129,6 +129,7 @@ export interface ClientSafeAction {
     isOverdue: boolean;
     daysRemaining?: number | null;
     rejectionReason?: string | null;
+    verificationStatus?: string | null;
 }
 
 export interface ClientPortalStage {
@@ -160,14 +161,48 @@ export interface UploadActionEvidenceRequest {
     documentId?: string;
     complianceStatus?: string;
     rejectionReason?: string;
+    verificationStatus?: string;
+    verificationReason?: string;
+    verifiedBy?: string;
 }
 
 export interface ReviewActionRequest {
     status: 'Completed' | 'Rejected' | string;
     reviewerActor: string;
     reviewNote?: string;
+    verificationStatus?: string;
+    verificationReason?: string;
 }
 
+export interface ApplyActionVerificationRequest {
+    verificationStatus: 'Verified' | 'Rejected' | string;
+    verifiedBy: string;
+    verificationReason?: string;
+}
+
+export interface DocumentFilter {
+    type?: string;
+    complianceStatus?: string;
+    verificationStatus?: string;
+    uploaderId?: string;
+    includeDeleted?: boolean;
+}
+
+export interface VerifyDocumentRequest {
+    staffNotes?: string;
+    staffActor?: string;
+}
+
+export interface RejectDocumentRequest {
+    reason: string;
+    staffActor?: string;
+}
+
+export interface UpdateDocumentMetadataRequest {
+    type?: string;
+    issueDate?: string;
+    expiryDate?: string;
+}
 
 export interface AuditEvent {
     eventId: string;
@@ -187,11 +222,22 @@ export interface DocumentMetadata {
     tenantId: string;
     type: string;
     uploaderId: string;
-    issueDate: string;
-    expiryDate: string;
+    issueDate?: string;
+    expiryDate?: string;
+    fileName?: string;
+    contentType?: string;
+    fileSize?: number;
+    storagePath?: string;
     uploadedAt: string;
     filePath?: string;
     complianceStatus?: string;
     rejectionReason?: string;
     validatedAt?: string;
+    verificationStatus?: string;
+    verifiedBy?: string | null;
+    verifiedAt?: string | null;
+    verificationReason?: string | null;
+    isDeleted?: boolean;
+    deletedAt?: string | null;
+    deletedBy?: string | null;
 }
