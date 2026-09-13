@@ -38,6 +38,8 @@ public class ClientActionServiceTests
                 Status = "Pending",
                 Source = "Step1",
                 IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CompletedByActor = "staff-reviewer-1",
                 SourceMetadata = "{\"internalNote\":\"public step\"}"
             },
             new ClientAction
@@ -50,6 +52,7 @@ public class ClientActionServiceTests
                 Status = "Pending",
                 Source = "SystemGate",
                 IsInternalOnly = true,
+                AssignedToRole = "Staff",
                 SourceMetadata = "{\"internalNote\":\"staff eyes only\"}"
             }
         );
@@ -60,11 +63,14 @@ public class ClientActionServiceTests
         // Act: Call service with isClientView = false (Staff View)
         var result = await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: false);
 
-        // Assert: Staff receives both items, including internal action and source metadata
+        // Assert: Staff receives both items, including internal action, source metadata,
+        // and operational fields (CSTD-12 fix must preserve the existing staff response).
         var list = result.ToList();
         Assert.Equal(2, list.Count);
         Assert.Contains(list, a => a.IsInternalOnly);
         Assert.All(list, a => Assert.NotNull(a.SourceMetadata));
+        Assert.All(list, a => Assert.NotNull(a.AssignedToRole));
+        Assert.Contains(list, a => a.CompletedByActor == "staff-reviewer-1");
     }
 
     [Fact]
@@ -86,6 +92,8 @@ public class ClientActionServiceTests
                 Status = "Pending",
                 Source = "Step1",
                 IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CompletedByActor = "staff-reviewer-7",
                 SourceMetadata = "{\"sensitiveData\":\"secret\"}"
             },
             new ClientAction
@@ -98,6 +106,7 @@ public class ClientActionServiceTests
                 Status = "Pending",
                 Source = "SystemGate",
                 IsInternalOnly = true,
+                AssignedToRole = "Staff",
                 SourceMetadata = "{\"internalNote\":\"secret\"}"
             }
         );
@@ -108,12 +117,16 @@ public class ClientActionServiceTests
         // Act: Call service with isClientView = true (Client View)
         var result = await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: true);
 
-        // Assert: Client view strips internal actions and clears SourceMetadata
+        // Assert: Client view strips internal actions, clears SourceMetadata, and (CSTD-12 fix)
+        // also strips internal operational metadata (AssignedToRole, CompletedByActor) even
+        // from the one action a client is legitimately allowed to see.
         var list = result.ToList();
         Assert.Single(list);
         Assert.Equal("Upload ID Proof", list[0].Title);
         Assert.False(list[0].IsInternalOnly);
         Assert.Null(list[0].SourceMetadata);
+        Assert.Null(list[0].AssignedToRole);
+        Assert.Null(list[0].CompletedByActor);
     }
 
     [Fact]

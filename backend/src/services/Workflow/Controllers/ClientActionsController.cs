@@ -43,20 +43,39 @@ public class ClientActionsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
-        // Determine if client view rule applies (via explicit parameter, header, or role claim)
-        // Group B security rule: If caller is in the Client role, client view is strictly enforced and cannot be bypassed.
+        // Server-side, role-based view selection (CSTD-12 security fix — Internal Field Leak).
+        // View selection must never trust the caller: a Client-role caller can never escalate to
+        // the staff view via ?isClientView=false or X-Client-View, and anyone else requesting the
+        // staff view must actually hold the Owner or Staff role or the request is rejected outright
+        // — there is no silent fallback that would let an unauthorized/roleless caller see it.
+        bool isClient = User.IsInRole("Client");
+        bool isStaffOrOwner = User.IsInRole("Owner") || User.IsInRole("Staff");
+
+        bool requestedStaffView = isClientView == false;
+        if (!requestedStaffView && Request?.Headers != null &&
+            Request.Headers.TryGetValue("X-Client-View", out var headerVal) &&
+            bool.TryParse(headerVal, out var headerRequestsClientView) && !headerRequestsClientView)
+        {
+            requestedStaffView = true;
+        }
+
         bool clientView;
-        if (User.IsInRole("Client"))
+        if (isClient)
         {
             clientView = true;
         }
+        else if (requestedStaffView)
+        {
+            if (!isStaffOrOwner)
+            {
+                return Forbid();
+            }
+            clientView = false;
+        }
         else
         {
-            clientView = isClientView ?? false;
-            if (!clientView && Request?.Headers != null && Request.Headers.TryGetValue("X-Client-View", out var headerVal))
-            {
-                _ = bool.TryParse(headerVal, out clientView);
-            }
+            // Safe default: the staff view was never explicitly requested, so don't assume it.
+            clientView = true;
         }
 
         var actions = await _actionService.GetActionsByEngagementAsync(engagementId, effectiveTenantId, clientView, status);

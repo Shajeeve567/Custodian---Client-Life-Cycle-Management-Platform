@@ -388,8 +388,11 @@ public class ClientActionService : IClientActionService
             DeadlineUtc = entity.DeadlineUtc,
             Source = entity.Source,
             IsInternalOnly = entity.IsInternalOnly,
-            AssignedToRole = entity.AssignedToRole,
-            CompletedByActor = entity.CompletedByActor,
+            // Client-safe DTO (CSTD-12 fix): AssignedToRole/CompletedByActor are internal
+            // operational/staff-identity metadata and must not reach client callers, on top of
+            // the existing internal-action filtering and SourceMetadata stripping below.
+            AssignedToRole = isClientView ? null : entity.AssignedToRole,
+            CompletedByActor = isClientView ? null : entity.CompletedByActor,
             CompletedAt = entity.CompletedAt,
             CreatedAt = entity.CreatedAt,
             // Client-safe security rule: Strip SourceMetadata if called from client view
