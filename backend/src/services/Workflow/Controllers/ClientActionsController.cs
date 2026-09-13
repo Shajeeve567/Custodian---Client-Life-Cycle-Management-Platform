@@ -175,8 +175,10 @@ public class ClientActionsController : ControllerBase
 
     /// <summary>
     /// Staff review endpoint: Marks an action as Completed (verified/accepted) or Rejected (revision required).
+    /// Restricted to authorized staff (Owner, Staff).
     /// </summary>
     [HttpPut("{actionId:guid}/review")]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<ClientActionResponseDto>> ReviewAction(
         [FromRoute] Guid engagementId,
         [FromRoute] Guid actionId,
@@ -194,10 +196,18 @@ public class ClientActionsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
         if (!ModelState.IsValid)
         {
             return BadRequest(ModelState);
         }
+
+        dto.ReviewerActor ??= ResolveStaffActor();
 
         try
         {
@@ -217,8 +227,10 @@ public class ClientActionsController : ControllerBase
 
     /// <summary>
     /// Updates action status based on document human verification outcome (Verified -> Completed, Rejected -> Rejected with reason).
+    /// Restricted to authorized staff (Owner, Staff).
     /// </summary>
     [HttpPut("{actionId:guid}/verification")]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<ClientActionResponseDto>> ApplyVerification(
         [FromRoute] Guid engagementId,
         [FromRoute] Guid actionId,
@@ -236,10 +248,18 @@ public class ClientActionsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
         if (!ModelState.IsValid)
         {
             return BadRequest(ModelState);
         }
+
+        dto.VerifiedBy ??= ResolveStaffActor();
 
         try
         {
@@ -255,6 +275,49 @@ public class ClientActionsController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
+    }
+
+    private ActionResult? CheckStaffAuthorization()
+    {
+        // 1. If ClaimsPrincipal is authenticated, check role claims
+        if (User?.Identity?.IsAuthenticated == true)
+        {
+            var isStaff = User.IsInRole("Owner") || User.IsInRole("Staff") ||
+                          User.Claims.Any(c => c.Type == System.Security.Claims.ClaimTypes.Role &&
+                              (c.Value.Equals("Owner", StringComparison.OrdinalIgnoreCase) || c.Value.Equals("Staff", StringComparison.OrdinalIgnoreCase)));
+
+            return isStaff ? null : Forbid();
+        }
+
+        // 2. Check X-User-Role header fallback for direct testing / service-to-service calls
+        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Role", out var roleHeader))
+        {
+            var role = roleHeader.ToString();
+            var isStaff = role.Equals("Owner", StringComparison.OrdinalIgnoreCase) || role.Equals("Staff", StringComparison.OrdinalIgnoreCase);
+            return isStaff ? null : Forbid();
+        }
+
+        return null;
+    }
+
+    private string? ResolveStaffActor()
+    {
+        var actor = User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? User?.FindFirst("sub")?.Value
+            ?? User?.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
+            ?? User?.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
+
+        if (!string.IsNullOrWhiteSpace(actor))
+        {
+            return actor.Trim();
+        }
+
+        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Id", out var userHeader))
+        {
+            return userHeader.ToString().Trim();
+        }
+
+        return null;
     }
 
     private (string? TenantId, bool IsForbidden) TryResolveTenantId(string? queryTenantId)

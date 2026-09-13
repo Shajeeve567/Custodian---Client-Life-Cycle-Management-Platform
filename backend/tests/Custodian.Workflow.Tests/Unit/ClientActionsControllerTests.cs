@@ -528,4 +528,133 @@ public class ClientActionsControllerTests
         Assert.Equal(200, okResult.StatusCode);
         _mockService.Verify(s => s.GetActionsByEngagementAsync(engagementId, tenantId, false, null), Times.Once);
     }
+
+    [Fact]
+    public async Task ReviewAction_ClientRole_Returns403Forbidden()
+    {
+        // Arrange: Authenticated user in Client role attempts to review/approve an action
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = tenantId;
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantId),
+            new Claim(ClaimTypes.Role, "Client")
+        }, "TestAuth"));
+
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var dto = new ReviewActionDto { Status = ClientActionStatus.Completed };
+
+        // Act
+        var result = await _controller.ReviewAction(engagementId, actionId, dto, tenantId: null);
+
+        // Assert: 403 Forbidden
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.ReviewActionAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<ReviewActionDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ApplyVerification_ClientRole_Returns403Forbidden()
+    {
+        // Arrange: Authenticated user in Client role attempts to apply verification outcome
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = tenantId;
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantId),
+            new Claim(ClaimTypes.Role, "Client")
+        }, "TestAuth"));
+
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var dto = new ApplyActionVerificationDto
+        {
+            VerificationStatus = DocumentVerificationStatus.Verified,
+            VerifiedBy = "client-attempt"
+        };
+
+        // Act
+        var result = await _controller.ApplyVerification(engagementId, actionId, dto, tenantId: null);
+
+        // Assert: 403 Forbidden
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.ApplyVerificationOutcomeAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<ApplyActionVerificationDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ReviewAction_StaffRole_Returns200OK()
+    {
+        // Arrange: Staff role reviewing an action
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = tenantId;
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantId),
+            new Claim(ClaimTypes.Role, "Staff"),
+            new Claim("sub", "staff-user-01")
+        }, "TestAuth"));
+
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var dto = new ReviewActionDto { Status = ClientActionStatus.Completed };
+        var expectedResponse = new ClientActionResponseDto { ActionId = actionId, Status = ClientActionStatus.Completed };
+
+        _mockService.Setup(s => s.ReviewActionAsync(engagementId, actionId, tenantId, dto))
+                    .ReturnsAsync(expectedResponse);
+
+        // Act
+        var result = await _controller.ReviewAction(engagementId, actionId, dto, tenantId: null);
+
+        // Assert: 200 OK
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task ApplyVerification_StaffRole_Returns200OK()
+    {
+        // Arrange: Staff role applying verification
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = tenantId;
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantId),
+            new Claim(ClaimTypes.Role, "Staff"),
+            new Claim("sub", "staff-user-01")
+        }, "TestAuth"));
+
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var dto = new ApplyActionVerificationDto
+        {
+            VerificationStatus = DocumentVerificationStatus.Verified
+        };
+        var expectedResponse = new ClientActionResponseDto { ActionId = actionId, Status = ClientActionStatus.Completed };
+
+        _mockService.Setup(s => s.ApplyVerificationOutcomeAsync(engagementId, actionId, tenantId, dto))
+                    .ReturnsAsync(expectedResponse);
+
+        // Act
+        var result = await _controller.ApplyVerification(engagementId, actionId, dto, tenantId: null);
+
+        // Assert: 200 OK
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+    }
 }
