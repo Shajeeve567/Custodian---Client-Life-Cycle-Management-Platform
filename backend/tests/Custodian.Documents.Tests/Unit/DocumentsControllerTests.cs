@@ -663,7 +663,7 @@ public class DocumentsControllerTests
         };
 
         _documentServiceMock
-            .Setup(s => s.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto))
+            .Setup(s => s.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto, "staff-1"))
             .ReturnsAsync(updatedDoc);
 
         var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, tenantId);
@@ -684,7 +684,7 @@ public class DocumentsControllerTests
         var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, "tenant-1");
 
         Assert.IsType<ForbidResult>(actionResult.Result);
-        _documentServiceMock.Verify(s => s.UpdateDocumentMetadataAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UpdateDocumentMetadataDto>()), Times.Never);
+        _documentServiceMock.Verify(s => s.UpdateDocumentMetadataAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UpdateDocumentMetadataDto>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]
@@ -698,7 +698,7 @@ public class DocumentsControllerTests
         var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, "tenant-ATTACKER");
 
         Assert.IsType<ForbidResult>(actionResult.Result);
-        _documentServiceMock.Verify(s => s.UpdateDocumentMetadataAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UpdateDocumentMetadataDto>()), Times.Never);
+        _documentServiceMock.Verify(s => s.UpdateDocumentMetadataAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UpdateDocumentMetadataDto>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]
@@ -711,7 +711,7 @@ public class DocumentsControllerTests
         var dto = new UpdateDocumentMetadataDto { Type = "UpdatedType" };
 
         _documentServiceMock
-            .Setup(s => s.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto))
+            .Setup(s => s.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto, "staff-1"))
             .ReturnsAsync((DocumentResponseDto?)null);
 
         var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, tenantId);
@@ -729,7 +729,7 @@ public class DocumentsControllerTests
         var dto = new UpdateDocumentMetadataDto { Type = "UpdatedType" };
 
         _documentServiceMock
-            .Setup(s => s.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto))
+            .Setup(s => s.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto, "staff-1"))
             .ThrowsAsync(new InvalidOperationException($"Cannot update metadata for soft-deleted document '{documentId}'."));
 
         var actionResult = await _controller.UpdateDocumentMetadata(engagementId, documentId, dto, tenantId);

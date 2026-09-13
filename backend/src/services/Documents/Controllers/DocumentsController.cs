@@ -316,9 +316,11 @@ public class DocumentsController : ControllerBase
             return BadRequest(ModelState);
         }
 
+        var staffActor = ResolveStaffActor();
+
         try
         {
-            var result = await _documentService.UpdateDocumentMetadataAsync(engagementId, documentId, effectiveTenantId, dto);
+            var result = await _documentService.UpdateDocumentMetadataAsync(engagementId, documentId, effectiveTenantId, dto, staffActor);
             if (result == null)
             {
                 return NotFound(new { message = $"Document '{documentId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });

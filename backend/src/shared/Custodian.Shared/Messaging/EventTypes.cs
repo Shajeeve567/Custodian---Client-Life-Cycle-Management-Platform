@@ -9,4 +9,6 @@ public static class EventTypes
     public const string DocumentRejected = "document.rejected";
     public const string DocumentVerified = "document.verified";
     public const string DocumentVerificationRejected = "document.verification_rejected";
+    public const string DocumentMetadataUpdated = "document.metadata_updated";
+    public const string DocumentSoftDeleted = "document.soft_deleted";
 }

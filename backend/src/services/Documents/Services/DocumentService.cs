@@ -322,11 +322,19 @@ public class DocumentService : IDocumentService
         return MapToResponseDto(document);
     }
 
+    public Task<DocumentResponseDto?> UpdateDocumentMetadataAsync(
+        Guid engagementId,
+        Guid documentId,
+        string tenantId,
+        UpdateDocumentMetadataDto dto) =>
+        UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto, staffActor: null);
+
     public async Task<DocumentResponseDto?> UpdateDocumentMetadataAsync(
         Guid engagementId,
         Guid documentId,
         string tenantId,
-        UpdateDocumentMetadataDto dto)
+        UpdateDocumentMetadataDto dto,
+        string? staffActor)
     {
         if (string.IsNullOrWhiteSpace(tenantId))
         {
@@ -372,6 +380,35 @@ public class DocumentService : IDocumentService
 
         await _dbContext.SaveChangesAsync();
 
+        if (_auditPublisher != null)
+        {
+            try
+            {
+                var auditPayload = new
+                {
+                    documentId = document.DocumentId,
+                    engagementId = document.EngagementId,
+                    tenantId = document.TenantId,
+                    documentType = document.Type,
+                    issueDate = document.IssueDate,
+                    expiryDate = document.ExpiryDate,
+                    updatedBy = !string.IsNullOrWhiteSpace(staffActor) ? staffActor.Trim() : "StaffUser",
+                    updatedAtUtc = DateTime.UtcNow
+                };
+
+                await _auditPublisher.PublishEventAsync(
+                    engagementId,
+                    tenantId,
+                    !string.IsNullOrWhiteSpace(staffActor) ? staffActor.Trim() : "StaffUser",
+                    EventTypes.DocumentMetadataUpdated,
+                    auditPayload);
+            }
+            catch
+            {
+                // Non-blocking: audit event side effects must not silently corrupt or fail the primary transaction
+            }
+        }
+
         return MapToResponseDto(document);
     }
 
@@ -408,6 +445,35 @@ public class DocumentService : IDocumentService
         // DbContext document entity is explicitly NOT removed.
 
         await _dbContext.SaveChangesAsync();
+
+        if (_auditPublisher != null)
+        {
+            try
+            {
+                var auditPayload = new
+                {
+                    documentId = document.DocumentId,
+                    engagementId = document.EngagementId,
+                    tenantId = document.TenantId,
+                    documentType = document.Type,
+                    fileName = document.FileName,
+                    storagePath = document.StoragePath,
+                    deletedBy = document.DeletedBy,
+                    deletedAtUtc = document.DeletedAt
+                };
+
+                await _auditPublisher.PublishEventAsync(
+                    engagementId,
+                    tenantId,
+                    document.DeletedBy ?? "StaffUser",
+                    EventTypes.DocumentSoftDeleted,
+                    auditPayload);
+            }
+            catch
+            {
+                // Non-blocking: audit event side effects must not silently corrupt or fail the primary transaction
+            }
+        }
 
         return MapToResponseDto(document);
     }

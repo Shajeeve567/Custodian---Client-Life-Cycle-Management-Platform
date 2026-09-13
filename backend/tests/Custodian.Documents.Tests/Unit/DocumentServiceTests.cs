@@ -1330,6 +1330,205 @@ public class DocumentServiceTests
 
         Assert.Null(result);
     }
+
+    [Fact]
+    public async Task UpdateDocumentMetadataAsync_PublishesAuditMetadataUpdatedEvent()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+        var auditMock = new Mock<IAuditPublisher>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-audit";
+
+        var doc = new DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Identity",
+            IssueDate = DateTime.UtcNow.AddYears(-1),
+            ExpiryDate = DateTime.UtcNow.AddYears(4),
+            ComplianceStatus = Custodian.Documents.Compliance.ComplianceStatus.Compliant,
+            VerificationStatus = DocumentVerificationStatus.Verified
+        };
+
+        dbContext.Documents.Add(doc);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(
+            dbContext,
+            validator,
+            storageMock.Object,
+            complianceEngine: null,
+            auditPublisher: auditMock.Object);
+
+        var dto = new UpdateDocumentMetadataDto
+        {
+            Type = "Passport",
+            ExpiryDate = DateTime.UtcNow.AddYears(9)
+        };
+
+        var result = await service.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto, "staff-updater");
+
+        Assert.NotNull(result);
+        Assert.Equal("Passport", result.Type);
+
+        auditMock.Verify(
+            a => a.PublishEventAsync(
+                engagementId,
+                tenantId,
+                "staff-updater",
+                EventTypes.DocumentMetadataUpdated,
+                It.IsAny<object>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateDocumentMetadataAsync_AuditPublisherThrows_TransactionStillSucceeds()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+        var auditMock = new Mock<IAuditPublisher>();
+
+        auditMock
+            .Setup(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()))
+            .ThrowsAsync(new HttpRequestException("Audit service down"));
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-audit";
+
+        var doc = new DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Identity"
+        };
+
+        dbContext.Documents.Add(doc);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(
+            dbContext,
+            validator,
+            storageMock.Object,
+            complianceEngine: null,
+            auditPublisher: auditMock.Object);
+
+        var dto = new UpdateDocumentMetadataDto
+        {
+            Type = "Passport"
+        };
+
+        var result = await service.UpdateDocumentMetadataAsync(engagementId, documentId, tenantId, dto, "staff-updater");
+
+        Assert.NotNull(result);
+        Assert.Equal("Passport", result.Type);
+
+        var saved = await dbContext.Documents.FindAsync(documentId);
+        Assert.NotNull(saved);
+        Assert.Equal("Passport", saved.Type);
+    }
+
+    [Fact]
+    public async Task SoftDeleteDocumentAsync_PublishesAuditSoftDeletedEvent()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+        var auditMock = new Mock<IAuditPublisher>();
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-audit";
+
+        var doc = new DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Identity",
+            FileName = "passport.pdf",
+            StoragePath = "uploads/passport.pdf"
+        };
+
+        dbContext.Documents.Add(doc);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(
+            dbContext,
+            validator,
+            storageMock.Object,
+            complianceEngine: null,
+            auditPublisher: auditMock.Object);
+
+        var result = await service.SoftDeleteDocumentAsync(engagementId, documentId, tenantId, "staff-deleter");
+
+        Assert.NotNull(result);
+        Assert.True(result.IsDeleted);
+        Assert.Equal("staff-deleter", result.DeletedBy);
+
+        auditMock.Verify(
+            a => a.PublishEventAsync(
+                engagementId,
+                tenantId,
+                "staff-deleter",
+                EventTypes.DocumentSoftDeleted,
+                It.IsAny<object>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task SoftDeleteDocumentAsync_AuditPublisherThrows_TransactionStillSucceeds()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var validator = new DocumentValidator();
+        var storageMock = new Mock<IStorageService>();
+        var auditMock = new Mock<IAuditPublisher>();
+
+        auditMock
+            .Setup(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()))
+            .ThrowsAsync(new HttpRequestException("Audit service down"));
+
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var tenantId = "tenant-audit";
+
+        var doc = new DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Identity",
+            FileName = "passport.pdf",
+            StoragePath = "uploads/passport.pdf"
+        };
+
+        dbContext.Documents.Add(doc);
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(
+            dbContext,
+            validator,
+            storageMock.Object,
+            complianceEngine: null,
+            auditPublisher: auditMock.Object);
+
+        var result = await service.SoftDeleteDocumentAsync(engagementId, documentId, tenantId, "staff-deleter");
+
+        Assert.NotNull(result);
+        Assert.True(result.IsDeleted);
+
+        var saved = await dbContext.Documents.FindAsync(documentId);
+        Assert.NotNull(saved);
+        Assert.True(saved.IsDeleted);
+        Assert.Equal("staff-deleter", saved.DeletedBy);
+    }
 }
 
 

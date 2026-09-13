@@ -23,6 +23,13 @@ public class DocumentVerificationContractTests
     }
 
     [Fact]
+    public void EventTypes_ContainsLifecycleEventTypes()
+    {
+        Assert.Equal("document.metadata_updated", EventTypes.DocumentMetadataUpdated);
+        Assert.Equal("document.soft_deleted", EventTypes.DocumentSoftDeleted);
+    }
+
+    [Fact]
     public void DocumentVerificationContract_CanBeInstantiatedWithAllFields()
     {
         var docId = Guid.NewGuid();
