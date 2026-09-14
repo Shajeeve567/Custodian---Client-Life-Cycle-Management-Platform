@@ -76,11 +76,16 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
 
         try {
             let data: ClientPortalDashboard;
+            // Only a real Client caller's userId maps to a client identity. For Staff/Owner
+            // previewing, sending their own staff userId as clientId makes the backend treat
+            // them as a client trying to access someone else's engagement (ownership check
+            // fails, request 404s) instead of triggering the actual staff-preview fallback.
+            const effectiveClientId = role === 'Client' ? userId : undefined;
             if (initialEngagementId) {
-                data = await PortalApi.getEngagementDashboard(initialEngagementId, tenantId, userId);
+                data = await PortalApi.getEngagementDashboard(initialEngagementId, tenantId, effectiveClientId);
             } else {
                 // Auto-resolve active engagement for the authenticated client (Zero IDOR)
-                data = await PortalApi.getMyEngagement(tenantId, userId);
+                data = await PortalApi.getMyEngagement(tenantId, effectiveClientId);
             }
             setDashboard(data);
             if (data?.engagementId) {
@@ -91,7 +96,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
         } finally {
             setLoading(false);
         }
-    }, [tenantId, userId, initialEngagementId, fetchDocuments]);
+    }, [tenantId, userId, initialEngagementId, fetchDocuments, role]);
 
     useEffect(() => {
         fetchDashboard();
