@@ -76,6 +76,53 @@ public class ClientActionsControllerTests
     }
 
     [Fact]
+    public async Task GetActionHistory_ClientRoleNotOwningEngagement_Returns403Forbidden()
+    {
+        // Arrange (CSTD-22 IDOR protection, extended to ClientActionsController): tenant matches,
+        // but the engagement belongs to a different client.
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = "tenant-001";
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", "tenant-001"),
+            new Claim(ClaimTypes.Role, "Client"),
+            new Claim("client_id", "client-attacker")
+        }, "TestAuth"));
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var engagementId = Guid.NewGuid();
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, "tenant-001", "client-attacker")).ReturnsAsync(false);
+
+        // Act
+        var result = await _controller.GetActionHistory(engagementId, tenantId: null, status: null, isClientView: null);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.GetActionsByEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetActionHistory_ClientRoleWithoutResolvableIdentity_Returns403Forbidden()
+    {
+        // Arrange
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = "tenant-001";
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", "tenant-001"),
+            new Claim(ClaimTypes.Role, "Client")
+        }, "TestAuth"));
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        // Act
+        var result = await _controller.GetActionHistory(Guid.NewGuid(), tenantId: null, status: null, isClientView: null);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.GetActionsByEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
     public async Task GetActionHistory_NoRecognizedRoleExplicitlyRequestsStaffView_Returns403Forbidden()
     {
         // Arrange (CSTD-12 fix — Internal Field Leak): a caller with no Owner/Staff/Client role
@@ -146,6 +193,33 @@ public class ClientActionsControllerTests
     }
 
     [Fact]
+    public async Task CreateAction_ClientRoleNotOwningEngagement_Returns403Forbidden()
+    {
+        // Arrange (CSTD-22 IDOR protection, extended to ClientActionsController)
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = "tenant-001";
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", "tenant-001"),
+            new Claim(ClaimTypes.Role, "Client"),
+            new Claim("client_id", "client-attacker")
+        }, "TestAuth"));
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var engagementId = Guid.NewGuid();
+        var dto = new CreateClientActionDto { Title = "Forged task", Type = "CustomTask", Source = "Attacker" };
+
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, "tenant-001", "client-attacker")).ReturnsAsync(false);
+
+        // Act
+        var result = await _controller.CreateAction(engagementId, dto, tenantId: null);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.CreateActionAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CreateClientActionDto>()), Times.Never);
+    }
+
+    [Fact]
     public async Task CompleteAction_ExistingAction_Returns200OK()
     {
         // Arrange
@@ -175,6 +249,34 @@ public class ClientActionsControllerTests
         Assert.Equal(200, okResult.StatusCode);
         var response = Assert.IsType<ClientActionResponseDto>(okResult.Value);
         Assert.Equal("Completed", response.Status);
+    }
+
+    [Fact]
+    public async Task CompleteAction_ClientRoleNotOwningEngagement_Returns403Forbidden()
+    {
+        // Arrange (CSTD-22 IDOR protection, extended to ClientActionsController)
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = "tenant-001";
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", "tenant-001"),
+            new Claim(ClaimTypes.Role, "Client"),
+            new Claim("client_id", "client-attacker")
+        }, "TestAuth"));
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var dto = new CompleteClientActionDto { CompletedByActor = "client-attacker" };
+
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, "tenant-001", "client-attacker")).ReturnsAsync(false);
+
+        // Act
+        var result = await _controller.CompleteAction(engagementId, actionId, dto, tenantId: null);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.CompleteActionAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CompleteClientActionDto>()), Times.Never);
     }
 
     [Fact]
@@ -239,6 +341,58 @@ public class ClientActionsControllerTests
         Assert.Equal(200, okResult.StatusCode);
         var response = Assert.IsType<ClientActionResponseDto>(okResult.Value);
         Assert.Equal(ClientActionStatus.Uploaded, response.Status);
+    }
+
+    [Fact]
+    public async Task UploadEvidence_ClientRoleNotOwningEngagement_Returns403Forbidden()
+    {
+        // Arrange (CSTD-22 IDOR protection, extended to ClientActionsController): a Client-role
+        // caller whose own client_id doesn't match the engagement's owner must be denied outright.
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = "tenant-001";
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", "tenant-001"),
+            new Claim(ClaimTypes.Role, "Client"),
+            new Claim("client_id", "client-attacker")
+        }, "TestAuth"));
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var dto = new UploadActionEvidenceDto { UploaderActor = "client-attacker" };
+
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, "tenant-001", "client-attacker")).ReturnsAsync(false);
+
+        // Act
+        var result = await _controller.UploadEvidence(engagementId, actionId, dto, tenantId: null);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.UploadEvidenceAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UploadActionEvidenceDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UploadEvidence_ClientRoleWithoutResolvableIdentity_Returns403Forbidden()
+    {
+        // Arrange
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Tenant-ID"] = "tenant-001";
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", "tenant-001"),
+            new Claim(ClaimTypes.Role, "Client")
+        }, "TestAuth"));
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var dto = new UploadActionEvidenceDto { UploaderActor = "client-user-1" };
+
+        // Act
+        var result = await _controller.UploadEvidence(Guid.NewGuid(), Guid.NewGuid(), dto, tenantId: null);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.UploadEvidenceAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UploadActionEvidenceDto>()), Times.Never);
     }
 
     [Fact]
@@ -525,11 +679,13 @@ public class ClientActionsControllerTests
         httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
         {
             new Claim("tenant_id", tenantId),
-            new Claim(ClaimTypes.Role, "Client")
+            new Claim(ClaimTypes.Role, "Client"),
+            new Claim("client_id", "client-1")
         }, "TestAuth"));
 
         _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
 
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, tenantId, "client-1")).ReturnsAsync(true);
         _mockService.Setup(s => s.GetActionsByEngagementAsync(engagementId, tenantId, true, null))
             .ReturnsAsync(new List<ClientActionResponseDto>());
 
@@ -616,11 +772,13 @@ public class ClientActionsControllerTests
         httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
         {
             new Claim("tenant_id", tenantId),
-            new Claim(ClaimTypes.Role, "Client")
+            new Claim(ClaimTypes.Role, "Client"),
+            new Claim("client_id", "client-1")
         }, "TestAuth"));
 
         _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
 
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, tenantId, "client-1")).ReturnsAsync(true);
         _mockService.Setup(s => s.GetActionsByEngagementAsync(engagementId, tenantId, true, null))
             .ReturnsAsync(new List<ClientActionResponseDto>());
 

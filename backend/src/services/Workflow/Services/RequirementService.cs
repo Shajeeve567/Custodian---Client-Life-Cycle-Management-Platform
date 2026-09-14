@@ -27,9 +27,15 @@ public class RequirementService : IRequirementService
     public async Task<IEnumerable<RequirementResponseDto>> GetRequirementsByEngagementAsync(
         Guid engagementId,
         string tenantId,
-        bool isClientView)
+        bool isClientView,
+        string? callerClientId = null)
     {
         if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return Enumerable.Empty<RequirementResponseDto>();
+        }
+
+        if (!string.IsNullOrWhiteSpace(callerClientId) && !await OwnsEngagementAsync(engagementId, tenantId, callerClientId))
         {
             return Enumerable.Empty<RequirementResponseDto>();
         }
@@ -109,9 +115,14 @@ public class RequirementService : IRequirementService
         return MapToResponseDto(requirement, isClientView: false);
     }
 
-    public async Task<RequirementResponseDto?> SubmitRequirementAsync(Guid engagementId, Guid requirementId, string tenantId, SubmitRequirementDto dto)
+    public async Task<RequirementResponseDto?> SubmitRequirementAsync(Guid engagementId, Guid requirementId, string tenantId, SubmitRequirementDto dto, string? callerClientId = null)
     {
         if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(callerClientId) && !await OwnsEngagementAsync(engagementId, tenantId, callerClientId))
         {
             return null;
         }
@@ -214,6 +225,20 @@ public class RequirementService : IRequirementService
         await _dbContext.SaveChangesAsync();
 
         return MapToResponseDto(requirement, isClientView: false);
+    }
+
+    /// <summary>
+    /// IDOR protection (CSTD-22): confirms the engagement identified by
+    /// engagementId+tenantId belongs to callerClientId. Mirrors ClientPortalController's
+    /// ResolveClientId/ownership check, applied here at the Requirements layer, which
+    /// previously enforced tenant isolation but not per-client ownership.
+    /// </summary>
+    private async Task<bool> OwnsEngagementAsync(Guid engagementId, string tenantId, string callerClientId)
+    {
+        return await _dbContext.Engagements.AsNoTracking().AnyAsync(e =>
+            e.EngagementId == engagementId &&
+            e.TenantId == tenantId &&
+            e.ClientId == callerClientId);
     }
 
     private static RequirementResponseDto MapToResponseDto(Requirement entity, bool isClientView) => new()

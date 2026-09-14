@@ -78,6 +78,18 @@ public class ClientActionsController : ControllerBase
             clientView = true;
         }
 
+        // IDOR protection (CSTD-22 fix, extended here): a Client-role caller is constrained to
+        // engagements they actually own; fail closed if we can't resolve who they are.
+        if (isClient)
+        {
+            var callerClientId = ResolveCallerClientId();
+            if (string.IsNullOrWhiteSpace(callerClientId) ||
+                !await _actionService.ClientOwnsEngagementAsync(engagementId, effectiveTenantId, callerClientId))
+            {
+                return Forbid();
+            }
+        }
+
         var actions = await _actionService.GetActionsByEngagementAsync(engagementId, effectiveTenantId, clientView, status);
         return Ok(actions);
     }
@@ -105,6 +117,16 @@ public class ClientActionsController : ControllerBase
         if (!ModelState.IsValid)
         {
             return BadRequest(ModelState);
+        }
+
+        if (User.IsInRole("Client"))
+        {
+            var callerClientId = ResolveCallerClientId();
+            if (string.IsNullOrWhiteSpace(callerClientId) ||
+                !await _actionService.ClientOwnsEngagementAsync(engagementId, effectiveTenantId, callerClientId))
+            {
+                return Forbid();
+            }
         }
 
         try
@@ -148,6 +170,16 @@ public class ClientActionsController : ControllerBase
             return BadRequest(ModelState);
         }
 
+        if (User.IsInRole("Client"))
+        {
+            var callerClientId = ResolveCallerClientId();
+            if (string.IsNullOrWhiteSpace(callerClientId) ||
+                !await _actionService.ClientOwnsEngagementAsync(engagementId, effectiveTenantId, callerClientId))
+            {
+                return Forbid();
+            }
+        }
+
         try
         {
             var result = await _actionService.CompleteActionAsync(engagementId, actionId, effectiveTenantId, dto);
@@ -188,6 +220,16 @@ public class ClientActionsController : ControllerBase
         if (!ModelState.IsValid)
         {
             return BadRequest(ModelState);
+        }
+
+        if (User.IsInRole("Client"))
+        {
+            var callerClientId = ResolveCallerClientId();
+            if (string.IsNullOrWhiteSpace(callerClientId) ||
+                !await _actionService.ClientOwnsEngagementAsync(engagementId, effectiveTenantId, callerClientId))
+            {
+                return Forbid();
+            }
         }
 
         var result = await _actionService.UploadEvidenceAsync(engagementId, actionId, effectiveTenantId, dto);
@@ -324,6 +366,25 @@ public class ClientActionsController : ControllerBase
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Resolves the calling Client's own client id from JWT claims (same pattern as
+    /// RequirementsController.ResolveCallerClientId, CSTD-22) — never trusts a query
+    /// param/header, since there is no legitimate "client acting on someone else's behalf" case.
+    /// </summary>
+    private string? ResolveCallerClientId()
+    {
+        var jwtClaimClient = User?.FindFirst("client_id")?.Value ?? User?.FindFirst("clientId")?.Value;
+        if (!string.IsNullOrWhiteSpace(jwtClaimClient))
+        {
+            return jwtClaimClient.Trim();
+        }
+
+        var fallbackSub = User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? User?.FindFirst("sub")?.Value;
+
+        return string.IsNullOrWhiteSpace(fallbackSub) ? null : fallbackSub.Trim();
     }
 
     private string? ResolveStaffActor()

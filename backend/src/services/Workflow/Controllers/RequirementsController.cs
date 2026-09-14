@@ -78,7 +78,20 @@ public class RequirementsController : ControllerBase
             clientView = true;
         }
 
-        var requirements = await _requirementService.GetRequirementsByEngagementAsync(engagementId, effectiveTenantId, clientView);
+        // IDOR protection (CSTD-22): a Client-role caller is constrained to engagements they
+        // actually own; fail closed if we can't resolve who they are rather than silently
+        // letting the query through unconstrained.
+        string? callerClientId = null;
+        if (isClient)
+        {
+            callerClientId = ResolveCallerClientId();
+            if (string.IsNullOrWhiteSpace(callerClientId))
+            {
+                return Forbid();
+            }
+        }
+
+        var requirements = await _requirementService.GetRequirementsByEngagementAsync(engagementId, effectiveTenantId, clientView, callerClientId);
         return Ok(requirements);
     }
 
@@ -154,9 +167,20 @@ public class RequirementsController : ControllerBase
             return BadRequest(ModelState);
         }
 
+        // IDOR protection (CSTD-22): see GetRequirements for the same fail-closed rationale.
+        string? callerClientId = null;
+        if (User.IsInRole("Client"))
+        {
+            callerClientId = ResolveCallerClientId();
+            if (string.IsNullOrWhiteSpace(callerClientId))
+            {
+                return Forbid();
+            }
+        }
+
         dto.SubmittedByActor ??= ResolveActor();
 
-        var result = await _requirementService.SubmitRequirementAsync(engagementId, requirementId, effectiveTenantId, dto);
+        var result = await _requirementService.SubmitRequirementAsync(engagementId, requirementId, effectiveTenantId, dto, callerClientId);
         if (result == null)
         {
             return NotFound(new { message = $"Requirement '{requirementId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
@@ -235,6 +259,27 @@ public class RequirementsController : ControllerBase
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Resolves the calling Client's own client id from JWT claims — never trusts a query
+    /// param/header for this, unlike tenant resolution, since there is no legitimate
+    /// "client acting on someone else's behalf" case here (mirrors the identity-resolution
+    /// half of ClientPortalController.ResolveClientId, without that method's staff-preview
+    /// override paths, which don't apply to a Client-role caller).
+    /// </summary>
+    private string? ResolveCallerClientId()
+    {
+        var jwtClaimClient = User?.FindFirst("client_id")?.Value ?? User?.FindFirst("clientId")?.Value;
+        if (!string.IsNullOrWhiteSpace(jwtClaimClient))
+        {
+            return jwtClaimClient.Trim();
+        }
+
+        var fallbackSub = User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? User?.FindFirst("sub")?.Value;
+
+        return string.IsNullOrWhiteSpace(fallbackSub) ? null : fallbackSub.Trim();
     }
 
     private string? ResolveActor()

@@ -11,5 +11,14 @@ public interface IClientActionService
     Task<ClientActionResponseDto?> ReviewActionAsync(Guid engagementId, Guid actionId, string tenantId, ReviewActionDto dto);
     Task<ClientActionResponseDto?> ApplyVerificationOutcomeAsync(Guid engagementId, Guid actionId, string tenantId, ApplyActionVerificationDto dto);
     Task<List<ClientActionResponseDto>> EnsureLifecycleActionsAsync(Guid engagementId, string tenantId);
+
+    /// <summary>
+    /// IDOR protection (CSTD-22 fix, extended here): confirms the engagement identified by
+    /// engagementId+tenantId belongs to clientId. Called by ClientActionsController before any
+    /// endpoint a Client-role caller can reach, mirroring RequirementService's
+    /// OwnsEngagementAsync — Owner/Staff callers never need this check since they legitimately
+    /// act across the whole tenant.
+    /// </summary>
+    Task<bool> ClientOwnsEngagementAsync(Guid engagementId, string tenantId, string clientId);
 }
 

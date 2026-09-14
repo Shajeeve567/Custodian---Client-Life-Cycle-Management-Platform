@@ -21,6 +21,14 @@ public class ClientActionService : IClientActionService
         _auditPublisher = auditPublisher;
     }
 
+    public async Task<bool> ClientOwnsEngagementAsync(Guid engagementId, string tenantId, string clientId)
+    {
+        return await _dbContext.Engagements.AsNoTracking().AnyAsync(e =>
+            e.EngagementId == engagementId &&
+            e.TenantId == tenantId &&
+            e.ClientId == clientId);
+    }
+
     public async Task<IEnumerable<ClientActionResponseDto>> GetActionsByEngagementAsync(
         Guid engagementId,
         string tenantId,
