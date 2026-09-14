@@ -315,6 +315,137 @@ public class RequirementServiceTests
     }
 
     [Fact]
+    public async Task GetRequirementsByEngagementAsync_ClientCallerNotOwningEngagement_ReturnsEmpty()
+    {
+        // Arrange (CSTD-22 IDOR protection): same tenant, but a different client's engagement
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var service = new RequirementService(db, new Mock<IAuditPublisher>().Object);
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-owner",
+            StaffId = "staff-1"
+        });
+        await db.SaveChangesAsync();
+        await service.RequestRequirementAsync(engagementId, tenantId, new RequestRequirementDto { Type = "SourceOfFunds" });
+
+        // Act: a different client in the same tenant attempts to read it
+        var result = await service.GetRequirementsByEngagementAsync(engagementId, tenantId, isClientView: true, callerClientId: "client-attacker");
+
+        // Assert
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task GetRequirementsByEngagementAsync_ClientCallerOwningEngagement_ReturnsRequirements()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var service = new RequirementService(db, new Mock<IAuditPublisher>().Object);
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-owner",
+            StaffId = "staff-1"
+        });
+        await db.SaveChangesAsync();
+        await service.RequestRequirementAsync(engagementId, tenantId, new RequestRequirementDto { Type = "SourceOfFunds" });
+
+        // Act
+        var result = await service.GetRequirementsByEngagementAsync(engagementId, tenantId, isClientView: true, callerClientId: "client-owner");
+
+        // Assert
+        Assert.Single(result);
+    }
+
+    [Fact]
+    public async Task GetRequirementsByEngagementAsync_StaffCaller_NoOwnershipCheckApplied()
+    {
+        // Arrange: callerClientId null (Owner/Staff) bypasses the ownership check entirely,
+        // even with no Engagement row at all — matches the existing tenant-only behavior.
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var service = new RequirementService(db, new Mock<IAuditPublisher>().Object);
+        await service.RequestRequirementAsync(engagementId, tenantId, new RequestRequirementDto { Type = "SourceOfFunds" });
+
+        // Act
+        var result = await service.GetRequirementsByEngagementAsync(engagementId, tenantId, isClientView: false, callerClientId: null);
+
+        // Assert
+        Assert.Single(result);
+    }
+
+    [Fact]
+    public async Task SubmitRequirementAsync_ClientCallerNotOwningEngagement_ReturnsNull()
+    {
+        // Arrange (CSTD-22 IDOR protection)
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var service = new RequirementService(db, new Mock<IAuditPublisher>().Object);
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-owner",
+            StaffId = "staff-1"
+        });
+        await db.SaveChangesAsync();
+        var requested = await service.RequestRequirementAsync(engagementId, tenantId, new RequestRequirementDto { Type = "SourceOfFunds" });
+
+        // Act: attacker knows the engagementId/requirementId but doesn't own the engagement
+        var result = await service.SubmitRequirementAsync(
+            engagementId, requested.RequirementId, tenantId,
+            new SubmitRequirementDto { Value = "forged answer" }, callerClientId: "client-attacker");
+
+        // Assert
+        Assert.Null(result);
+        var dbRequirement = await db.Requirements.FirstAsync(r => r.RequirementId == requested.RequirementId);
+        Assert.Equal(RequirementStatus.Requested, dbRequirement.Status);
+        Assert.Null(dbRequirement.Value);
+    }
+
+    [Fact]
+    public async Task SubmitRequirementAsync_ClientCallerOwningEngagement_Succeeds()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var service = new RequirementService(db, new Mock<IAuditPublisher>().Object);
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-owner",
+            StaffId = "staff-1"
+        });
+        await db.SaveChangesAsync();
+        var requested = await service.RequestRequirementAsync(engagementId, tenantId, new RequestRequirementDto { Type = "SourceOfFunds" });
+
+        // Act
+        var result = await service.SubmitRequirementAsync(
+            engagementId, requested.RequirementId, tenantId,
+            new SubmitRequirementDto { Value = "Salary income" }, callerClientId: "client-owner");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(RequirementStatus.Submitted, result!.Status);
+        Assert.Equal("Salary income", result.Value);
+    }
+
+    [Fact]
     public async Task GetRequirementsByEngagementAsync_CrossTenant_ReturnsEmpty()
     {
         // Arrange

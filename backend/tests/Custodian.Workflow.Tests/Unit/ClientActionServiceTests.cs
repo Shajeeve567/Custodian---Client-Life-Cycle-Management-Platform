@@ -971,4 +971,81 @@ public class ClientActionServiceTests
         Assert.Contains(actions, a => a.StageNumber == 1);
         Assert.Contains(actions, a => a.StageNumber == 2);
     }
+
+    [Fact]
+    public async Task ClientOwnsEngagementAsync_MatchingClientAndTenant_ReturnsTrue()
+    {
+        // Arrange (CSTD-22 IDOR protection, extended to ClientActionsController)
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-owner",
+            StaffId = "staff-1"
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act
+        var owns = await service.ClientOwnsEngagementAsync(engagementId, tenantId, "client-owner");
+
+        // Assert
+        Assert.True(owns);
+    }
+
+    [Fact]
+    public async Task ClientOwnsEngagementAsync_DifferentClient_ReturnsFalse()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-owner",
+            StaffId = "staff-1"
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act: a different client in the same tenant
+        var owns = await service.ClientOwnsEngagementAsync(engagementId, tenantId, "client-attacker");
+
+        // Assert
+        Assert.False(owns);
+    }
+
+    [Fact]
+    public async Task ClientOwnsEngagementAsync_DifferentTenant_ReturnsFalse()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = "tenant-legitimate",
+            ClientId = "client-owner",
+            StaffId = "staff-1"
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act
+        var owns = await service.ClientOwnsEngagementAsync(engagementId, "tenant-attacker", "client-owner");
+
+        // Assert
+        Assert.False(owns);
+    }
 }

@@ -23,12 +23,16 @@ public class RequirementsControllerTests
         _controller = new RequirementsController(_mockService.Object, _mockLogger.Object);
     }
 
-    private void SetupUser(string tenantId, string? role = null)
+    private void SetupUser(string tenantId, string? role = null, string? clientId = null)
     {
         var claims = new List<Claim> { new("tenant_id", tenantId) };
         if (role != null)
         {
             claims.Add(new Claim(ClaimTypes.Role, role));
+        }
+        if (clientId != null)
+        {
+            claims.Add(new Claim("client_id", clientId));
         }
 
         var httpContext = new DefaultHttpContext
@@ -45,7 +49,7 @@ public class RequirementsControllerTests
         SetupUser("tenant-001");
         var engagementId = Guid.NewGuid();
 
-        _mockService.Setup(s => s.GetRequirementsByEngagementAsync(engagementId, "tenant-001", true))
+        _mockService.Setup(s => s.GetRequirementsByEngagementAsync(engagementId, "tenant-001", true, null))
             .ReturnsAsync(new List<RequirementResponseDto>());
 
         // Act
@@ -54,17 +58,17 @@ public class RequirementsControllerTests
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
         Assert.Equal(200, okResult.StatusCode);
-        _mockService.Verify(s => s.GetRequirementsByEngagementAsync(engagementId, "tenant-001", true), Times.Once);
+        _mockService.Verify(s => s.GetRequirementsByEngagementAsync(engagementId, "tenant-001", true, null), Times.Once);
     }
 
     [Fact]
     public async Task GetRequirements_ClientRoleRequestsStaffView_ForcesClientViewTrue()
     {
         // Arrange
-        SetupUser("tenant-001", "Client");
+        SetupUser("tenant-001", "Client", clientId: "client-1");
         var engagementId = Guid.NewGuid();
 
-        _mockService.Setup(s => s.GetRequirementsByEngagementAsync(engagementId, "tenant-001", true))
+        _mockService.Setup(s => s.GetRequirementsByEngagementAsync(engagementId, "tenant-001", true, "client-1"))
             .ReturnsAsync(new List<RequirementResponseDto>());
 
         // Act: Client attempts to request the staff view
@@ -72,8 +76,24 @@ public class RequirementsControllerTests
 
         // Assert
         Assert.IsType<OkObjectResult>(result.Result);
-        _mockService.Verify(s => s.GetRequirementsByEngagementAsync(engagementId, "tenant-001", true), Times.Once);
-        _mockService.Verify(s => s.GetRequirementsByEngagementAsync(engagementId, "tenant-001", false), Times.Never);
+        _mockService.Verify(s => s.GetRequirementsByEngagementAsync(engagementId, "tenant-001", true, "client-1"), Times.Once);
+        _mockService.Verify(s => s.GetRequirementsByEngagementAsync(engagementId, "tenant-001", false, "client-1"), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetRequirements_ClientRoleWithoutResolvableIdentity_Returns403Forbidden()
+    {
+        // Arrange (CSTD-22 IDOR protection): a Client-role caller with no resolvable identity
+        // claim must be denied outright rather than let the query run unconstrained.
+        SetupUser("tenant-001", "Client");
+        var engagementId = Guid.NewGuid();
+
+        // Act
+        var result = await _controller.GetRequirements(engagementId, tenantId: null, isClientView: null);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.GetRequirementsByEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
@@ -88,7 +108,7 @@ public class RequirementsControllerTests
 
         // Assert
         Assert.IsType<ForbidResult>(result.Result);
-        _mockService.Verify(s => s.GetRequirementsByEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<bool>()), Times.Never);
+        _mockService.Verify(s => s.GetRequirementsByEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
@@ -98,7 +118,7 @@ public class RequirementsControllerTests
         SetupUser("tenant-001", "Staff");
         var engagementId = Guid.NewGuid();
 
-        _mockService.Setup(s => s.GetRequirementsByEngagementAsync(engagementId, "tenant-001", false))
+        _mockService.Setup(s => s.GetRequirementsByEngagementAsync(engagementId, "tenant-001", false, null))
             .ReturnsAsync(new List<RequirementResponseDto>());
 
         // Act
@@ -106,7 +126,7 @@ public class RequirementsControllerTests
 
         // Assert
         Assert.IsType<OkObjectResult>(result.Result);
-        _mockService.Verify(s => s.GetRequirementsByEngagementAsync(engagementId, "tenant-001", false), Times.Once);
+        _mockService.Verify(s => s.GetRequirementsByEngagementAsync(engagementId, "tenant-001", false, null), Times.Once);
     }
 
     [Fact]
@@ -162,13 +182,13 @@ public class RequirementsControllerTests
     public async Task SubmitRequirement_ExistingRequirement_ReturnsOk()
     {
         // Arrange: any authenticated caller may submit (the client, typically)
-        SetupUser("tenant-001", "Client");
+        SetupUser("tenant-001", "Client", clientId: "client-1");
         var engagementId = Guid.NewGuid();
         var requirementId = Guid.NewGuid();
         var dto = new SubmitRequirementDto { Value = "Salary" };
         var expected = new RequirementResponseDto { RequirementId = requirementId, EngagementId = engagementId };
 
-        _mockService.Setup(s => s.SubmitRequirementAsync(engagementId, requirementId, "tenant-001", dto)).ReturnsAsync(expected);
+        _mockService.Setup(s => s.SubmitRequirementAsync(engagementId, requirementId, "tenant-001", dto, "client-1")).ReturnsAsync(expected);
 
         // Act
         var result = await _controller.SubmitRequirement(engagementId, requirementId, dto, tenantId: null);
@@ -181,12 +201,12 @@ public class RequirementsControllerTests
     public async Task SubmitRequirement_NotFound_Returns404()
     {
         // Arrange
-        SetupUser("tenant-001", "Client");
+        SetupUser("tenant-001", "Client", clientId: "client-1");
         var engagementId = Guid.NewGuid();
         var requirementId = Guid.NewGuid();
         var dto = new SubmitRequirementDto { Value = "Salary" };
 
-        _mockService.Setup(s => s.SubmitRequirementAsync(engagementId, requirementId, "tenant-001", dto))
+        _mockService.Setup(s => s.SubmitRequirementAsync(engagementId, requirementId, "tenant-001", dto, "client-1"))
             .ReturnsAsync((RequirementResponseDto?)null);
 
         // Act
@@ -194,6 +214,45 @@ public class RequirementsControllerTests
 
         // Assert
         Assert.IsType<NotFoundObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task SubmitRequirement_ClientRoleWithoutResolvableIdentity_Returns403Forbidden()
+    {
+        // Arrange (CSTD-22 IDOR protection)
+        SetupUser("tenant-001", "Client");
+        var engagementId = Guid.NewGuid();
+        var requirementId = Guid.NewGuid();
+        var dto = new SubmitRequirementDto { Value = "Salary" };
+
+        // Act
+        var result = await _controller.SubmitRequirement(engagementId, requirementId, dto, tenantId: null);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(
+            s => s.SubmitRequirementAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<SubmitRequirementDto>(), It.IsAny<string>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task SubmitRequirement_StaffCaller_NoOwnershipCheckApplied()
+    {
+        // Arrange: Owner/Staff act across the tenant — no client-ownership constraint applies
+        SetupUser("tenant-001", "Staff");
+        var engagementId = Guid.NewGuid();
+        var requirementId = Guid.NewGuid();
+        var dto = new SubmitRequirementDto { Value = "Salary" };
+        var expected = new RequirementResponseDto { RequirementId = requirementId, EngagementId = engagementId };
+
+        _mockService.Setup(s => s.SubmitRequirementAsync(engagementId, requirementId, "tenant-001", dto, null)).ReturnsAsync(expected);
+
+        // Act
+        var result = await _controller.SubmitRequirement(engagementId, requirementId, dto, tenantId: null);
+
+        // Assert
+        Assert.IsType<OkObjectResult>(result.Result);
+        _mockService.Verify(s => s.SubmitRequirementAsync(engagementId, requirementId, "tenant-001", dto, null), Times.Once);
     }
 
     [Fact]
