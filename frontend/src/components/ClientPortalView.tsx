@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { ClientPortalDashboard, ClientSafeAction, DocumentMetadata } from '../types';
 import { PortalApi, WorkflowApi, DocumentsApi } from '../services/api';
 import { UploadEvidenceModal } from './UploadEvidenceModal';
+import { SubmitRequirementModal } from './SubmitRequirementModal';
 import {
     Shield,
     CheckCircle2,
@@ -34,9 +35,16 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
     const [error, setError] = useState<string | null>(null);
     const [actionInProgress, setActionInProgress] = useState<string | null>(null);
     const [selectedActionForUpload, setSelectedActionForUpload] = useState<ClientSafeAction | null>(null);
+    const [selectedActionForRequirement, setSelectedActionForRequirement] = useState<ClientSafeAction | null>(null);
     const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
     const [loadingDocs, setLoadingDocs] = useState<boolean>(false);
     const [isDirectUploadOpen, setIsDirectUploadOpen] = useState<boolean>(false);
+
+    // CSTD-16: a Requirement-backed action must be submitted via SubmitRequirementModal (which
+    // calls PUT /requirements/{id}/submit), never the generic complete/upload flow — the
+    // presence of linkedRequirementId is the single source of truth for this, not the action's
+    // Type string, since the backend enforces the same distinction server-side.
+    const isRequirementAction = (action: ClientSafeAction): boolean => Boolean(action.linkedRequirementId);
 
     const isEvidenceAction = (action: ClientSafeAction): boolean => {
         const type = (action.type || '').toLowerCase();
@@ -462,7 +470,18 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                             Required to clear the Stage {primaryNextAction.stageNumber} milestone gate.
                         </span>
                         <div className="flex items-center gap-2">
-                            {isEvidenceAction(primaryNextAction) ? (
+                            {isRequirementAction(primaryNextAction) ? (
+                                // CSTD-16: Requirement-backed actions submit through their own
+                                // modal/endpoint — never the generic complete flow (see
+                                // ClientActionService.CompleteActionAsync's guard).
+                                <button
+                                    onClick={() => setSelectedActionForRequirement(primaryNextAction)}
+                                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white text-xs font-bold flex items-center gap-2 shadow-sm shadow-indigo-500/25 transition cursor-pointer"
+                                >
+                                    <span>{primaryNextAction.status === 'Rejected' ? 'Re-submit Information' : 'Submit Information'}</span>
+                                    <ArrowRight className="w-4 h-4" />
+                                </button>
+                            ) : isEvidenceAction(primaryNextAction) ? (
                                 // Evidence/document actions (KYC, signed agreements, uploads) can ONLY be
                                 // completed via the real upload -> compliance -> staff-verification pipeline
                                 // (CSTD-18 gate) — no "mark done without uploading" escape hatch, since that
@@ -582,7 +601,14 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                             {new Date(action.deadlineUtc).toLocaleDateString()}
                                         </span>
                                     )}
-                                    {isEvidenceAction(action) ? (
+                                    {isRequirementAction(action) ? (
+                                        <button
+                                            onClick={() => setSelectedActionForRequirement(action)}
+                                            className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                            <span>Submit</span>
+                                        </button>
+                                    ) : isEvidenceAction(action) ? (
                                         // No "Mark Done" bypass for evidence actions — see the
                                         // primary-action panel above for why.
                                         <button
@@ -731,6 +757,17 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                     </div>
                 )}
             </div>
+
+            {/* CSTD-16: Requirement submission modal */}
+            <SubmitRequirementModal
+                isOpen={Boolean(selectedActionForRequirement)}
+                action={selectedActionForRequirement}
+                onClose={() => setSelectedActionForRequirement(null)}
+                engagementId={dashboard.engagementId}
+                tenantId={tenantId || ''}
+                userId={userId}
+                onSuccess={fetchDashboard}
+            />
 
             {/* Action-bound Evidence Upload Modal */}
             <UploadEvidenceModal

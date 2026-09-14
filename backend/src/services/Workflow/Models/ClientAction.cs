@@ -58,4 +58,10 @@ public class ClientAction
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public string? SourceMetadata { get; set; }
+
+    /// <summary>
+    /// CSTD-16: set when this action mirrors a Requirement (see Requirement.cs) purely so it
+    /// surfaces through the existing Next Action selection. Null for every other action type.
+    /// </summary>
+    public Guid? LinkedRequirementId { get; set; }
 }

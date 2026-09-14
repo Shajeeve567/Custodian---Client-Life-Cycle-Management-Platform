@@ -24,6 +24,8 @@ import {
     VerifyDocumentRequest,
     RejectDocumentRequest,
     UpdateDocumentMetadataRequest,
+    SubmitRequirementRequest,
+    RequirementResponse,
 } from '../types';
 
 export const API_BASE = {
@@ -337,6 +339,23 @@ export const WorkflowApi = {
             headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
             body: JSON.stringify(data),
         });
+    },
+
+    // CSTD-16 (Requirements Collection)
+    async submitRequirement(
+        engagementId: string,
+        requirementId: string,
+        data: SubmitRequirementRequest,
+        tenantId: string
+    ): Promise<RequirementResponse> {
+        return request<RequirementResponse>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/requirements/${requirementId}/submit?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'PUT',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify(data),
+            }
+        );
     },
 };
 

@@ -21,7 +21,10 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
     {
         "Genesis",
         "StatusChange",
-        "StageChange"
+        "StageChange",
+        // CSTD-16 (Requirements Collection)
+        "RequirementRequested",
+        "RequirementSubmitted"
     };
 
     private readonly KafkaOptions _kafkaOptions;

@@ -117,6 +117,7 @@ export interface ClientAction {
     createdAt: string;
     completedAt?: string | null;
     completedByActor?: string | null;
+    linkedRequirementId?: string | null;
 }
 
 export interface CreateClientActionRequest {
@@ -147,6 +148,10 @@ export interface ClientSafeAction {
     daysRemaining?: number | null;
     rejectionReason?: string | null;
     verificationStatus?: string | null;
+    // CSTD-16: set when this action mirrors a Requirement — submit via
+    // WorkflowApi.submitRequirement(engagementId, linkedRequirementId, ...) rather than the
+    // generic complete/upload flow.
+    linkedRequirementId?: string | null;
 }
 
 export interface ClientPortalStage {
@@ -195,6 +200,30 @@ export interface ApplyActionVerificationRequest {
     verificationStatus: 'Verified' | 'Rejected' | string;
     verifiedBy: string;
     verificationReason?: string;
+}
+
+// CSTD-16 (Requirements Collection)
+export interface SubmitRequirementRequest {
+    value: string;
+    submittedByActor?: string;
+}
+
+export interface RequirementResponse {
+    requirementId: string;
+    engagementId: string;
+    tenantId: string;
+    type: string;
+    status: 'Requested' | 'Submitted' | 'Approved' | 'Rejected' | string;
+    stageNumber?: number | null;
+    value?: string | null;
+    assignedToRole?: string | null;
+    requestedBy?: string | null;
+    reviewedBy?: string | null;
+    requestedAt?: string | null;
+    submittedAt?: string | null;
+    reviewedAt?: string | null;
+    rejectionReason?: string | null;
+    createdAt: string;
 }
 
 export interface DocumentFilter {

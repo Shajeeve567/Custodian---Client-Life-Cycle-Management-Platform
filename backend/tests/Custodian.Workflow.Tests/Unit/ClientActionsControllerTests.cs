@@ -198,6 +198,27 @@ public class ClientActionsControllerTests
     }
 
     [Fact]
+    public async Task CompleteAction_RequirementBackedAction_Returns400BadRequest()
+    {
+        // Arrange: CSTD-16 — the service throws ArgumentException for a Requirement-backed
+        // action; the controller must surface this as 400, not let it bubble into a 500.
+        SetupTenantHeader("tenant-001");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var dto = new CompleteClientActionDto { CompletedByActor = "client-user-1" };
+
+        _mockService.Setup(s => s.CompleteActionAsync(engagementId, actionId, "tenant-001", dto))
+                    .ThrowsAsync(new ArgumentException("This action represents a Requirement and must be submitted via the Requirements API."));
+
+        // Act
+        var result = await _controller.CompleteAction(engagementId, actionId, dto, tenantId: null);
+
+        // Assert
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Equal(400, badRequest.StatusCode);
+    }
+
+    [Fact]
     public async Task UploadEvidence_ValidRequest_Returns200OK()
     {
         // Arrange

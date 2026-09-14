@@ -288,6 +288,43 @@ public class ClientActionServiceTests
     }
 
     [Fact]
+    public async Task CompleteActionAsync_RequirementBackedAction_ThrowsArgumentException_AndLeavesActionUnchanged()
+    {
+        // Arrange: CSTD-16 — a Requirement-backed action must go through
+        // PUT /requirements/{id}/submit, not the generic complete endpoint, or the underlying
+        // Requirement.Value/Status would never actually get set.
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var requirementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Provide: SourceOfFunds",
+            Type = "Requirement",
+            Status = ClientActionStatus.Pending,
+            Source = "RequirementSync",
+            LinkedRequirementId = requirementId
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var completeDto = new CompleteClientActionDto { CompletedByActor = "client-user-1" };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CompleteActionAsync(engagementId, actionId, tenantId, completeDto));
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.Equal(ClientActionStatus.Pending, dbAction!.Status);
+        Assert.Null(dbAction.CompletedAt);
+    }
+
+    [Fact]
     public async Task CompleteActionAsync_LastActionInStage_GateBlocked_CompletesActionButDoesNotAdvanceStageOrPublishAudit()
     {
         // Arrange

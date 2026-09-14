@@ -131,6 +131,17 @@ public class ClientActionService : IClientActionService
             return null;
         }
 
+        if (action.LinkedRequirementId.HasValue)
+        {
+            // CSTD-16: a Requirement-backed action must be completed by actually submitting a
+            // value (PUT /requirements/{id}/submit), not by the generic complete endpoint —
+            // otherwise the mirrored action would clear from Next Action while the underlying
+            // Requirement stays stuck at Requested with no Value, silently losing the submission.
+            throw new ArgumentException(
+                $"This action represents Requirement '{action.LinkedRequirementId}' and must be submitted via " +
+                $"PUT /api/engagements/{engagementId}/requirements/{action.LinkedRequirementId}/submit, not completed directly.");
+        }
+
         action.Status = ClientActionStatus.Completed;
         action.CompletedByActor = dto.CompletedByActor;
         action.CompletedAt = DateTime.UtcNow;
@@ -485,7 +496,8 @@ public class ClientActionService : IClientActionService
             // Client-safe security rule: Strip SourceMetadata if called from client view
             SourceMetadata = isClientView ? null : entity.SourceMetadata,
             VerificationStatus = verStatus,
-            VerificationReason = verReason
+            VerificationReason = verReason,
+            LinkedRequirementId = entity.LinkedRequirementId
         };
     }
 

@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { WorkflowApi, IdentityApi, DocumentsApi } from '../services/api';
 import { Engagement, ClientProfile, UserAccountResponse, ClientAction, DocumentMetadata, EngagementStage } from '../types';
 import { ENGAGEMENT_STAGES, getStageDefinition, getStageIndex, getNextStage, computeClientVisibleStageNumber } from '../constants/engagementStages';
+import { ACTION_TYPE_TO_DOCUMENT_TYPE } from '../constants/documentTypes';
 import {
     ArrowLeft,
     CheckCircle2,
@@ -87,17 +88,26 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             if (found) return found;
         }
 
-        if (act.type === 'KycDocument' || act.title.toLowerCase().includes('kyc') || act.title.toLowerCase().includes('passport')) {
+        // Same mapping UploadEvidenceModal uploads under — kept in one shared place so this
+        // lookup can never drift from what's actually uploaded (see constants/documentTypes.ts).
+        const mappedDocType = ACTION_TYPE_TO_DOCUMENT_TYPE[act.type as string];
+        if (mappedDocType) {
+            const found = documents.find((d) => d.type === mappedDocType);
+            if (found) return found;
+        }
+
+        // Fallback for staff-created custom tasks with a descriptive title but a generic Type.
+        if (act.title.toLowerCase().includes('kyc') || act.title.toLowerCase().includes('passport')) {
             const found = documents.find((d) => d.type === 'KYC_PASSPORT');
             if (found) return found;
         }
 
-        if (act.type === 'SignAgreement' || act.title.toLowerCase().includes('agreement') || act.title.toLowerCase().includes('contract')) {
+        if (act.title.toLowerCase().includes('agreement') || act.title.toLowerCase().includes('contract')) {
             const found = documents.find((d) => d.type === 'SIGNED_AGREEMENT');
             if (found) return found;
         }
 
-        if (act.type === 'ProofOfAddress' || act.title.toLowerCase().includes('proof of address') || act.title.toLowerCase().includes('address')) {
+        if (act.title.toLowerCase().includes('proof of address') || act.title.toLowerCase().includes('address')) {
             const found = documents.find((d) => d.type === 'PROOF_OF_ADDRESS');
             if (found) return found;
         }

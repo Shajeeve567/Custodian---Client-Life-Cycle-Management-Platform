@@ -390,7 +390,8 @@ public class ClientPortalService : IClientPortalService
             IsOverdue = isOverdue,
             DaysRemaining = daysRemaining,
             RejectionReason = rejectionReason,
-            VerificationStatus = verificationStatus
+            VerificationStatus = verificationStatus,
+            LinkedRequirementId = action.LinkedRequirementId
         };
     }
 
