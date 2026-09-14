@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ClientSafeAction } from '../types';
 import { DocumentsApi, WorkflowApi } from '../services/api';
+import { resolveDocumentType } from '../constants/documentTypes';
 import {
     X,
     UploadCloud,
@@ -112,8 +113,13 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
         setError(null);
 
         try {
-            // 1. Upload binary PDF to Document Vault Microservice with mandatory compliance dates
-            const effectiveType = action?.type || selectedDocType;
+            // 1. Upload binary PDF to Document Vault Microservice with mandatory compliance dates.
+            // action.type is the ClientAction's own task-tracking vocabulary ("KycDocument",
+            // "ProofOfAddress", ...) — NOT the Documents-service vocabulary GateRequirements.cs
+            // actually matches against ("KYC_PASSPORT", "PROOF_OF_ADDRESS", ...). Uploading
+            // under the wrong string meant the CSTD-18 gate could never find a match even
+            // after a successful, compliant upload. See constants/documentTypes.ts.
+            const effectiveType = resolveDocumentType(action?.type, selectedDocType);
             const formData = new FormData();
             formData.append('File', file);
             formData.append('Type', effectiveType);

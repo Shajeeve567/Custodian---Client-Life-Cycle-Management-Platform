@@ -2,34 +2,40 @@ using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
 
 namespace Custodian.Workflow.Controllers;
 
+/// <summary>
+/// CSTD-16 (Requirements Collection). Tenant-resolution and view-selection logic here
+/// intentionally mirrors ClientActionsController's (copied, not shared) — extracting a common
+/// helper was flagged during planning as a good follow-up, but EngagementsController's simpler
+/// variant lacks X-Tenant-ID header support, so a shared extraction would change that
+/// controller's existing, already-tested behavior. Out of scope for this story.
+/// </summary>
 [Authorize]
 [ApiController]
-[Route("api/engagements/{engagementId:guid}/actions")]
-public class ClientActionsController : ControllerBase
+[Route("api/engagements/{engagementId:guid}/requirements")]
+public class RequirementsController : ControllerBase
 {
-    private readonly IClientActionService _actionService;
-    private readonly ILogger<ClientActionsController> _logger;
+    private readonly IRequirementService _requirementService;
+    private readonly ILogger<RequirementsController> _logger;
 
-    public ClientActionsController(
-        IClientActionService actionService,
-        ILogger<ClientActionsController> logger)
+    public RequirementsController(IRequirementService requirementService, ILogger<RequirementsController> logger)
     {
-        _actionService = actionService;
+        _requirementService = requirementService;
         _logger = logger;
     }
 
     /// <summary>
-    /// Retrieves pending and completed action history for an engagement.
+    /// Lists requirements for an engagement. Same role-based view resolution as
+    /// ClientActionsController.GetActionHistory (CSTD-12): a Client-role caller always gets
+    /// the client-safe view; anyone else requesting the staff view must actually hold the
+    /// Owner or Staff role.
     /// </summary>
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<ClientActionResponseDto>>> GetActionHistory(
+    public async Task<ActionResult<IEnumerable<RequirementResponseDto>>> GetRequirements(
         [FromRoute] Guid engagementId,
         [FromQuery] string? tenantId,
-        [FromQuery] string? status,
         [FromQuery] bool? isClientView)
     {
         var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
@@ -43,11 +49,6 @@ public class ClientActionsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
-        // Server-side, role-based view selection (CSTD-12 security fix — Internal Field Leak).
-        // View selection must never trust the caller: a Client-role caller can never escalate to
-        // the staff view via ?isClientView=false or X-Client-View, and anyone else requesting the
-        // staff view must actually hold the Owner or Staff role or the request is rejected outright
-        // — there is no silent fallback that would let an unauthorized/roleless caller see it.
         bool isClient = User.IsInRole("Client");
         bool isStaffOrOwner = User.IsInRole("Owner") || User.IsInRole("Staff");
 
@@ -74,21 +75,21 @@ public class ClientActionsController : ControllerBase
         }
         else
         {
-            // Safe default: the staff view was never explicitly requested, so don't assume it.
             clientView = true;
         }
 
-        var actions = await _actionService.GetActionsByEngagementAsync(engagementId, effectiveTenantId, clientView, status);
-        return Ok(actions);
+        var requirements = await _requirementService.GetRequirementsByEngagementAsync(engagementId, effectiveTenantId, clientView);
+        return Ok(requirements);
     }
 
     /// <summary>
-    /// Creates a new action request for an engagement.
+    /// Staff requests a new piece of required client information.
     /// </summary>
     [HttpPost]
-    public async Task<ActionResult<ClientActionResponseDto>> CreateAction(
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<RequirementResponseDto>> RequestRequirement(
         [FromRoute] Guid engagementId,
-        [FromBody] CreateClientActionDto dto,
+        [FromBody] RequestRequirementDto dto,
         [FromQuery] string? tenantId)
     {
         var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
@@ -102,34 +103,39 @@ public class ClientActionsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
         if (!ModelState.IsValid)
         {
             return BadRequest(ModelState);
         }
 
+        dto.RequestedByActor ??= ResolveActor();
+
         try
         {
-            var result = await _actionService.CreateActionAsync(engagementId, effectiveTenantId, dto);
-            return CreatedAtAction(
-                nameof(GetActionHistory),
-                new { engagementId, tenantId = effectiveTenantId },
-                result);
+            var result = await _requirementService.RequestRequirementAsync(engagementId, effectiveTenantId, dto);
+            return CreatedAtAction(nameof(GetRequirements), new { engagementId, tenantId = effectiveTenantId }, result);
         }
         catch (ArgumentException ex)
         {
-            _logger.LogWarning(ex, "Failed to create action for engagement {EngagementId}", engagementId);
+            _logger.LogWarning(ex, "Failed to request requirement for engagement {EngagementId}", engagementId);
             return BadRequest(new { message = ex.Message });
         }
     }
 
     /// <summary>
-    /// Marks an action as completed.
+    /// Client submits the requested value.
     /// </summary>
-    [HttpPut("{actionId:guid}/complete")]
-    public async Task<ActionResult<ClientActionResponseDto>> CompleteAction(
+    [HttpPut("{requirementId:guid}/submit")]
+    public async Task<ActionResult<RequirementResponseDto>> SubmitRequirement(
         [FromRoute] Guid engagementId,
-        [FromRoute] Guid actionId,
-        [FromBody] CompleteClientActionDto dto,
+        [FromRoute] Guid requirementId,
+        [FromBody] SubmitRequirementDto dto,
         [FromQuery] string? tenantId)
     {
         var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
@@ -148,67 +154,26 @@ public class ClientActionsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        try
-        {
-            var result = await _actionService.CompleteActionAsync(engagementId, actionId, effectiveTenantId, dto);
-            if (result == null)
-            {
-                return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
-            }
+        dto.SubmittedByActor ??= ResolveActor();
 
-            return Ok(result);
-        }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
-    }
-
-    /// <summary>
-    /// Client evidence upload endpoint: Automatically transitions action from Pending/Rejected to Uploaded (awaiting staff review).
-    /// </summary>
-    [HttpPut("{actionId:guid}/upload")]
-    public async Task<ActionResult<ClientActionResponseDto>> UploadEvidence(
-        [FromRoute] Guid engagementId,
-        [FromRoute] Guid actionId,
-        [FromBody] UploadActionEvidenceDto dto,
-        [FromQuery] string? tenantId)
-    {
-        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
-        if (isForbidden)
-        {
-            return Forbid();
-        }
-
-        if (string.IsNullOrWhiteSpace(effectiveTenantId))
-        {
-            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
-        }
-
-        if (!ModelState.IsValid)
-        {
-            return BadRequest(ModelState);
-        }
-
-        var result = await _actionService.UploadEvidenceAsync(engagementId, actionId, effectiveTenantId, dto);
+        var result = await _requirementService.SubmitRequirementAsync(engagementId, requirementId, effectiveTenantId, dto);
         if (result == null)
         {
-            return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            return NotFound(new { message = $"Requirement '{requirementId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
         }
 
         return Ok(result);
     }
 
     /// <summary>
-    /// Staff review endpoint: Marks an action as Completed (verified/accepted) or Rejected (revision required).
-    /// Restricted to authorized staff (Owner, Staff).
+    /// Staff approves or rejects a submitted requirement. Restricted to authorized staff.
     /// </summary>
-    [HttpPut("{actionId:guid}/review")]
+    [HttpPut("{requirementId:guid}/review")]
     [Authorize(Roles = "Owner,Staff")]
-    public async Task<ActionResult<ClientActionResponseDto>> ReviewAction(
+    public async Task<ActionResult<RequirementResponseDto>> ReviewRequirement(
         [FromRoute] Guid engagementId,
-        [FromRoute] Guid actionId,
-        [FromBody] ReviewActionDto dto,
+        [FromRoute] Guid requirementId,
+        [FromBody] ReviewRequirementDto dto,
         [FromQuery] string? tenantId)
     {
         var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
@@ -233,66 +198,14 @@ public class ClientActionsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        dto.ReviewerActor ??= ResolveStaffActor();
+        dto.ReviewerActor ??= ResolveActor() ?? string.Empty;
 
         try
         {
-            var result = await _actionService.ReviewActionAsync(engagementId, actionId, effectiveTenantId, dto);
+            var result = await _requirementService.ReviewRequirementAsync(engagementId, requirementId, effectiveTenantId, dto);
             if (result == null)
             {
-                return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
-            }
-
-            return Ok(result);
-        }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
-    }
-
-    /// <summary>
-    /// Updates action status based on document human verification outcome (Verified -> Completed, Rejected -> Rejected with reason).
-    /// Restricted to authorized staff (Owner, Staff).
-    /// </summary>
-    [HttpPut("{actionId:guid}/verification")]
-    [Authorize(Roles = "Owner,Staff")]
-    public async Task<ActionResult<ClientActionResponseDto>> ApplyVerification(
-        [FromRoute] Guid engagementId,
-        [FromRoute] Guid actionId,
-        [FromBody] ApplyActionVerificationDto dto,
-        [FromQuery] string? tenantId)
-    {
-        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
-        if (isForbidden)
-        {
-            return Forbid();
-        }
-
-        if (string.IsNullOrWhiteSpace(effectiveTenantId))
-        {
-            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
-        }
-
-        var authResult = CheckStaffAuthorization();
-        if (authResult != null)
-        {
-            return authResult;
-        }
-
-        if (!ModelState.IsValid)
-        {
-            return BadRequest(ModelState);
-        }
-
-        dto.VerifiedBy ??= ResolveStaffActor();
-
-        try
-        {
-            var result = await _actionService.ApplyVerificationOutcomeAsync(engagementId, actionId, effectiveTenantId, dto);
-            if (result == null)
-            {
-                return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+                return NotFound(new { message = $"Requirement '{requirementId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
             }
 
             return Ok(result);
@@ -305,7 +218,6 @@ public class ClientActionsController : ControllerBase
 
     private ActionResult? CheckStaffAuthorization()
     {
-        // 1. If ClaimsPrincipal is authenticated, check role claims
         if (User?.Identity?.IsAuthenticated == true)
         {
             var isStaff = User.IsInRole("Owner") || User.IsInRole("Staff") ||
@@ -315,7 +227,6 @@ public class ClientActionsController : ControllerBase
             return isStaff ? null : Forbid();
         }
 
-        // 2. Check X-User-Role header fallback for direct testing / service-to-service calls
         if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Role", out var roleHeader))
         {
             var role = roleHeader.ToString();
@@ -326,7 +237,7 @@ public class ClientActionsController : ControllerBase
         return null;
     }
 
-    private string? ResolveStaffActor()
+    private string? ResolveActor()
     {
         var actor = User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
             ?? User?.FindFirst("sub")?.Value
@@ -353,14 +264,12 @@ public class ClientActionsController : ControllerBase
         {
             var cleanJwtTenant = jwtClaimTenant.Trim();
 
-            // Check if query tenant parameter conflicts
             if (!string.IsNullOrWhiteSpace(queryTenantId) &&
                 !string.Equals(queryTenantId.Trim(), cleanJwtTenant, StringComparison.OrdinalIgnoreCase))
             {
                 return (null, true);
             }
 
-            // Check if header tenant conflicts
             if (Request?.Headers != null && Request.Headers.TryGetValue("X-Tenant-ID", out var headerVal))
             {
                 var headerTenant = headerVal.ToString().Trim();
@@ -374,7 +283,6 @@ public class ClientActionsController : ControllerBase
             return (cleanJwtTenant, false);
         }
 
-        // 1. Check HTTP header X-Tenant-ID (for unauthenticated test contexts)
         if (Request?.Headers != null && Request.Headers.TryGetValue("X-Tenant-ID", out var headerValue))
         {
             var headerTenant = headerValue.ToString();
@@ -384,7 +292,6 @@ public class ClientActionsController : ControllerBase
             }
         }
 
-        // 2. Fallback to Query String Parameter
         if (!string.IsNullOrWhiteSpace(queryTenantId))
         {
             return (queryTenantId.Trim(), false);

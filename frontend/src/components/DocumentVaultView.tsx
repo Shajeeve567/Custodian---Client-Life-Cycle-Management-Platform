@@ -210,7 +210,7 @@ export const DocumentVaultView: React.FC = () => {
         reason?: string
     ) => {
         try {
-            const actions = await WorkflowApi.getActions(activeEngagementId, tenantId);
+            const actions = await WorkflowApi.getActions(activeEngagementId, tenantId, false);
             const linkedAction = actions.find(
                 (a: ClientAction) =>
                     (a.type === 'DocumentUpload' || a.type === 'KycDocument') && !a.isCompleted

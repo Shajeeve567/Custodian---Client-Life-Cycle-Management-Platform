@@ -3,6 +3,7 @@ using Custodian.Shared.Contracts;
 using Custodian.Workflow.Data;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
+using Custodian.Workflow.Services.Gates;
 using Microsoft.EntityFrameworkCore;
 
 namespace Custodian.Workflow.Services;
@@ -10,10 +11,14 @@ namespace Custodian.Workflow.Services;
 public class ClientActionService : IClientActionService
 {
     private readonly WorkflowDbContext _dbContext;
+    private readonly IGateEvaluator _gateEvaluator;
+    private readonly IAuditPublisher _auditPublisher;
 
-    public ClientActionService(WorkflowDbContext dbContext)
+    public ClientActionService(WorkflowDbContext dbContext, IGateEvaluator gateEvaluator, IAuditPublisher auditPublisher)
     {
         _dbContext = dbContext;
+        _gateEvaluator = gateEvaluator;
+        _auditPublisher = auditPublisher;
     }
 
     public async Task<IEnumerable<ClientActionResponseDto>> GetActionsByEngagementAsync(
@@ -126,6 +131,17 @@ public class ClientActionService : IClientActionService
             return null;
         }
 
+        if (action.LinkedRequirementId.HasValue)
+        {
+            // CSTD-16: a Requirement-backed action must be completed by actually submitting a
+            // value (PUT /requirements/{id}/submit), not by the generic complete endpoint —
+            // otherwise the mirrored action would clear from Next Action while the underlying
+            // Requirement stays stuck at Requested with no Value, silently losing the submission.
+            throw new ArgumentException(
+                $"This action represents Requirement '{action.LinkedRequirementId}' and must be submitted via " +
+                $"PUT /api/engagements/{engagementId}/requirements/{action.LinkedRequirementId}/submit, not completed directly.");
+        }
+
         action.Status = ClientActionStatus.Completed;
         action.CompletedByActor = dto.CompletedByActor;
         action.CompletedAt = DateTime.UtcNow;
@@ -150,7 +166,34 @@ public class ClientActionService : IClientActionService
 
                 if (!hasIncompleteTasks && (int)engagement.Stage < 4)
                 {
-                    engagement.Stage = (EngagementStage)((int)engagement.Stage + 1);
+                    var targetStage = (EngagementStage)((int)engagement.Stage + 1);
+
+                    // CSTD-18: this auto-advance must respect the exact same mandatory gate
+                    // as the staff-facing PUT /stage endpoint — completing the last
+                    // client-visible task in a stage must never silently skip a required
+                    // document's compliance/verification requirement. If the gate isn't
+                    // satisfied (e.g. a KYC document is compliant but not yet staff-verified),
+                    // the engagement simply stays put; the client sees "AllCaughtUp" until the
+                    // gate condition actually clears.
+                    var gateResult = await _gateEvaluator.EvaluateAsync(engagement.EngagementId, tenantId, targetStage);
+                    if (gateResult.IsSatisfied)
+                    {
+                        var previousStage = engagement.Stage;
+                        engagement.Stage = targetStage;
+
+                        await _auditPublisher.PublishEventAsync(
+                            engagement.EngagementId,
+                            tenantId,
+                            dto.CompletedByActor ?? "System",
+                            "StageChange",
+                            new
+                            {
+                                fromStage = previousStage.ToString(),
+                                toStage = targetStage.ToString(),
+                                changedAt = DateTime.UtcNow,
+                                trigger = "ClientActionAutoAdvance"
+                            });
+                    }
                 }
             }
         }
@@ -453,7 +496,8 @@ public class ClientActionService : IClientActionService
             // Client-safe security rule: Strip SourceMetadata if called from client view
             SourceMetadata = isClientView ? null : entity.SourceMetadata,
             VerificationStatus = verStatus,
-            VerificationReason = verReason
+            VerificationReason = verReason,
+            LinkedRequirementId = entity.LinkedRequirementId
         };
     }
 
@@ -549,6 +593,27 @@ public class ClientActionService : IClientActionService
                 IsInternalOnly = false,
                 AssignedToRole = "Client",
                 CreatedAt = now.AddSeconds(2)
+            },
+            // CSTD-18's document gate for entering Verification requires BOTH KYC_PASSPORT
+            // and PROOF_OF_ADDRESS (see GateRequirements.cs) — without this seeded task, a
+            // client following their guided task list would never be prompted to submit a
+            // proof of address at all, so the gate could only ever be satisfied by an
+            // unguided, undiscoverable direct vault upload.
+            new ClientAction
+            {
+                ActionId = Guid.NewGuid(),
+                EngagementId = engagementId,
+                TenantId = tenantId,
+                Title = "Proof of Address",
+                Description = "Upload a recent utility bill or bank statement (issued within the last 90 days) confirming your current residential address.",
+                Type = "ProofOfAddress",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 2,
+                DeadlineUtc = now.AddDays(7),
+                Source = "LifecycleDefault",
+                IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CreatedAt = now.AddSeconds(2.5)
             },
             // Stage 3: Verification
             new ClientAction

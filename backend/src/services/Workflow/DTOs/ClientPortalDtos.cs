@@ -51,6 +51,13 @@ public class ClientSafeActionDto
     public int? DaysRemaining { get; set; }
     public string? RejectionReason { get; set; }
     public string? VerificationStatus { get; set; }
+
+    /// <summary>
+    /// CSTD-16: set when this action mirrors a Requirement — the client must submit via
+    /// PUT /requirements/{linkedRequirementId}/submit rather than the generic complete/upload
+    /// endpoints. Null for every other action type.
+    /// </summary>
+    public Guid? LinkedRequirementId { get; set; }
 }
 
 /// <summary>

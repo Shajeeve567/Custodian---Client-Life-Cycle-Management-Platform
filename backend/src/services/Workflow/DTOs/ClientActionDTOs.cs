@@ -23,6 +23,7 @@ public class ClientActionResponseDto
     public string? SourceMetadata { get; set; }
     public string? VerificationStatus { get; set; }
     public string? VerificationReason { get; set; }
+    public Guid? LinkedRequirementId { get; set; }
 }
 
 public class CreateClientActionDto

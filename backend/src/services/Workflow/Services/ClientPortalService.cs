@@ -9,13 +9,17 @@ public class ClientPortalService : IClientPortalService
 {
     private readonly WorkflowDbContext _dbContext;
 
+    // Canonical stage names/taglines (CSTD-17) — must match frontend/src/constants/engagementStages.ts
+    // exactly, so the client portal and the staff/owner dashboard show identical stage names for
+    // the same engagement. Previously these were stale pre-CSTD-17 names, out of sync with the rest
+    // of the product.
     private static readonly (int StageNumber, string Name, string Tagline)[] StageDefinitions = new[]
     {
-        (1, "Intake & Onboarding", "Client baseline & kickoff criteria"),
-        (2, "Compliance Evidence & Verification", "Deterministic document & KYC validation"),
-        (3, "Gate Evaluation & Approvals", "Milestone criteria & dual signoff"),
-        (4, "SLA Radar & Intervention", "Latency monitoring & stall prevention"),
-        (5, "Readiness, Handoff & Closure", "Final delivery & immutable audit seal")
+        (1, "Onboarding", "Client baseline & kickoff criteria"),
+        (2, "Document Collection", "Gather required compliance documents"),
+        (3, "Verification", "Deterministic document & KYC validation"),
+        (4, "Execution", "Active delivery & milestone tracking"),
+        (5, "Closure", "Final delivery & handoff")
     };
 
     public ClientPortalService(WorkflowDbContext dbContext)
@@ -386,7 +390,8 @@ public class ClientPortalService : IClientPortalService
             IsOverdue = isOverdue,
             DaysRemaining = daysRemaining,
             RejectionReason = rejectionReason,
-            VerificationStatus = verificationStatus
+            VerificationStatus = verificationStatus,
+            LinkedRequirementId = action.LinkedRequirementId
         };
     }
 

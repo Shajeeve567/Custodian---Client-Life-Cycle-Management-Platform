@@ -24,6 +24,8 @@ import {
     VerifyDocumentRequest,
     RejectDocumentRequest,
     UpdateDocumentMetadataRequest,
+    SubmitRequirementRequest,
+    RequirementResponse,
 } from '../types';
 
 export const API_BASE = {
@@ -256,10 +258,15 @@ export const WorkflowApi = {
         });
     },
 
-    async getActions(engagementId: string, tenantId?: string): Promise<ClientAction[]> {
-        const url = tenantId
-            ? `${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/actions?tenantId=${encodeURIComponent(tenantId)}`
-            : `${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/actions`;
+    async getActions(engagementId: string, tenantId?: string, isClientView?: boolean): Promise<ClientAction[]> {
+        const params = new URLSearchParams();
+        if (tenantId) params.set('tenantId', tenantId);
+        // Backend's view-resolution (CSTD-12) defaults to the client-safe view unless a
+        // Staff/Owner caller explicitly asks for isClientView=false — omitting this for a
+        // staff-facing caller silently hides every IsInternalOnly task from them.
+        if (isClientView !== undefined) params.set('isClientView', String(isClientView));
+        const qs = params.toString();
+        const url = `${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/actions${qs ? `?${qs}` : ''}`;
         return request<ClientAction[]>(url, {
             method: 'GET',
         });
@@ -332,6 +339,23 @@ export const WorkflowApi = {
             headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
             body: JSON.stringify(data),
         });
+    },
+
+    // CSTD-16 (Requirements Collection)
+    async submitRequirement(
+        engagementId: string,
+        requirementId: string,
+        data: SubmitRequirementRequest,
+        tenantId: string
+    ): Promise<RequirementResponse> {
+        return request<RequirementResponse>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/requirements/${requirementId}/submit?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'PUT',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify(data),
+            }
+        );
     },
 };
 

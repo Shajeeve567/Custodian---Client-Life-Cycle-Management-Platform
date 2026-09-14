@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { ClientPortalDashboard, ClientSafeAction, DocumentMetadata } from '../types';
 import { PortalApi, WorkflowApi, DocumentsApi } from '../services/api';
 import { UploadEvidenceModal } from './UploadEvidenceModal';
+import { SubmitRequirementModal } from './SubmitRequirementModal';
 import {
     Shield,
     CheckCircle2,
@@ -34,22 +35,35 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
     const [error, setError] = useState<string | null>(null);
     const [actionInProgress, setActionInProgress] = useState<string | null>(null);
     const [selectedActionForUpload, setSelectedActionForUpload] = useState<ClientSafeAction | null>(null);
+    const [selectedActionForRequirement, setSelectedActionForRequirement] = useState<ClientSafeAction | null>(null);
     const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
     const [loadingDocs, setLoadingDocs] = useState<boolean>(false);
     const [isDirectUploadOpen, setIsDirectUploadOpen] = useState<boolean>(false);
 
+    // CSTD-16: a Requirement-backed action must be submitted via SubmitRequirementModal (which
+    // calls PUT /requirements/{id}/submit), never the generic complete/upload flow — the
+    // presence of linkedRequirementId is the single source of truth for this, not the action's
+    // Type string, since the backend enforces the same distinction server-side.
+    const isRequirementAction = (action: ClientSafeAction): boolean => Boolean(action.linkedRequirementId);
+
     const isEvidenceAction = (action: ClientSafeAction): boolean => {
         const type = (action.type || '').toLowerCase();
+        // Every ActionType that requires an actual uploaded file, matched exactly first —
+        // 'signagreement' (Signed Master Services Agreement) was previously missed here,
+        // so that task fell through to the generic "Mark Done" bypass with no upload at all.
+        if (type === 'documentupload' || type === 'kycdocument' || type === 'signagreement' || type === 'proofofaddress') {
+            return true;
+        }
         const title = action.title.toLowerCase();
         return (
-            type === 'documentupload' ||
-            type === 'kycdocument' ||
             type.includes('document') ||
             type.includes('upload') ||
             title.includes('upload') ||
             title.includes('document') ||
             title.includes('proof') ||
-            title.includes('id') ||
+            title.includes('agreement') ||
+            title.includes('contract') ||
+            title.includes('signature') ||
             title.includes('evidence') ||
             title.includes('certificate') ||
             title.includes('passport')
@@ -76,11 +90,16 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
 
         try {
             let data: ClientPortalDashboard;
+            // Only a real Client caller's userId maps to a client identity. For Staff/Owner
+            // previewing, sending their own staff userId as clientId makes the backend treat
+            // them as a client trying to access someone else's engagement (ownership check
+            // fails, request 404s) instead of triggering the actual staff-preview fallback.
+            const effectiveClientId = role === 'Client' ? userId : undefined;
             if (initialEngagementId) {
-                data = await PortalApi.getEngagementDashboard(initialEngagementId, tenantId, userId);
+                data = await PortalApi.getEngagementDashboard(initialEngagementId, tenantId, effectiveClientId);
             } else {
                 // Auto-resolve active engagement for the authenticated client (Zero IDOR)
-                data = await PortalApi.getMyEngagement(tenantId, userId);
+                data = await PortalApi.getMyEngagement(tenantId, effectiveClientId);
             }
             setDashboard(data);
             if (data?.engagementId) {
@@ -91,7 +110,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
         } finally {
             setLoading(false);
         }
-    }, [tenantId, userId, initialEngagementId, fetchDocuments]);
+    }, [tenantId, userId, initialEngagementId, fetchDocuments, role]);
 
     useEffect(() => {
         fetchDashboard();
@@ -451,28 +470,30 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                             Required to clear the Stage {primaryNextAction.stageNumber} milestone gate.
                         </span>
                         <div className="flex items-center gap-2">
-                            {isEvidenceAction(primaryNextAction) ? (
-                                <>
-                                    <button
-                                        onClick={() => setSelectedActionForUpload(primaryNextAction)}
-                                        className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white text-xs font-bold flex items-center gap-2 shadow-sm shadow-indigo-500/25 transition cursor-pointer"
-                                    >
-                                        <UploadCloud className="w-4 h-4" />
-                                        <span>{primaryNextAction.status === 'Rejected' ? 'Re-upload Evidence' : 'Upload Evidence'}</span>
-                                    </button>
-                                    <button
-                                        onClick={() => handleCompleteAction(primaryNextAction)}
-                                        disabled={actionInProgress === primaryNextAction.actionId}
-                                        className="px-3 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold transition cursor-pointer"
-                                        title="Mark task completed without file upload"
-                                    >
-                                        {actionInProgress === primaryNextAction.actionId ? (
-                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                        ) : (
-                                            'Mark Done'
-                                        )}
-                                    </button>
-                                </>
+                            {isRequirementAction(primaryNextAction) ? (
+                                // CSTD-16: Requirement-backed actions submit through their own
+                                // modal/endpoint — never the generic complete flow (see
+                                // ClientActionService.CompleteActionAsync's guard).
+                                <button
+                                    onClick={() => setSelectedActionForRequirement(primaryNextAction)}
+                                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white text-xs font-bold flex items-center gap-2 shadow-sm shadow-indigo-500/25 transition cursor-pointer"
+                                >
+                                    <span>{primaryNextAction.status === 'Rejected' ? 'Re-submit Information' : 'Submit Information'}</span>
+                                    <ArrowRight className="w-4 h-4" />
+                                </button>
+                            ) : isEvidenceAction(primaryNextAction) ? (
+                                // Evidence/document actions (KYC, signed agreements, uploads) can ONLY be
+                                // completed via the real upload -> compliance -> staff-verification pipeline
+                                // (CSTD-18 gate) — no "mark done without uploading" escape hatch, since that
+                                // would let a client skip document verification entirely and still trigger
+                                // the stage auto-advance.
+                                <button
+                                    onClick={() => setSelectedActionForUpload(primaryNextAction)}
+                                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white text-xs font-bold flex items-center gap-2 shadow-sm shadow-indigo-500/25 transition cursor-pointer"
+                                >
+                                    <UploadCloud className="w-4 h-4" />
+                                    <span>{primaryNextAction.status === 'Rejected' ? 'Re-upload Evidence' : 'Upload Evidence'}</span>
+                                </button>
                             ) : (
                                 <button
                                     onClick={() => handleCompleteAction(primaryNextAction)}
@@ -580,7 +601,16 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                             {new Date(action.deadlineUtc).toLocaleDateString()}
                                         </span>
                                     )}
-                                    {isEvidenceAction(action) && (
+                                    {isRequirementAction(action) ? (
+                                        <button
+                                            onClick={() => setSelectedActionForRequirement(action)}
+                                            className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                            <span>Submit</span>
+                                        </button>
+                                    ) : isEvidenceAction(action) ? (
+                                        // No "Mark Done" bypass for evidence actions — see the
+                                        // primary-action panel above for why.
                                         <button
                                             onClick={() => setSelectedActionForUpload(action)}
                                             className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
@@ -588,14 +618,15 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                             <UploadCloud className="w-3.5 h-3.5" />
                                             <span>Upload</span>
                                         </button>
+                                    ) : (
+                                        <button
+                                            onClick={() => handleCompleteAction(action)}
+                                            disabled={actionInProgress === action.actionId}
+                                            className="px-3.5 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold transition cursor-pointer"
+                                        >
+                                            {actionInProgress === action.actionId ? 'Completing...' : 'Mark Done'}
+                                        </button>
                                     )}
-                                    <button
-                                        onClick={() => handleCompleteAction(action)}
-                                        disabled={actionInProgress === action.actionId}
-                                        className="px-3.5 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold transition cursor-pointer"
-                                    >
-                                        {actionInProgress === action.actionId ? 'Completing...' : 'Mark Done'}
-                                    </button>
                                 </div>
                             </div>
                         ))}
@@ -726,6 +757,17 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                     </div>
                 )}
             </div>
+
+            {/* CSTD-16: Requirement submission modal */}
+            <SubmitRequirementModal
+                isOpen={Boolean(selectedActionForRequirement)}
+                action={selectedActionForRequirement}
+                onClose={() => setSelectedActionForRequirement(null)}
+                engagementId={dashboard.engagementId}
+                tenantId={tenantId || ''}
+                userId={userId}
+                onSuccess={fetchDashboard}
+            />
 
             {/* Action-bound Evidence Upload Modal */}
             <UploadEvidenceModal
