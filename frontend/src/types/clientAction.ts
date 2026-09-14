@@ -8,8 +8,10 @@ export interface ClientActionResponse {
   status: 'Pending' | 'Completed' | 'Cancelled' | 'Overdue';
   source: string;
   isInternalOnly: boolean;
-  assignedToRole: string;
-  completedByActor?: string;
+  // Null when returned from the client view (CSTD-12): internal role/actor metadata
+  // is stripped server-side and never sent to Client-role callers.
+  assignedToRole?: string | null;
+  completedByActor?: string | null;
   completedAt?: string;
   createdAt: string;
   sourceMetadata?: string;

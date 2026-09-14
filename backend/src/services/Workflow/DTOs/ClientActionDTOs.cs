@@ -16,7 +16,7 @@ public class ClientActionResponseDto
     public DateTime? DeadlineUtc { get; set; }
     public string Source { get; set; } = string.Empty;
     public bool IsInternalOnly { get; set; }
-    public string AssignedToRole { get; set; } = string.Empty;
+    public string? AssignedToRole { get; set; }
     public string? CompletedByActor { get; set; }
     public DateTime? CompletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
