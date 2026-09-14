@@ -14,7 +14,7 @@ import {
 interface UploadEvidenceModalProps {
     isOpen: boolean;
     onClose: () => void;
-    action: ClientSafeAction | null;
+    action?: ClientSafeAction | null;
     engagementId: string;
     tenantId: string;
     userId?: string | null;
@@ -31,16 +31,18 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
     onSuccess,
 }) => {
     const [file, setFile] = useState<File | null>(null);
+    const [selectedDocType, setSelectedDocType] = useState<string>('KYC_PASSPORT');
     const [issueDate, setIssueDate] = useState<string>('');
     const [expiryDate, setExpiryDate] = useState<string>('');
     const [isUploading, setIsUploading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [isDragOver, setIsDragOver] = useState<boolean>(false);
 
-    if (!isOpen || !action) return null;
+    if (!isOpen) return null;
 
     const handleResetAndClose = () => {
         setFile(null);
+        setSelectedDocType('KYC_PASSPORT');
         setIssueDate('');
         setExpiryDate('');
         setError(null);
@@ -111,27 +113,30 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
 
         try {
             // 1. Upload binary PDF to Document Vault Microservice with mandatory compliance dates
+            const effectiveType = action?.type || selectedDocType;
             const formData = new FormData();
             formData.append('File', file);
-            formData.append('Type', action.type || 'ComplianceEvidence');
+            formData.append('Type', effectiveType);
             formData.append('IssueDate', issueDate);
             formData.append('ExpiryDate', expiryDate);
             formData.append('UploaderId', userId || 'client-user');
 
             const uploadedDoc = await DocumentsApi.uploadDocument(engagementId, formData, tenantId);
 
-            // 2. Automatically transition Workflow action status with compliance result contract
-            await WorkflowApi.uploadEvidence(
-                engagementId,
-                action.actionId,
-                {
-                    uploaderActor: userId || 'client-user',
-                    documentId: uploadedDoc?.documentId,
-                    complianceStatus: uploadedDoc?.complianceStatus,
-                    rejectionReason: uploadedDoc?.rejectionReason,
-                },
-                tenantId
-            );
+            // 2. If tied to a workflow action, automatically transition action status with compliance result
+            if (action) {
+                await WorkflowApi.uploadEvidence(
+                    engagementId,
+                    action.actionId,
+                    {
+                        uploaderActor: userId || 'client-user',
+                        documentId: uploadedDoc?.documentId,
+                        complianceStatus: uploadedDoc?.complianceStatus,
+                        rejectionReason: uploadedDoc?.rejectionReason,
+                    },
+                    tenantId
+                );
+            }
 
             // Trigger live portal reload
             onSuccess();
@@ -139,7 +144,7 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
             // Provide real-time compliance feedback if engine rejected the evidence
             if (uploadedDoc?.complianceStatus === 'Rejected') {
                 setError(
-                    `⚠️ Automatic Compliance Check Failed: ${uploadedDoc.rejectionReason || 'Document did not satisfy compliance rules.'} This action has been marked for revision.`
+                    `⚠️ Automatic Compliance Check Failed: ${uploadedDoc.rejectionReason || 'Document did not satisfy compliance rules.'} Please review and re-upload.`
                 );
             } else {
                 handleResetAndClose();
@@ -161,8 +166,12 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
                             <UploadCloud className="w-5 h-5" />
                         </div>
                         <div>
-                            <h3 className="text-base font-bold text-slate-900">Upload Evidence Document</h3>
-                            <p className="text-xs text-slate-500">Stage {action.stageNumber} • {action.title}</p>
+                            <h3 className="text-base font-bold text-slate-900">
+                                {action ? 'Upload Evidence Document' : 'Upload Document to Vault'}
+                            </h3>
+                            <p className="text-xs text-slate-500">
+                                {action ? `Stage ${action.stageNumber} • ${action.title}` : 'Direct Evidence Submission for Engagement Vault'}
+                            </p>
                         </div>
                     </div>
                     <button
@@ -176,6 +185,25 @@ export const UploadEvidenceModal: React.FC<UploadEvidenceModalProps> = ({
 
                 {/* Form Body */}
                 <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                    {!action && (
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                Document Type <span className="text-rose-500">*</span>
+                            </label>
+                            <select
+                                value={selectedDocType}
+                                onChange={(e) => setSelectedDocType(e.target.value)}
+                                className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 bg-white"
+                            >
+                                <option value="KYC_PASSPORT">KYC Passport / Government Photo ID</option>
+                                <option value="SIGNED_AGREEMENT">Signed Master Services Agreement</option>
+                                <option value="PROOF_OF_ADDRESS">Proof of Address (Utility Bill / Bank Statement)</option>
+                                <option value="CERTIFICATE_OF_INCORPORATION">Certificate of Incorporation / Registration</option>
+                                <option value="TAX_DECLARATION">Tax Declaration / Certificate</option>
+                                <option value="COMPLIANCE_EVIDENCE">General Compliance Evidence</option>
+                            </select>
+                        </div>
+                    )}
                     {error && (
                         <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-start gap-2">
                             <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />

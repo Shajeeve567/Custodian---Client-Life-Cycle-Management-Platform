@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { ClientPortalDashboard, ClientSafeAction } from '../types';
-import { PortalApi, WorkflowApi } from '../services/api';
+import { ClientPortalDashboard, ClientSafeAction, DocumentMetadata } from '../types';
+import { PortalApi, WorkflowApi, DocumentsApi } from '../services/api';
 import { UploadEvidenceModal } from './UploadEvidenceModal';
 import {
     Shield,
@@ -18,7 +18,9 @@ import {
     RefreshCw,
     Sparkles,
     Check,
-    UploadCloud
+    UploadCloud,
+    Plus,
+    FolderOpen
 } from 'lucide-react';
 
 interface ClientPortalViewProps {
@@ -32,6 +34,9 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
     const [error, setError] = useState<string | null>(null);
     const [actionInProgress, setActionInProgress] = useState<string | null>(null);
     const [selectedActionForUpload, setSelectedActionForUpload] = useState<ClientSafeAction | null>(null);
+    const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
+    const [loadingDocs, setLoadingDocs] = useState<boolean>(false);
+    const [isDirectUploadOpen, setIsDirectUploadOpen] = useState<boolean>(false);
 
     const isEvidenceAction = (action: ClientSafeAction): boolean => {
         const type = (action.type || '').toLowerCase();
@@ -51,6 +56,19 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
         );
     };
 
+    const fetchDocuments = useCallback(async (engId: string) => {
+        if (!tenantId || !engId) return;
+        setLoadingDocs(true);
+        try {
+            const docs = await DocumentsApi.getDocuments(engId, tenantId);
+            setDocuments(docs || []);
+        } catch (err) {
+            console.error('Failed to load engagement documents:', err);
+        } finally {
+            setLoadingDocs(false);
+        }
+    }, [tenantId]);
+
     const fetchDashboard = useCallback(async () => {
         if (!tenantId) return;
         setLoading(true);
@@ -65,12 +83,15 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                 data = await PortalApi.getMyEngagement(tenantId, userId);
             }
             setDashboard(data);
+            if (data?.engagementId) {
+                await fetchDocuments(data.engagementId);
+            }
         } catch (err: any) {
             setError(err.message || 'Failed to load client onboarding portal');
         } finally {
             setLoading(false);
         }
-    }, [tenantId, userId, initialEngagementId]);
+    }, [tenantId, userId, initialEngagementId, fetchDocuments]);
 
     useEffect(() => {
         fetchDashboard();
@@ -493,6 +514,15 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                     <p className="text-xs text-emerald-800 max-w-md mx-auto">
                         You have completed all pending action items for this stage. Custodian staff is conducting milestone evaluation.
                     </p>
+                    <div className="pt-2">
+                        <button
+                            onClick={() => setIsDirectUploadOpen(true)}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+                        >
+                            <UploadCloud className="w-4 h-4" />
+                            <span>Upload Additional Evidence</span>
+                        </button>
+                    </div>
                 </div>
             )}
 
@@ -573,7 +603,131 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                 </div>
             )}
 
-            {/* Evidence Upload Modal */}
+            {/* Dedicated Document Vault & Compliance Evidence Section */}
+            <div className="bg-white/90 backdrop-blur-md p-6 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
+                            <FolderOpen className="w-5 h-5" />
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <h3 className="text-sm font-bold text-slate-900">Compliance Document Vault</h3>
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                                    {documents.length} {documents.length === 1 ? 'file' : 'files'}
+                                </span>
+                            </div>
+                            <p className="text-xs text-slate-400">
+                                Secure repository of your identity verification, legal agreements, and compliance records.
+                            </p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => setIsDirectUploadOpen(true)}
+                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white text-xs font-bold flex items-center gap-2 shadow-sm shadow-indigo-500/25 transition cursor-pointer self-start sm:self-auto"
+                    >
+                        <Plus className="w-4 h-4" />
+                        <span>Upload New Document</span>
+                    </button>
+                </div>
+
+                {loadingDocs ? (
+                    <div className="p-8 text-center space-y-2">
+                        <Loader2 className="w-6 h-6 text-indigo-600 animate-spin mx-auto" />
+                        <p className="text-xs text-slate-400">Loading uploaded vault records...</p>
+                    </div>
+                ) : documents.length === 0 ? (
+                    <div
+                        onClick={() => setIsDirectUploadOpen(true)}
+                        className="border-2 border-dashed border-slate-200 hover:border-indigo-300 hover:bg-slate-50/50 rounded-2xl p-8 text-center transition cursor-pointer space-y-2.5"
+                    >
+                        <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center mx-auto">
+                            <UploadCloud className="w-5 h-5" />
+                        </div>
+                        <h4 className="text-xs font-bold text-slate-700">No documents uploaded yet</h4>
+                        <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                            Upload your passport, government ID, proof of address, or signed contract directly to the engagement vault.
+                        </p>
+                        <span className="inline-block text-xs font-semibold text-indigo-600 hover:underline pt-1">
+                            Click here to upload evidence
+                        </span>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {documents.map((doc) => (
+                            <div
+                                key={doc.documentId}
+                                className="p-4 rounded-xl bg-slate-50/70 border border-slate-200 hover:border-slate-300 transition space-y-2.5"
+                            >
+                                <div className="flex items-start justify-between gap-2">
+                                    <div className="flex items-start gap-2.5 min-w-0">
+                                        <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-600 shrink-0 mt-0.5">
+                                            <FileText className="w-4 h-4" />
+                                        </div>
+                                        <div className="min-w-0">
+                                            <div className="text-xs font-bold text-slate-900 truncate">
+                                                {doc.fileName || doc.type}
+                                            </div>
+                                            <div className="text-[10px] text-slate-400">
+                                                Type: <span className="font-semibold text-slate-600">{doc.type}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col items-end gap-1 shrink-0">
+                                        {doc.complianceStatus && (
+                                            <span
+                                                className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
+                                                    doc.complianceStatus === 'Compliant'
+                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                        : doc.complianceStatus === 'Rejected'
+                                                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                                        : 'bg-amber-50 text-amber-700 border-amber-200'
+                                                }`}
+                                            >
+                                                {doc.complianceStatus}
+                                            </span>
+                                        )}
+                                        {doc.verificationStatus && (
+                                            <span
+                                                className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
+                                                    doc.verificationStatus === 'Verified'
+                                                        ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                                        : doc.verificationStatus === 'Rejected'
+                                                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                                        : 'bg-sky-50 text-sky-700 border-sky-200'
+                                                }`}
+                                            >
+                                                {doc.verificationStatus}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200/60">
+                                    <span className="flex items-center gap-1">
+                                        <Calendar className="w-3 h-3 text-slate-400" />
+                                        {doc.issueDate ? `Issued: ${new Date(doc.issueDate).toLocaleDateString()}` : `Uploaded: ${new Date(doc.uploadedAt).toLocaleDateString()}`}
+                                    </span>
+                                    {doc.expiryDate && (
+                                        <span className="text-[10px] text-slate-400">
+                                            Expires: {new Date(doc.expiryDate).toLocaleDateString()}
+                                        </span>
+                                    )}
+                                </div>
+
+                                {doc.rejectionReason && (
+                                    <div className="p-2 bg-rose-50 border border-rose-200 rounded-lg text-[11px] text-rose-700 flex items-start gap-1.5">
+                                        <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
+                                        <span>Rejection Reason: {doc.rejectionReason}</span>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* Action-bound Evidence Upload Modal */}
             <UploadEvidenceModal
                 isOpen={Boolean(selectedActionForUpload)}
                 action={selectedActionForUpload}
@@ -581,7 +735,24 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                 engagementId={dashboard.engagementId}
                 tenantId={tenantId || ''}
                 userId={userId}
-                onSuccess={fetchDashboard}
+                onSuccess={() => {
+                    fetchDashboard();
+                    if (dashboard?.engagementId) fetchDocuments(dashboard.engagementId);
+                }}
+            />
+
+            {/* Direct Document Vault Upload Modal */}
+            <UploadEvidenceModal
+                isOpen={isDirectUploadOpen}
+                action={null}
+                onClose={() => setIsDirectUploadOpen(false)}
+                engagementId={dashboard.engagementId}
+                tenantId={tenantId || ''}
+                userId={userId}
+                onSuccess={() => {
+                    fetchDashboard();
+                    if (dashboard?.engagementId) fetchDocuments(dashboard.engagementId);
+                }}
             />
         </div>
     );

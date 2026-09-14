@@ -55,11 +55,12 @@ public class ClientPortalService : IClientPortalService
             return null;
         }
 
-        // Find the client's most recent active (or latest) engagement in this tenant
+        // Exclude cancelled engagements, prioritize non-closed (active/draft) over closed, then latest created
         var engagement = await _dbContext.Engagements
             .AsNoTracking()
             .Where(e => e.TenantId == tenantId && e.ClientId == clientId.Trim())
-            .OrderByDescending(e => e.Status == EngagementStatus.Started)
+            .Where(e => e.Status != EngagementStatus.Cancelled)
+            .OrderByDescending(e => e.Status != EngagementStatus.Closed)
             .ThenByDescending(e => e.CreatedAt)
             .FirstOrDefaultAsync();
 
@@ -78,11 +79,12 @@ public class ClientPortalService : IClientPortalService
             return null;
         }
 
-        // Fallback for staff preview: find latest active (or recent) engagement in the workspace
+        // Fallback for staff preview: find latest active (or recent) non-cancelled engagement in the workspace
         var engagement = await _dbContext.Engagements
             .AsNoTracking()
             .Where(e => e.TenantId == tenantId)
-            .OrderByDescending(e => e.Status == EngagementStatus.Started)
+            .Where(e => e.Status != EngagementStatus.Cancelled)
+            .OrderByDescending(e => e.Status != EngagementStatus.Closed)
             .ThenByDescending(e => e.CreatedAt)
             .FirstOrDefaultAsync();
 
@@ -98,11 +100,52 @@ public class ClientPortalService : IClientPortalService
     private async Task<ClientPortalDashboardDto> BuildDashboardDtoAsync(Engagement engagement)
     {
         var allActions = await _dbContext.ClientActions
-            .AsNoTracking()
             .Where(a => a.EngagementId == engagement.EngagementId && a.TenantId == engagement.TenantId)
             .OrderBy(a => a.StageNumber)
             .ThenBy(a => a.CreatedAt)
             .ToListAsync();
+
+        if (allActions.Count == 0)
+        {
+            var seeded = ClientActionService.GenerateDefaultLifecycleActions(engagement.EngagementId, engagement.TenantId);
+            await _dbContext.ClientActions.AddRangeAsync(seeded);
+            await _dbContext.SaveChangesAsync();
+            allActions = seeded;
+        }
+        else if (allActions.Any(a => a.Source == "LifecycleDefault") || allActions.All(a => a.StageNumber == 1))
+        {
+            var existingStageNumbers = allActions.Select(a => a.StageNumber).ToHashSet();
+            var missingDefaultActions = ClientActionService.GenerateDefaultLifecycleActions(engagement.EngagementId, engagement.TenantId)
+                .Where(defaultAct => !existingStageNumbers.Contains(defaultAct.StageNumber))
+                .ToList();
+
+            if (missingDefaultActions.Count > 0)
+            {
+                await _dbContext.ClientActions.AddRangeAsync(missingDefaultActions);
+                await _dbContext.SaveChangesAsync();
+                allActions.AddRange(missingDefaultActions);
+                allActions = allActions.OrderBy(a => a.StageNumber).ThenBy(a => a.CreatedAt).ToList();
+            }
+        }
+
+        // Determine Current Onboarding Stage (1 to 5)
+        var currentStageNumber = DetermineCurrentStage(engagement, allActions);
+
+        // If staff advanced past earlier stages, mark any earlier pending client actions as completed
+        var earlierPending = allActions
+            .Where(a => a.StageNumber < currentStageNumber && a.Status == ClientActionStatus.Pending)
+            .ToList();
+
+        if (earlierPending.Count > 0)
+        {
+            foreach (var act in earlierPending)
+            {
+                act.Status = ClientActionStatus.Completed;
+                act.CompletedByActor = "Staff";
+                act.CompletedAt = DateTime.UtcNow;
+            }
+            await _dbContext.SaveChangesAsync();
+        }
 
         // Client-facing actions: strictly exclude internal-only tasks
         var clientVisibleActions = allActions.Where(a => !a.IsInternalOnly).ToList();
@@ -125,23 +168,21 @@ public class ClientPortalService : IClientPortalService
             progressPercentage = 0;
         }
 
-        // 2. Determine Current Onboarding Stage (1 to 5)
-        var currentStageNumber = DetermineCurrentStage(engagement, clientVisibleActions);
         var currentStageDef = StageDefinitions.FirstOrDefault(s => s.StageNumber == currentStageNumber);
         var currentStageName = currentStageDef.Name ?? $"Stage {currentStageNumber}";
         var currentStageTagline = currentStageDef.Tagline ?? string.Empty;
 
-        // 3. Determine Primary Next Action based on Onboarding Stage
+        // 2. Determine Primary Next Action based on Onboarding Stage
         var (primaryAction, otherPendingActions) = SelectStageBasedActions(clientVisibleActions, currentStageNumber);
 
-        // 4. Determine Condition Status & Description
+        // 3. Determine Condition Status & Description
         var (conditionStatus, conditionDescription) = EvaluateConditionStatus(
             engagement,
             currentStageNumber,
             primaryAction,
             clientVisibleActions);
 
-        // 5. Build 5-stage stepper overview
+        // 4. Build 5-stage stepper overview
         var stages = StageDefinitions.Select(s =>
         {
             string status;
@@ -188,26 +229,37 @@ public class ClientPortalService : IClientPortalService
 
     private static int DetermineCurrentStage(Engagement engagement, List<ClientAction> actions)
     {
-        if (engagement.Status == EngagementStatus.Closed)
+        if (engagement.Status == EngagementStatus.Closed || engagement.Stage == EngagementStage.Closure)
         {
             return 5;
         }
 
-        // Find the earliest stage that has pending, uploaded, or rejected actions (not completed)
-        var earliestUnfinishedStage = actions
+        // Canonical persisted stage on the engagement model (0-indexed: Onboarding=0 -> Stage 1, DocumentCollection=1 -> Stage 2, etc.)
+        var canonicalStage = Math.Clamp((int)engagement.Stage + 1, 1, 5);
+
+        // Find the earliest stage that has unfinished actions (Pending, Uploaded, or Rejected)
+        var unfinishedStages = actions
             .Where(a => a.Status != ClientActionStatus.Completed)
             .Select(a => a.StageNumber)
-            .DefaultIfEmpty(0)
-            .Min();
+            .ToList();
 
-        if (earliestUnfinishedStage >= 1 && earliestUnfinishedStage <= 5)
+        if (unfinishedStages.Count > 0)
         {
-            return earliestUnfinishedStage;
+            var earliestUnfinishedStage = unfinishedStages.Min();
+            if (earliestUnfinishedStage >= 1 && earliestUnfinishedStage <= 5)
+            {
+                // If staff advanced engagement beyond earliest unfinished action, canonical stage takes precedence.
+                // If all earlier stage actions are completed and next stage has unfinished actions, advance to that stage.
+                return Math.Max(canonicalStage, earliestUnfinishedStage);
+            }
         }
 
-        // If all existing actions are completed, find highest completed stage and advance if < 5
-        var highestActionStage = actions.Select(a => a.StageNumber).DefaultIfEmpty(1).Max();
-        return Math.Clamp(highestActionStage, 1, 5);
+        return canonicalStage;
+    }
+
+    private static List<ClientAction> SeedDefaultLifecycleActions(Engagement engagement)
+    {
+        return ClientActionService.GenerateDefaultLifecycleActions(engagement.EngagementId, engagement.TenantId);
     }
 
     private static (ClientAction? Primary, List<ClientAction> Others) SelectStageBasedActions(
@@ -235,18 +287,26 @@ public class ClientPortalService : IClientPortalService
         }
         else
         {
-            // 2. Look in subsequent stages if current stage has no pending actions
-            var nextStagesPending = clientPending
-                .Where(a => a.StageNumber > currentStageNumber)
-                .OrderBy(a => a.StageNumber)
-                .ThenBy(a => a.DeadlineUtc.HasValue ? 0 : 1)
-                .ThenBy(a => a.DeadlineUtc)
-                .ThenBy(a => a.CreatedAt)
-                .ToList();
+            // If current stage has actions waiting for review, client cannot skip to future stages
+            var hasUnderReviewInCurrentStage = clientActions.Any(a =>
+                a.StageNumber == currentStageNumber &&
+                a.Status == ClientActionStatus.Uploaded);
 
-            if (nextStagesPending.Count > 0)
+            if (!hasUnderReviewInCurrentStage)
             {
-                primary = nextStagesPending[0];
+                // 2. Look in subsequent stages if current stage has no pending or under-review actions
+                var nextStagesPending = clientPending
+                    .Where(a => a.StageNumber > currentStageNumber)
+                    .OrderBy(a => a.StageNumber)
+                    .ThenBy(a => a.DeadlineUtc.HasValue ? 0 : 1)
+                    .ThenBy(a => a.DeadlineUtc)
+                    .ThenBy(a => a.CreatedAt)
+                    .ToList();
+
+                if (nextStagesPending.Count > 0)
+                {
+                    primary = nextStagesPending[0];
+                }
             }
         }
 

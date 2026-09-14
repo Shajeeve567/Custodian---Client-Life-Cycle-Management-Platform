@@ -738,4 +738,57 @@ public class ClientActionServiceTests
         await Assert.ThrowsAsync<ArgumentException>(() =>
             service.ApplyVerificationOutcomeAsync(engagementId, actionId, tenantId, dto));
     }
+
+    [Fact]
+    public async Task EnsureLifecycleActionsAsync_SeedsAllFiveStages()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-seeder";
+
+        var service = new ClientActionService(db);
+
+        // Act
+        var actions = await service.EnsureLifecycleActionsAsync(engagementId, tenantId);
+
+        // Assert
+        Assert.NotNull(actions);
+        Assert.True(actions.Count >= 5);
+        Assert.Contains(actions, a => a.StageNumber == 1);
+        Assert.Contains(actions, a => a.StageNumber == 2 && a.Type == "KycDocument");
+        Assert.Contains(actions, a => a.StageNumber == 3);
+        Assert.Contains(actions, a => a.StageNumber == 4);
+        Assert.Contains(actions, a => a.StageNumber == 5);
+    }
+
+    [Fact]
+    public async Task GetActionsByEngagementAsync_WhenEngagementExistsAndHasNoActions_AutoSeedsLifecycleActions()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-seeder";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-1",
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientActionService(db);
+
+        // Act
+        var actions = (await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: false)).ToList();
+
+        // Assert
+        Assert.NotEmpty(actions);
+        Assert.Contains(actions, a => a.StageNumber == 1);
+        Assert.Contains(actions, a => a.StageNumber == 2);
+    }
 }

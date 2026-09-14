@@ -16,12 +16,18 @@ public class EngagementsController : ControllerBase
     private readonly IEngagementRepository _repository;
     private readonly IAuditPublisher _auditPublisher;
     private readonly IGateEvaluator _gateEvaluator;
+    private readonly IClientActionService? _actionService;
 
-    public EngagementsController(IEngagementRepository repository, IAuditPublisher auditPublisher, IGateEvaluator gateEvaluator)
+    public EngagementsController(
+        IEngagementRepository repository,
+        IAuditPublisher auditPublisher,
+        IGateEvaluator gateEvaluator,
+        IClientActionService? actionService = null)
     {
         _repository = repository;
         _auditPublisher = auditPublisher;
         _gateEvaluator = gateEvaluator;
+        _actionService = actionService;
     }
 
     [HttpPost]
@@ -55,6 +61,19 @@ public class EngagementsController : ControllerBase
         };
 
         var created = await _repository.CreateAsync(engagement);
+
+        // Seed default 5-stage lifecycle actions for the new engagement
+        if (_actionService != null)
+        {
+            try
+            {
+                await _actionService.EnsureLifecycleActionsAsync(created.EngagementId, effectiveTenantId);
+            }
+            catch
+            {
+                // Fallback gracefully
+            }
+        }
 
         // Subtask Genesis Event: Publish Genesis Event to Audit Service
         await _auditPublisher.PublishGenesisEventAsync(created, effectiveTenantId);

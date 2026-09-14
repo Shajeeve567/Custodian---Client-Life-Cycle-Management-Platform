@@ -24,7 +24,12 @@ import {
     Users,
     Briefcase,
     CheckCircle2,
-    ArrowRight
+    ArrowRight,
+    Key,
+    Eye,
+    EyeOff,
+    Copy,
+    Sparkles
 } from 'lucide-react';
 
 interface DisplayWorkspaceItem {
@@ -76,7 +81,25 @@ export const EngagementsPage: React.FC = () => {
     const [newClientName, setNewClientName] = useState('');
     const [newClientEmail, setNewClientEmail] = useState('');
     const [newClientPhone, setNewClientPhone] = useState('');
+    const [newClientPassword, setNewClientPassword] = useState('');
+    const [showClientPassword, setShowClientPassword] = useState(false);
     const [clientError, setClientError] = useState<string | null>(null);
+    const [provisionedClientCredentials, setProvisionedClientCredentials] = useState<{
+        name: string;
+        email: string;
+        pass: string;
+    } | null>(null);
+    const [copiedCredentials, setCopiedCredentials] = useState(false);
+
+    const generateClientPassword = () => {
+        const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*';
+        let pass = '';
+        for (let i = 0; i < 12; i++) {
+            pass += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        setNewClientPassword(pass);
+        setShowClientPassword(true);
+    };
 
     // Load API Data
     const loadAllData = useCallback(async () => {
@@ -113,8 +136,13 @@ export const EngagementsPage: React.FC = () => {
         e.preventDefault();
         setClientError(null);
 
-        if (!newClientName.trim() || !newClientEmail.trim()) {
-            setClientError('Client name and email are required.');
+        if (!newClientName.trim() || !newClientEmail.trim() || !newClientPassword.trim()) {
+            setClientError('Client name, email, and portal password are required.');
+            return;
+        }
+
+        if (newClientPassword.trim().length < 6) {
+            setClientError('Password must be at least 6 characters long.');
             return;
         }
 
@@ -125,15 +153,25 @@ export const EngagementsPage: React.FC = () => {
                     name: newClientName.trim(),
                     email: newClientEmail.trim(),
                     phone: newClientPhone.trim() || undefined,
+                    password: newClientPassword.trim(),
                 },
                 token || undefined
             );
 
             setClients((prev) => [created, ...prev]);
             setSelectedClientId(created.id);
+
+            // Store credentials for staff/owner to copy and share with the client
+            setProvisionedClientCredentials({
+                name: newClientName.trim(),
+                email: newClientEmail.trim(),
+                pass: newClientPassword.trim(),
+            });
+
             setNewClientName('');
             setNewClientEmail('');
             setNewClientPhone('');
+            setNewClientPassword('');
             setShowNewClientForm(false);
         } catch (err: any) {
             setClientError(err?.message || 'Failed to create client profile.');
@@ -526,6 +564,39 @@ export const EngagementsPage: React.FC = () => {
                         )}
 
                         <form onSubmit={handleCreateEngagement} className="space-y-4">
+                            {/* Newly provisioned credentials banner */}
+                            {provisionedClientCredentials && (
+                                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-1.5 text-xs">
+                                    <div className="flex items-center justify-between">
+                                        <span className="font-semibold text-emerald-800 flex items-center gap-1.5">
+                                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                            Client Portal Account Provisioned
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                navigator.clipboard.writeText(
+                                                    `Client Portal Access:\nWorkspace: ${tenantName || 'Custodian'}\nEmail: ${provisionedClientCredentials.email}\nPassword: ${provisionedClientCredentials.pass}`
+                                                );
+                                                setCopiedCredentials(true);
+                                                setTimeout(() => setCopiedCredentials(false), 2000);
+                                            }}
+                                            className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded font-medium transition flex items-center gap-1 text-[11px]"
+                                        >
+                                            <Copy className="w-3 h-3" />
+                                            {copiedCredentials ? 'Copied!' : 'Copy Credentials'}
+                                        </button>
+                                    </div>
+                                    <div className="text-emerald-700">
+                                        Share these credentials with <strong>{provisionedClientCredentials.name}</strong> to let them sign in at <code>/login</code> and view their portal:
+                                    </div>
+                                    <div className="bg-white/80 p-2 rounded border border-emerald-200 font-mono text-[11px] text-slate-700 flex justify-between items-center">
+                                        <span>{provisionedClientCredentials.email}</span>
+                                        <span className="font-bold text-emerald-900 bg-emerald-100/60 px-1.5 py-0.5 rounded">{provisionedClientCredentials.pass}</span>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Client Selection */}
                             <div>
                                 <div className="flex items-center justify-between mb-1.5">
@@ -534,7 +605,10 @@ export const EngagementsPage: React.FC = () => {
                                     </label>
                                     <button
                                         type="button"
-                                        onClick={() => setShowNewClientForm(!showNewClientForm)}
+                                        onClick={() => {
+                                            setShowNewClientForm(!showNewClientForm);
+                                            setClientError(null);
+                                        }}
                                         className="text-xs text-indigo-600 font-semibold hover:underline"
                                     >
                                         {showNewClientForm ? 'Cancel' : '+ Add New Client'}
@@ -558,8 +632,11 @@ export const EngagementsPage: React.FC = () => {
                                     </select>
                                 ) : (
                                     <div className="p-3.5 bg-slate-50 rounded-xl space-y-2.5 border border-slate-200">
-                                        <div className="text-xs font-bold text-slate-800 uppercase">
-                                            Register Client in Identity Service
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-xs font-bold text-slate-800 uppercase flex items-center gap-1.5">
+                                                <Key className="w-3.5 h-3.5 text-indigo-600" />
+                                                Register Client & Portal Account
+                                            </div>
                                         </div>
                                         {clientError && (
                                             <div className="text-xs text-red-600">{clientError}</div>
@@ -588,13 +665,49 @@ export const EngagementsPage: React.FC = () => {
                                             className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                                             disabled={isCreatingClient}
                                         />
+                                        <div className="relative">
+                                            <input
+                                                type={showClientPassword ? 'text' : 'password'}
+                                                placeholder="Portal Initial Password (min. 6 chars)"
+                                                value={newClientPassword}
+                                                onChange={(e) => setNewClientPassword(e.target.value)}
+                                                className="w-full px-3 py-2 pr-20 rounded-lg border border-slate-200 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                                disabled={isCreatingClient}
+                                            />
+                                            <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowClientPassword(!showClientPassword)}
+                                                    className="p-1 text-slate-400 hover:text-slate-600 transition"
+                                                    title={showClientPassword ? 'Hide password' : 'Show password'}
+                                                >
+                                                    {showClientPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={generateClientPassword}
+                                                    className="px-1.5 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-medium rounded border border-indigo-200 transition flex items-center gap-0.5"
+                                                    title="Generate random password"
+                                                >
+                                                    <Sparkles className="w-2.5 h-2.5" />
+                                                    Auto
+                                                </button>
+                                            </div>
+                                        </div>
                                         <button
                                             type="button"
                                             onClick={handleCreateClient}
                                             disabled={isCreatingClient}
-                                            className="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition"
+                                            className="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition flex items-center justify-center gap-1.5"
                                         >
-                                            {isCreatingClient ? 'Saving Client...' : 'Save & Select Client'}
+                                            {isCreatingClient ? (
+                                                <>
+                                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                    Provisioning Client & Account...
+                                                </>
+                                            ) : (
+                                                'Provision Client Portal Account'
+                                            )}
                                         </button>
                                     </div>
                                 )}

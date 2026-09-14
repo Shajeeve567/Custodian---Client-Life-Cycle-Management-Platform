@@ -10,5 +10,6 @@ public interface IClientActionService
     Task<ClientActionResponseDto?> UploadEvidenceAsync(Guid engagementId, Guid actionId, string tenantId, UploadActionEvidenceDto dto);
     Task<ClientActionResponseDto?> ReviewActionAsync(Guid engagementId, Guid actionId, string tenantId, ReviewActionDto dto);
     Task<ClientActionResponseDto?> ApplyVerificationOutcomeAsync(Guid engagementId, Guid actionId, string tenantId, ApplyActionVerificationDto dto);
+    Task<List<ClientActionResponseDto>> EnsureLifecycleActionsAsync(Guid engagementId, string tenantId);
 }
 

@@ -11,6 +11,7 @@ namespace Identity.Tests.Controllers;
 public class ClientControllerTests
 {
     private readonly Mock<IClientProfileRepository> _clientRepoMock;
+    private readonly Mock<IUserAccountRepository> _userRepoMock;
     private readonly TenantContext _tenantContext;
     private readonly ClientController _controller;
     private readonly Guid _tenantId = Guid.NewGuid();
@@ -18,8 +19,9 @@ public class ClientControllerTests
     public ClientControllerTests()
     {
         _clientRepoMock = new Mock<IClientProfileRepository>();
+        _userRepoMock = new Mock<IUserAccountRepository>();
         _tenantContext = new TenantContext { TenantId = _tenantId.ToString() };
-        _controller = new ClientController(_clientRepoMock.Object, _tenantContext);
+        _controller = new ClientController(_clientRepoMock.Object, _userRepoMock.Object, _tenantContext);
     }
 
     [Fact]
@@ -58,10 +60,22 @@ public class ClientControllerTests
     }
 
     [Fact]
-    public async Task CreateClient_ReturnsCreatedAtAction_AndSetsTenantId()
+    public async Task CreateClient_WithValidPassword_ProvisionsUserAccountAndClientProfileWithMatchingId()
     {
         // Arrange
-        var request = new CreateClientRequest("New Client", "client@test.com", "1234567890");
+        var request = new CreateClientRequest("New Client", "client@test.com", "1234567890", "SecurePass123!");
+        _userRepoMock.Setup(u => u.GetByEmailAsync("client@test.com", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((UserAccount?)null);
+
+        UserAccount? savedUser = null;
+        _userRepoMock.Setup(u => u.AddAsync(It.IsAny<UserAccount>(), It.IsAny<CancellationToken>()))
+            .Callback<UserAccount, CancellationToken>((u, _) => savedUser = u)
+            .Returns(Task.CompletedTask);
+
+        ClientProfile? savedClient = null;
+        _clientRepoMock.Setup(r => r.AddAsync(It.IsAny<ClientProfile>(), It.IsAny<CancellationToken>()))
+            .Callback<ClientProfile, CancellationToken>((c, _) => savedClient = c)
+            .Returns(Task.CompletedTask);
 
         // Act
         var result = await _controller.CreateClient(request, CancellationToken.None);
@@ -71,7 +85,65 @@ public class ClientControllerTests
         var client = Assert.IsType<ClientProfile>(createdResult.Value);
         Assert.Equal(_tenantId, client.TenantId);
         Assert.Equal(request.Name, client.Name);
+        Assert.Equal(request.Email, client.Email);
+
+        // Verify user account was created with matching ID and hashed password
+        Assert.NotNull(savedUser);
+        Assert.Equal(client.Id, savedUser.Id);
+        Assert.Equal(request.Email, savedUser.Email);
+        Assert.True(BCrypt.Net.BCrypt.Verify(request.Password, savedUser.PasswordHash));
+        Assert.Single(savedUser.Memberships);
+        Assert.Equal(_tenantId, savedUser.Memberships[0].TenantId);
+        Assert.Equal(Custodian.Shared.Auth.Role.Client, savedUser.Memberships[0].Role);
+
+        _userRepoMock.Verify(u => u.AddAsync(It.IsAny<UserAccount>(), It.IsAny<CancellationToken>()), Times.Once);
         _clientRepoMock.Verify(r => r.AddAsync(It.IsAny<ClientProfile>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("123")]
+    [InlineData(null)]
+    public async Task CreateClient_WithoutPasswordOrTooShort_ReturnsBadRequest(string? invalidPassword)
+    {
+        // Arrange
+        var request = new CreateClientRequest("New Client", "client@test.com", null, invalidPassword!);
+
+        // Act
+        var result = await _controller.CreateClient(request, CancellationToken.None);
+
+        // Assert
+        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Contains("Password is required and must be at least 6 characters", badRequestResult.Value?.ToString());
+    }
+
+    [Fact]
+    public async Task CreateClient_ExistingUserInSameWorkspace_ReturnsConflict()
+    {
+        // Arrange
+        var request = new CreateClientRequest("Duplicate Client", "duplicate@test.com", null, "ValidPassword123!");
+        var existingUser = new UserAccount
+        {
+            Id = Guid.NewGuid(),
+            Email = "duplicate@test.com",
+            Memberships = new List<TenantMembership>
+            {
+                new TenantMembership { TenantId = _tenantId, Role = Custodian.Shared.Auth.Role.Client }
+            }
+        };
+
+        _userRepoMock.Setup(u => u.GetByEmailAsync("duplicate@test.com", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingUser);
+
+        // Act
+        var result = await _controller.CreateClient(request, CancellationToken.None);
+
+        // Assert
+        var conflictResult = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Contains("already registered in this workspace", conflictResult.Value?.ToString());
+        _userRepoMock.Verify(u => u.AddAsync(It.IsAny<UserAccount>(), It.IsAny<CancellationToken>()), Times.Never);
+        _clientRepoMock.Verify(r => r.AddAsync(It.IsAny<ClientProfile>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
