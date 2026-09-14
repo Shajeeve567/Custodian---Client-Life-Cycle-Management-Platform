@@ -99,7 +99,7 @@ export interface UpdateEngagementStageRequest {
     stage: EngagementStage;
 }
 
-export type ActionType = 'KycDocument' | 'SignAgreement' | 'CustomTask' | 'DocumentUpload';
+export type ActionType = 'KycDocument' | 'SignAgreement' | 'ProofOfAddress' | 'CustomTask' | 'DocumentUpload';
 
 export interface ClientAction {
     actionId: string;
@@ -126,8 +126,13 @@ export interface CreateClientActionRequest {
     type: ActionType | string;
     stageNumber?: number;
     deadlineUtc?: string | null;
-    assignedRole?: UserRole;
+    // Must match the backend's CreateClientActionDto.AssignedToRole exactly — a mismatched
+    // key name here means ASP.NET's model binder silently drops it and defaults to "Client".
+    assignedToRole?: UserRole;
     isInternalOnly?: boolean;
+    // Backend's CreateClientActionDto.Source is [Required]; omitting it fails ModelState
+    // validation (400) before the action is ever persisted.
+    source: string;
 }
 
 export interface ClientSafeAction {

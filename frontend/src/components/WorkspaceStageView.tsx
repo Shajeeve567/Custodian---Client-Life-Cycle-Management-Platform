@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { WorkflowApi, IdentityApi, DocumentsApi } from '../services/api';
 import { Engagement, ClientProfile, UserAccountResponse, ClientAction, DocumentMetadata, EngagementStage } from '../types';
-import { ENGAGEMENT_STAGES, getStageDefinition, getStageIndex, getNextStage } from '../constants/engagementStages';
+import { ENGAGEMENT_STAGES, getStageDefinition, getStageIndex, getNextStage, computeClientVisibleStageNumber } from '../constants/engagementStages';
 import {
     ArrowLeft,
     CheckCircle2,
@@ -97,6 +97,11 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             if (found) return found;
         }
 
+        if (act.type === 'ProofOfAddress' || act.title.toLowerCase().includes('proof of address') || act.title.toLowerCase().includes('address')) {
+            const found = documents.find((d) => d.type === 'PROOF_OF_ADDRESS');
+            if (found) return found;
+        }
+
         if (act.type === 'DocumentUpload') {
             return documents.find((d) => !d.isDeleted);
         }
@@ -148,7 +153,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             }
 
             try {
-                const actList = await WorkflowApi.getActions(engagementId, tenantId);
+                const actList = await WorkflowApi.getActions(engagementId, tenantId, false);
                 setActions(actList || []);
             } catch (aErr) {
                 console.warn(aErr);
@@ -301,9 +306,13 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                     description: newTaskDesc.trim() || undefined,
                     stageNumber: newTaskStage,
                     type: newTaskType,
-                    assignedRole: newTaskRole as any,
+                    assignedToRole: newTaskRole as any,
                     deadlineUtc: newTaskDeadline ? new Date(newTaskDeadline).toISOString() : undefined,
                     isInternalOnly: newTaskRole === 'Staff',
+                    // Backend's CreateClientActionDto.Source is [Required] — omitting it
+                    // previously failed ModelState validation (400) before the task was ever
+                    // persisted. Mirrors the seeded rows' Source: "LifecycleDefault" convention.
+                    source: 'StaffManual',
                 },
                 tenantId
             );
@@ -353,7 +362,16 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
         .toUpperCase() || 'CL';
     const engagementCode = `ENG-${engagementId.slice(0, 6).toUpperCase()}`;
 
+    // The REAL, gate-checked stage — what PUT /stage actually operates on. Drives the
+    // Advance Stage action and stage-detail panel below; must never be swapped for the
+    // client-visible number, since the backend validates transitions against this value.
     const currentStageOrder = getStageIndex(engagement?.stage) + 1; // 0 if unknown, else 1-5
+    // The stage number the Client Portal currently shows this client (CSTD-17/18 alignment
+    // fix) — can run ahead of currentStageOrder when a client's tasks are all completed via
+    // staff review/verification without the official engagement.stage having been advanced
+    // yet. Used only for the pipeline stepper's "current/passed" display, so staff always see
+    // the same headline stage number the client sees, distinct from the actionable stage below.
+    const clientVisibleStageOrder = computeClientVisibleStageNumber(engagement, actions);
     const selectedStageDef = getStageDefinition(selectedStageKey ?? engagement?.stage);
     const progressPercent = engagement?.stageProgressPercentage ?? 0;
     const isTerminalStatus = engagement?.status === 'Closed' || engagement?.status === 'Cancelled';
@@ -460,16 +478,23 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             Onboarding → Document Collection → Verification → Execution → Closure.
                         </p>
                     </div>
-                    <span className="px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                        Current: Stage {currentStageOrder || 1} of 5
+                    <span
+                        className="px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
+                        title="Matches the stage shown in this client's Client Portal view"
+                    >
+                        Client Portal shows: Stage {clientVisibleStageOrder} of 5
                     </span>
                 </div>
 
-                {/* 5 Step Cards */}
+                {/* 5 Step Cards — "passed"/"current" reflect clientVisibleStageOrder so this
+                    stepper always agrees with what the client sees in their portal; the
+                    "selected" (previewed) card and its detail panel below stay driven by the
+                    real, gate-checked engagement.stage regardless of which card is highlighted
+                    here as current, since that's what the Advance Stage action operates on. */}
                 <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                     {ENGAGEMENT_STAGES.map((st) => {
-                        const isPassed = st.order < currentStageOrder;
-                        const isCurrent = st.order === currentStageOrder;
+                        const isPassed = st.order < clientVisibleStageOrder;
+                        const isCurrent = st.order === clientVisibleStageOrder;
                         const isSelected = st.key === (selectedStageKey ?? engagement?.stage);
 
                         return (
@@ -1276,6 +1301,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                         <option value="CustomTask">Custom Task (General)</option>
                                         <option value="KycDocument">KYC Document</option>
                                         <option value="SignAgreement">Sign Agreement / Contract</option>
+                                        <option value="ProofOfAddress">Proof of Address</option>
                                         <option value="DocumentUpload">Document Upload</option>
                                     </select>
                                 </div>

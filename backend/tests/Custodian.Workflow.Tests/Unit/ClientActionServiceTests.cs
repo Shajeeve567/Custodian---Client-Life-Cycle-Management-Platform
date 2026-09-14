@@ -3,7 +3,9 @@ using Custodian.Workflow.Data;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Gates;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 using Xunit;
 
 namespace Custodian.Workflow.Tests.Unit;
@@ -17,6 +19,21 @@ public class ClientActionServiceTests
             .Options;
 
         return new WorkflowDbContext(options);
+    }
+
+    /// <summary>
+    /// Default test double: gate always satisfied, so existing tests that don't care about
+    /// CSTD-18 gating are unaffected. Tests that specifically exercise the gate-check inject
+    /// their own Mock&lt;IGateEvaluator&gt; instead of calling this helper.
+    /// </summary>
+    private static ClientActionService CreateService(WorkflowDbContext db)
+    {
+        var gateEvaluator = new Mock<IGateEvaluator>();
+        gateEvaluator
+            .Setup(g => g.EvaluateAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<EngagementStage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GateEvaluationResult.Satisfied());
+
+        return new ClientActionService(db, gateEvaluator.Object, new Mock<IAuditPublisher>().Object);
     }
 
     [Fact]
@@ -58,7 +75,7 @@ public class ClientActionServiceTests
         );
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
 
         // Act: Call service with isClientView = false (Staff View)
         var result = await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: false);
@@ -112,7 +129,7 @@ public class ClientActionServiceTests
         );
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
 
         // Act: Call service with isClientView = true (Client View)
         var result = await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: true);
@@ -147,7 +164,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
 
         // Act: Attempt to retrieve action with wrong tenant ID
         var result = await service.GetActionsByEngagementAsync(engagementId, "tenant-attacker", isClientView: false);
@@ -186,7 +203,7 @@ public class ClientActionServiceTests
         );
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
 
         // Act: Filter by status = "Completed"
         var result = await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: false, statusFilter: "Completed");
@@ -202,7 +219,7 @@ public class ClientActionServiceTests
     {
         // Arrange
         using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
         var engagementId = Guid.NewGuid();
         var tenantId = "tenant-001";
 
@@ -250,7 +267,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
 
         var completeDto = new CompleteClientActionDto
         {
@@ -271,6 +288,118 @@ public class ClientActionServiceTests
     }
 
     [Fact]
+    public async Task CompleteActionAsync_LastActionInStage_GateBlocked_CompletesActionButDoesNotAdvanceStageOrPublishAudit()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-1",
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
+        });
+
+        // The only non-internal Stage 1 action — completing it is otherwise eligible to
+        // auto-advance the engagement into Stage 2 (DocumentCollection).
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Stage 1 Intake",
+            Status = ClientActionStatus.Pending,
+            StageNumber = 1,
+            IsInternalOnly = false
+        });
+        await db.SaveChangesAsync();
+
+        var gateEvaluator = new Mock<IGateEvaluator>();
+        gateEvaluator
+            .Setup(g => g.EvaluateAsync(engagementId, tenantId, EngagementStage.DocumentCollection, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GateEvaluationResult.Blocked("Required document not yet verified.", Array.Empty<GateRequirementResult>()));
+        var auditPublisher = new Mock<IAuditPublisher>();
+
+        var service = new ClientActionService(db, gateEvaluator.Object, auditPublisher.Object);
+        var completeDto = new CompleteClientActionDto { CompletedByActor = "client-user-1" };
+
+        // Act
+        var result = await service.CompleteActionAsync(engagementId, actionId, tenantId, completeDto);
+
+        // Assert: the action itself still completes — only the engagement's stage advance is gated
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Completed, result.Status);
+
+        var dbEngagement = await db.Engagements.FirstAsync(e => e.EngagementId == engagementId);
+        Assert.Equal(EngagementStage.Onboarding, dbEngagement.Stage);
+
+        auditPublisher.Verify(
+            a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), "StageChange", It.IsAny<object>()),
+            Times.Never());
+    }
+
+    [Fact]
+    public async Task CompleteActionAsync_LastActionInStage_GateSatisfied_AdvancesStageAndPublishesAuditEvent()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-1",
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
+        });
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Stage 1 Intake",
+            Status = ClientActionStatus.Pending,
+            StageNumber = 1,
+            IsInternalOnly = false
+        });
+        await db.SaveChangesAsync();
+
+        var gateEvaluator = new Mock<IGateEvaluator>();
+        gateEvaluator
+            .Setup(g => g.EvaluateAsync(engagementId, tenantId, EngagementStage.DocumentCollection, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GateEvaluationResult.Satisfied());
+        var auditPublisher = new Mock<IAuditPublisher>();
+
+        var service = new ClientActionService(db, gateEvaluator.Object, auditPublisher.Object);
+        var completeDto = new CompleteClientActionDto { CompletedByActor = "client-user-1" };
+
+        // Act
+        var result = await service.CompleteActionAsync(engagementId, actionId, tenantId, completeDto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Completed, result.Status);
+
+        var dbEngagement = await db.Engagements.FirstAsync(e => e.EngagementId == engagementId);
+        Assert.Equal(EngagementStage.DocumentCollection, dbEngagement.Stage);
+
+        auditPublisher.Verify(
+            a => a.PublishEventAsync(engagementId, tenantId, "client-user-1", "StageChange", It.IsAny<object>()),
+            Times.Once());
+    }
+
+    [Fact]
     public async Task CreateActionAsync_WithStageAndDeadline_PersistsAndMapsFieldsCorrectly()
     {
         // Arrange
@@ -279,7 +408,7 @@ public class ClientActionServiceTests
         var tenantId = "tenant-001";
         var deadline = DateTime.UtcNow.AddDays(3);
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
         var createDto = new CreateClientActionDto
         {
             Title = "Submit Proof of Address",
@@ -325,7 +454,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
         var uploadDto = new UploadActionEvidenceDto
         {
             UploaderActor = "client-user-1",
@@ -365,7 +494,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
         var uploadDto = new UploadActionEvidenceDto
         {
             UploaderActor = "client-user-1",
@@ -410,7 +539,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
         var uploadDto = new UploadActionEvidenceDto
         {
             UploaderActor = "client-user-1",
@@ -452,7 +581,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
         var reviewDto = new ReviewActionDto
         {
             Status = ClientActionStatus.Completed,
@@ -492,7 +621,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
         var reviewDto = new ReviewActionDto
         {
             Status = ClientActionStatus.Rejected,
@@ -533,7 +662,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
         var uploadDto = new UploadActionEvidenceDto
         {
             UploaderActor = "client-user-1",
@@ -582,7 +711,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
         var uploadDto = new UploadActionEvidenceDto
         {
             UploaderActor = "client-user-1",
@@ -633,7 +762,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
         var dto = new ApplyActionVerificationDto
         {
             VerificationStatus = DocumentVerificationStatus.Verified,
@@ -680,7 +809,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
         var dto = new ApplyActionVerificationDto
         {
             VerificationStatus = DocumentVerificationStatus.Rejected,
@@ -727,7 +856,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
         var dto = new ApplyActionVerificationDto
         {
             VerificationStatus = "InvalidStatus",
@@ -747,7 +876,7 @@ public class ClientActionServiceTests
         var engagementId = Guid.NewGuid();
         var tenantId = "tenant-seeder";
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
 
         // Act
         var actions = await service.EnsureLifecycleActionsAsync(engagementId, tenantId);
@@ -760,6 +889,20 @@ public class ClientActionServiceTests
         Assert.Contains(actions, a => a.StageNumber == 3);
         Assert.Contains(actions, a => a.StageNumber == 4);
         Assert.Contains(actions, a => a.StageNumber == 5);
+    }
+
+    [Fact]
+    public void GenerateDefaultLifecycleActions_Stage2_IncludesProofOfAddress()
+    {
+        // Arrange / Act: GateRequirements requires BOTH KYC_PASSPORT and PROOF_OF_ADDRESS to
+        // leave Document Collection — the seeded task list must actually ask the client for
+        // both, or the gate becomes satisfiable only via an unguided vault upload.
+        var actions = ClientActionService.GenerateDefaultLifecycleActions(Guid.NewGuid(), "tenant-seeder");
+
+        // Assert
+        Assert.Contains(actions, a => a.StageNumber == 2 && a.Type == "KycDocument");
+        Assert.Contains(actions, a => a.StageNumber == 2 && a.Type == "ProofOfAddress");
+        Assert.Contains(actions, a => a.StageNumber == 2 && a.Type == "SignAgreement");
     }
 
     [Fact]
@@ -781,7 +924,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
 
         // Act
         var actions = (await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: false)).ToList();

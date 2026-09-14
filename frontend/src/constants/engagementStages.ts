@@ -1,4 +1,4 @@
-import { EngagementStage } from '../types';
+import { ClientAction, Engagement, EngagementStage } from '../types';
 
 /**
  * The 5 canonical engagement stages (CSTD-17), in pipeline order.
@@ -69,4 +69,39 @@ export function getNextStage(stage: EngagementStage): EngagementStage | null {
     const idx = getStageIndex(stage);
     if (idx === -1 || idx >= STAGE_ORDER.length - 1) return null;
     return STAGE_ORDER[idx + 1];
+}
+
+/**
+ * The "client-visible" stage number (1-5) — mirrors the backend's
+ * ClientPortalService.DetermineCurrentStage exactly, so any staff-facing view that
+ * shows this number always agrees with what the client sees in the Client Portal.
+ *
+ * This is deliberately NOT the same thing as `getStageIndex(engagement.stage) + 1`
+ * (the real, gate-checked stage that PUT /stage actually operates on): a client
+ * task can be marked Completed via the staff review/verification endpoints without
+ * ever advancing `engagement.stage`, so this number can run ahead of it. Use this
+ * for "what does the client currently see" display; use the raw `engagement.stage`
+ * for anything that drives the actual stage-advance action.
+ */
+export function computeClientVisibleStageNumber(
+    engagement: Pick<Engagement, 'stage' | 'status'> | null | undefined,
+    actions: Pick<ClientAction, 'status' | 'stageNumber'>[]
+): number {
+    if (!engagement) return 1;
+    if (engagement.status === 'Closed' || engagement.stage === 'Closure') return 5;
+
+    const canonicalStage = Math.min(5, Math.max(1, getStageIndex(engagement.stage) + 1));
+
+    const unfinishedStageNumbers = actions
+        .filter((a) => a.status !== 'Completed')
+        .map((a) => a.stageNumber || 1);
+
+    if (unfinishedStageNumbers.length > 0) {
+        const earliestUnfinishedStage = Math.min(...unfinishedStageNumbers);
+        if (earliestUnfinishedStage >= 1 && earliestUnfinishedStage <= 5) {
+            return Math.max(canonicalStage, earliestUnfinishedStage);
+        }
+    }
+
+    return canonicalStage;
 }

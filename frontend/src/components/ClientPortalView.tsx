@@ -40,16 +40,22 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
 
     const isEvidenceAction = (action: ClientSafeAction): boolean => {
         const type = (action.type || '').toLowerCase();
+        // Every ActionType that requires an actual uploaded file, matched exactly first —
+        // 'signagreement' (Signed Master Services Agreement) was previously missed here,
+        // so that task fell through to the generic "Mark Done" bypass with no upload at all.
+        if (type === 'documentupload' || type === 'kycdocument' || type === 'signagreement' || type === 'proofofaddress') {
+            return true;
+        }
         const title = action.title.toLowerCase();
         return (
-            type === 'documentupload' ||
-            type === 'kycdocument' ||
             type.includes('document') ||
             type.includes('upload') ||
             title.includes('upload') ||
             title.includes('document') ||
             title.includes('proof') ||
-            title.includes('id') ||
+            title.includes('agreement') ||
+            title.includes('contract') ||
+            title.includes('signature') ||
             title.includes('evidence') ||
             title.includes('certificate') ||
             title.includes('passport')
@@ -457,27 +463,18 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                         </span>
                         <div className="flex items-center gap-2">
                             {isEvidenceAction(primaryNextAction) ? (
-                                <>
-                                    <button
-                                        onClick={() => setSelectedActionForUpload(primaryNextAction)}
-                                        className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white text-xs font-bold flex items-center gap-2 shadow-sm shadow-indigo-500/25 transition cursor-pointer"
-                                    >
-                                        <UploadCloud className="w-4 h-4" />
-                                        <span>{primaryNextAction.status === 'Rejected' ? 'Re-upload Evidence' : 'Upload Evidence'}</span>
-                                    </button>
-                                    <button
-                                        onClick={() => handleCompleteAction(primaryNextAction)}
-                                        disabled={actionInProgress === primaryNextAction.actionId}
-                                        className="px-3 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold transition cursor-pointer"
-                                        title="Mark task completed without file upload"
-                                    >
-                                        {actionInProgress === primaryNextAction.actionId ? (
-                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                        ) : (
-                                            'Mark Done'
-                                        )}
-                                    </button>
-                                </>
+                                // Evidence/document actions (KYC, signed agreements, uploads) can ONLY be
+                                // completed via the real upload -> compliance -> staff-verification pipeline
+                                // (CSTD-18 gate) — no "mark done without uploading" escape hatch, since that
+                                // would let a client skip document verification entirely and still trigger
+                                // the stage auto-advance.
+                                <button
+                                    onClick={() => setSelectedActionForUpload(primaryNextAction)}
+                                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white text-xs font-bold flex items-center gap-2 shadow-sm shadow-indigo-500/25 transition cursor-pointer"
+                                >
+                                    <UploadCloud className="w-4 h-4" />
+                                    <span>{primaryNextAction.status === 'Rejected' ? 'Re-upload Evidence' : 'Upload Evidence'}</span>
+                                </button>
                             ) : (
                                 <button
                                     onClick={() => handleCompleteAction(primaryNextAction)}
@@ -585,7 +582,9 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                             {new Date(action.deadlineUtc).toLocaleDateString()}
                                         </span>
                                     )}
-                                    {isEvidenceAction(action) && (
+                                    {isEvidenceAction(action) ? (
+                                        // No "Mark Done" bypass for evidence actions — see the
+                                        // primary-action panel above for why.
                                         <button
                                             onClick={() => setSelectedActionForUpload(action)}
                                             className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
@@ -593,14 +592,15 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                             <UploadCloud className="w-3.5 h-3.5" />
                                             <span>Upload</span>
                                         </button>
+                                    ) : (
+                                        <button
+                                            onClick={() => handleCompleteAction(action)}
+                                            disabled={actionInProgress === action.actionId}
+                                            className="px-3.5 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold transition cursor-pointer"
+                                        >
+                                            {actionInProgress === action.actionId ? 'Completing...' : 'Mark Done'}
+                                        </button>
                                     )}
-                                    <button
-                                        onClick={() => handleCompleteAction(action)}
-                                        disabled={actionInProgress === action.actionId}
-                                        className="px-3.5 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold transition cursor-pointer"
-                                    >
-                                        {actionInProgress === action.actionId ? 'Completing...' : 'Mark Done'}
-                                    </button>
                                 </div>
                             </div>
                         ))}
