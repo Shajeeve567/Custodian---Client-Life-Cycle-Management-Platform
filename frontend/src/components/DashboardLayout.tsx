@@ -135,6 +135,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                             <>
                                 <Link to="/documents" className="hover:text-indigo-600 font-medium transition">Document Vault</Link>
                                 <Link to="/audit" className="hover:text-indigo-600 font-medium transition">Audit Log</Link>
+                                <Link to="/reports" className="hover:text-indigo-600 font-medium transition">Reports</Link>
                             </>
                         )}
                         <span>© 2025 Custodian</span>

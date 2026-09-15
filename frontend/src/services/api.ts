@@ -426,6 +426,20 @@ export const AuditApi = {
     },
 };
 
+export const ReportsApi = {
+    /**
+     * GET /api/reports/engagements — Owner/Staff only, tenant-isolated server-side from the
+     * caller's own JWT claim. Returns the parsed row array for format "json", or the raw CSV
+     * text for format "csv" (api.ts's request() already returns plain text for non-JSON
+     * content-types) — the caller decides how to render either.
+     */
+    async getEngagementReport(tenantId: string, format: 'csv' | 'json' = 'csv'): Promise<any> {
+        return request<any>(
+            `${API_BASE.WORKFLOW}/api/reports/engagements?tenantId=${encodeURIComponent(tenantId)}&format=${format}`
+        );
+    },
+};
+
 export const DocumentsApi = {
     async getDocuments(
         engagementId: string,

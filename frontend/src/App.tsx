@@ -8,6 +8,7 @@ import { EngagementsPage } from './pages/EngagementsPage';
 import { WorkflowsPage } from './pages/WorkflowsPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { AuditPage } from './pages/AuditPage';
+import { ReportsPage } from './pages/ReportsPage';
 import { PortalPage } from './pages/PortalPage';
 import { WorkspacePage } from './pages/WorkspacePage';
 import './App.css';
@@ -37,6 +38,7 @@ export const App: React.FC = () => {
                             <Route path="/workflows" element={<Navigate to="/actions" replace />} />
                             <Route path="/documents" element={<DocumentsPage />} />
                             <Route path="/audit" element={<AuditPage />} />
+                            <Route path="/reports" element={<ReportsPage />} />
                         </Route>
                     </Route>
 
