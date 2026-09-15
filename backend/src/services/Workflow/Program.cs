@@ -50,14 +50,28 @@ if (string.Equals(auditTransport, "Kafka", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IProducer<string, string>>(sp =>
     {
         var opts = sp.GetRequiredService<IOptions<KafkaProducerOptions>>().Value;
-        return new ProducerBuilder<string, string>(new ProducerConfig
+        var config = new ProducerConfig
         {
             BootstrapServers = opts.BootstrapServers,
             ClientId = opts.ClientId,
             Acks = Acks.All,
             EnableIdempotence = true,
             MessageTimeoutMs = 10000
-        }).Build();
+        };
+
+        if (!string.IsNullOrWhiteSpace(opts.SecurityProtocol) &&
+            Enum.TryParse<SecurityProtocol>(opts.SecurityProtocol, true, out var secProtocol))
+        {
+            config.SecurityProtocol = secProtocol;
+            if (Enum.TryParse<SaslMechanism>(opts.SaslMechanism ?? "Plain", true, out var saslMech))
+            {
+                config.SaslMechanism = saslMech;
+            }
+            config.SaslUsername = !string.IsNullOrWhiteSpace(opts.SaslUsername) ? opts.SaslUsername : "$ConnectionString";
+            config.SaslPassword = opts.SaslPassword;
+        }
+
+        return new ProducerBuilder<string, string>(config).Build();
     });
     builder.Services.AddSingleton<IAuditPublisher, KafkaAuditPublisher>();
 }
