@@ -1,4 +1,5 @@
 using Confluent.Kafka;
+using Custodian.Shared.Reporting.Reports;
 using Custodian.Workflow.Data;
 using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
@@ -30,6 +31,9 @@ if (!string.IsNullOrWhiteSpace(connectionString))
 // Register Repository & Audit Services
 builder.Services.AddScoped<IEngagementRepository, EngagementRepository>();
 builder.Services.AddScoped<IClientActionService, ClientActionService>();
+
+// Dynamic report generation (ReportsController) — stateless, so a singleton is fine.
+builder.Services.AddSingleton<ReportGenerator>();
 
 // Audit transport is feature-flagged: "Http" (default) keeps the existing
 // synchronous HTTP call to the Audit service; "Kafka" switches to publishing
