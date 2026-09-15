@@ -104,6 +104,72 @@ public class AuditEventServiceTests
     }
 
     [Fact]
+    public async Task RecordEventAsync_SuppliedEventIdNotYetRecorded_UsesSuppliedEventId()
+    {
+        // Arrange: caller (e.g. the Kafka consumer) supplies an EventId that hasn't been seen before
+        var suppliedEventId = Guid.NewGuid();
+        var request = new CreateAuditEventRequest
+        {
+            EventId = suppliedEventId,
+            EngagementId = _testEngagementId,
+            TenantId = _testTenantId,
+            Actor = "System",
+            Type = "StageChange",
+            Payload = "{}"
+        };
+
+        _mockRepo.Setup(r => r.GetByIdAsync(suppliedEventId, _testTenantId))
+            .ReturnsAsync((AuditEvent?)null);
+        _mockRepo.Setup(r => r.AddAsync(It.IsAny<AuditEvent>()))
+            .ReturnsAsync((AuditEvent e) => e);
+
+        // Act
+        var result = await _service.RecordEventAsync(request, _testTenantId);
+
+        // Assert: the row is recorded under the supplied EventId, not a freshly generated one
+        Assert.Equal(suppliedEventId, result.EventId);
+        _mockRepo.Verify(r => r.AddAsync(It.Is<AuditEvent>(e => e.EventId == suppliedEventId)), Times.Once);
+    }
+
+    [Fact]
+    public async Task RecordEventAsync_SuppliedEventIdAlreadyRecorded_ReturnsExistingWithoutInsertingDuplicate()
+    {
+        // Arrange: a redelivered Kafka message carrying an EventId already recorded
+        var existingEventId = Guid.NewGuid();
+        var existing = new AuditEvent
+        {
+            EventId = existingEventId,
+            EngagementId = _testEngagementId,
+            TenantId = _testTenantId,
+            Actor = "System",
+            Type = "StageChange",
+            Payload = "{}",
+            SequenceNumber = 5
+        };
+
+        var request = new CreateAuditEventRequest
+        {
+            EventId = existingEventId,
+            EngagementId = _testEngagementId,
+            TenantId = _testTenantId,
+            Actor = "System",
+            Type = "StageChange",
+            Payload = "{}"
+        };
+
+        _mockRepo.Setup(r => r.GetByIdAsync(existingEventId, _testTenantId))
+            .ReturnsAsync(existing);
+
+        // Act
+        var result = await _service.RecordEventAsync(request, _testTenantId);
+
+        // Assert: idempotent no-op — the existing row is returned, nothing new is inserted
+        Assert.Equal(existingEventId, result.EventId);
+        Assert.Equal(5, result.SequenceNumber);
+        _mockRepo.Verify(r => r.AddAsync(It.IsAny<AuditEvent>()), Times.Never);
+    }
+
+    [Fact]
     public async Task GetEventsByEngagementAsync_ReturnsTenantScopedEvents()
     {
         // Arrange

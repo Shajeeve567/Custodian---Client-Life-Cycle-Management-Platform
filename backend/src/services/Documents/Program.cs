@@ -1,18 +1,39 @@
 using Custodian.Documents.Data;
+using Custodian.Documents.Services;
+using Custodian.Shared.Auth;
 using Custodian.Shared.Http;
+using Custodian.Shared.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
-
-using Custodian.Documents.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add controllers & services
 builder.Services.AddControllers();
 builder.Services.AddCustodianCors(builder.Configuration);
+builder.Services.AddTenantContext();
+builder.Services.AddJwtAuthentication(builder.Configuration);
+builder.Services.AddAuthorization();
+
 builder.Services.AddSingleton<IDocumentValidator, DocumentValidator>();
+
 builder.Services.AddScoped<IStorageService, LocalStorageService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
+
+builder.Services.AddHttpClient<IAuditPublisher, AuditPublisher>(client =>
+{
+    var auditBaseUrl = builder.Configuration["Services:AuditUrl"] ?? builder.Configuration["AuditService:BaseUrl"] ?? "http://localhost:5051";
+    client.BaseAddress = new Uri(auditBaseUrl);
+});
+
+
+// Compliance Rule Store, Engine & Rules
+builder.Services.Configure<Custodian.Documents.Compliance.Store.ComplianceRuleOptions>(
+    builder.Configuration.GetSection(Custodian.Documents.Compliance.Store.ComplianceRuleOptions.SectionName));
+builder.Services.AddSingleton<Custodian.Documents.Compliance.Store.IComplianceRuleStore, Custodian.Documents.Compliance.Store.ComplianceRuleStore>();
+builder.Services.AddSingleton<Custodian.Documents.Compliance.Rules.IComplianceRule, Custodian.Documents.Compliance.Rules.DocumentFreshnessRule>();
+builder.Services.AddSingleton<Custodian.Documents.Compliance.Rules.IComplianceRule, Custodian.Documents.Compliance.Rules.DocumentExpiryRule>();
+builder.Services.AddSingleton<Custodian.Documents.Compliance.IComplianceRuleEngine, Custodian.Documents.Compliance.ComplianceRuleEngine>();
 
 // Configure EF Core with MySQL
 var connectionString = builder.Configuration.GetConnectionString("AzureMySqlConnection");
@@ -45,7 +66,9 @@ using (var scope = app.Services.CreateScope())
 
 app.UseCors();
 // app.UseHttpsRedirection();
+app.UseAuthentication();
 app.UseAuthorization();
+app.UseTenantContext();
 app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Documents Service" }));
 app.MapControllers();
 

@@ -80,4 +80,65 @@ public class TenantControllerTests
         // Assert
         Assert.IsType<NotFoundResult>(result.Result);
     }
+
+    // ==========================================
+    // TENANT ISOLATION TESTS (CSTD-12 & CSTD-269)
+    // ==========================================
+
+    [Fact]
+    public async Task GetTenant_MismatchedTenantContext_Returns403Forbidden()
+    {
+        // Arrange: User has tenant-A in context, but requests tenant-B
+        var myTenantId = Guid.NewGuid();
+        var otherTenantId = Guid.NewGuid();
+        _tenantContext.TenantId = myTenantId.ToString();
+
+        // Act
+        var result = await _controller.GetTenant(otherTenantId, CancellationToken.None);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _tenantRepoMock.Verify(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetTenant_MatchingTenantContext_ReturnsTenant()
+    {
+        // Arrange: User has tenant-A in context and requests tenant-A
+        var myTenantId = Guid.NewGuid();
+        _tenantContext.TenantId = myTenantId.ToString();
+        var expectedTenant = new Tenant { Id = myTenantId, Name = "My Company" };
+        _tenantRepoMock.Setup(r => r.GetByIdAsync(myTenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expectedTenant);
+
+        // Act
+        var result = await _controller.GetTenant(myTenantId, CancellationToken.None);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var tenant = Assert.IsType<Tenant>(okResult.Value);
+        Assert.Equal(myTenantId, tenant.Id);
+    }
+
+    [Fact]
+    public async Task GetTenant_NonOwnerMembership_Returns403Forbidden()
+    {
+        // Arrange: Global token (no tenant claim), but user only has Staff membership in requested tenant
+        var targetTenantId = Guid.NewGuid();
+        _tenantContext.TenantId = null;
+
+        var memberships = new List<TenantMembership>
+        {
+            new TenantMembership { TenantId = targetTenantId, Role = Custodian.Shared.Auth.Role.Staff }
+        };
+        _tenantRepoMock.Setup(r => r.ListMembershipsByUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(memberships);
+
+        // Act
+        var result = await _controller.GetTenant(targetTenantId, CancellationToken.None);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+        _tenantRepoMock.Verify(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

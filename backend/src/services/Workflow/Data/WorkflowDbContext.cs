@@ -11,6 +11,7 @@ public class WorkflowDbContext : DbContext
 
     public DbSet<Engagement> Engagements => Set<Engagement>();
     public DbSet<ClientAction> ClientActions => Set<ClientAction>();
+    public DbSet<Requirement> Requirements => Set<Requirement>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -47,6 +48,13 @@ public class WorkflowDbContext : DbContext
                 .HasMaxLength(20)
                 .IsRequired();
 
+            entity.Property(e => e.Stage)
+                .HasColumnName("stage")
+                .HasConversion<string>()
+                .HasMaxLength(40)
+                .HasDefaultValue(EngagementStage.Onboarding)
+                .IsRequired();
+
             entity.Property(e => e.CreatedAt)
                 .HasColumnName("created_at")
                 .IsRequired();
@@ -73,6 +81,8 @@ public class WorkflowDbContext : DbContext
             entity.Property(a => a.Description).HasColumnName("description");
             entity.Property(a => a.Type).HasColumnName("type").HasMaxLength(50).IsRequired();
             entity.Property(a => a.Status).HasColumnName("status").HasMaxLength(30).IsRequired();
+            entity.Property(a => a.StageNumber).HasColumnName("stage_number").HasDefaultValue(1).IsRequired();
+            entity.Property(a => a.DeadlineUtc).HasColumnName("deadline_utc");
             entity.Property(a => a.Source).HasColumnName("source").HasMaxLength(100).IsRequired();
             entity.Property(a => a.IsInternalOnly).HasColumnName("is_internal_only").IsRequired();
             entity.Property(a => a.AssignedToRole).HasColumnName("assigned_to_role").HasMaxLength(50);
@@ -80,10 +90,40 @@ public class WorkflowDbContext : DbContext
             entity.Property(a => a.CompletedAt).HasColumnName("completed_at");
             entity.Property(a => a.CreatedAt).HasColumnName("created_at").IsRequired();
             entity.Property(a => a.SourceMetadata).HasColumnName("source_metadata");
+            entity.Property(a => a.LinkedRequirementId).HasColumnName("linked_requirement_id");
 
             entity.HasIndex(a => a.TenantId).HasDatabaseName("idx_action_tenant_id");
             entity.HasIndex(a => a.EngagementId).HasDatabaseName("idx_action_engagement_id");
             entity.HasIndex(a => new { a.TenantId, a.EngagementId }).HasDatabaseName("idx_action_tenant_engagement");
+            entity.HasIndex(a => new { a.EngagementId, a.StageNumber }).HasDatabaseName("idx_action_engagement_stage");
+            entity.HasIndex(a => a.LinkedRequirementId).HasDatabaseName("idx_action_linked_requirement");
+        });
+
+        modelBuilder.Entity<Requirement>(entity =>
+        {
+            entity.ToTable("requirements");
+
+            entity.HasKey(r => r.RequirementId);
+
+            entity.Property(r => r.RequirementId).HasColumnName("requirement_id");
+            entity.Property(r => r.EngagementId).HasColumnName("engagement_id").IsRequired();
+            entity.Property(r => r.TenantId).HasColumnName("tenant_id").HasMaxLength(36).IsRequired();
+            entity.Property(r => r.Type).HasColumnName("type").HasMaxLength(100).IsRequired();
+            entity.Property(r => r.Status).HasColumnName("status").HasMaxLength(30).IsRequired();
+            entity.Property(r => r.AssignedToRole).HasColumnName("assigned_to_role").HasMaxLength(50);
+            entity.Property(r => r.Value).HasColumnName("value");
+            entity.Property(r => r.StageNumber).HasColumnName("stage_number");
+            entity.Property(r => r.RequestedBy).HasColumnName("requested_by").HasMaxLength(100);
+            entity.Property(r => r.ReviewedBy).HasColumnName("reviewed_by").HasMaxLength(100);
+            entity.Property(r => r.RequestedAt).HasColumnName("requested_at");
+            entity.Property(r => r.SubmittedAt).HasColumnName("submitted_at");
+            entity.Property(r => r.ReviewedAt).HasColumnName("reviewed_at");
+            entity.Property(r => r.RejectionReason).HasColumnName("rejection_reason");
+            entity.Property(r => r.CreatedAt).HasColumnName("created_at").IsRequired();
+
+            entity.HasIndex(r => r.TenantId).HasDatabaseName("idx_requirement_tenant_id");
+            entity.HasIndex(r => r.EngagementId).HasDatabaseName("idx_requirement_engagement_id");
+            entity.HasIndex(r => new { r.TenantId, r.EngagementId }).HasDatabaseName("idx_requirement_tenant_engagement");
         });
     }
 }

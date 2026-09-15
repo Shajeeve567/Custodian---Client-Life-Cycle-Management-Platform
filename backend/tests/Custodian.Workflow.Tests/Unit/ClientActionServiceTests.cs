@@ -1,8 +1,11 @@
+using Custodian.Shared.Contracts;
 using Custodian.Workflow.Data;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Gates;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 using Xunit;
 
 namespace Custodian.Workflow.Tests.Unit;
@@ -16,6 +19,21 @@ public class ClientActionServiceTests
             .Options;
 
         return new WorkflowDbContext(options);
+    }
+
+    /// <summary>
+    /// Default test double: gate always satisfied, so existing tests that don't care about
+    /// CSTD-18 gating are unaffected. Tests that specifically exercise the gate-check inject
+    /// their own Mock&lt;IGateEvaluator&gt; instead of calling this helper.
+    /// </summary>
+    private static ClientActionService CreateService(WorkflowDbContext db)
+    {
+        var gateEvaluator = new Mock<IGateEvaluator>();
+        gateEvaluator
+            .Setup(g => g.EvaluateAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<EngagementStage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GateEvaluationResult.Satisfied());
+
+        return new ClientActionService(db, gateEvaluator.Object, new Mock<IAuditPublisher>().Object);
     }
 
     [Fact]
@@ -37,6 +55,8 @@ public class ClientActionServiceTests
                 Status = "Pending",
                 Source = "Step1",
                 IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CompletedByActor = "staff-reviewer-1",
                 SourceMetadata = "{\"internalNote\":\"public step\"}"
             },
             new ClientAction
@@ -49,21 +69,25 @@ public class ClientActionServiceTests
                 Status = "Pending",
                 Source = "SystemGate",
                 IsInternalOnly = true,
+                AssignedToRole = "Staff",
                 SourceMetadata = "{\"internalNote\":\"staff eyes only\"}"
             }
         );
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
 
         // Act: Call service with isClientView = false (Staff View)
         var result = await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: false);
 
-        // Assert: Staff receives both items, including internal action and source metadata
+        // Assert: Staff receives both items, including internal action, source metadata,
+        // and operational fields (CSTD-12 fix must preserve the existing staff response).
         var list = result.ToList();
         Assert.Equal(2, list.Count);
         Assert.Contains(list, a => a.IsInternalOnly);
         Assert.All(list, a => Assert.NotNull(a.SourceMetadata));
+        Assert.All(list, a => Assert.NotNull(a.AssignedToRole));
+        Assert.Contains(list, a => a.CompletedByActor == "staff-reviewer-1");
     }
 
     [Fact]
@@ -85,6 +109,8 @@ public class ClientActionServiceTests
                 Status = "Pending",
                 Source = "Step1",
                 IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CompletedByActor = "staff-reviewer-7",
                 SourceMetadata = "{\"sensitiveData\":\"secret\"}"
             },
             new ClientAction
@@ -97,22 +123,27 @@ public class ClientActionServiceTests
                 Status = "Pending",
                 Source = "SystemGate",
                 IsInternalOnly = true,
+                AssignedToRole = "Staff",
                 SourceMetadata = "{\"internalNote\":\"secret\"}"
             }
         );
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
 
         // Act: Call service with isClientView = true (Client View)
         var result = await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: true);
 
-        // Assert: Client view strips internal actions and clears SourceMetadata
+        // Assert: Client view strips internal actions, clears SourceMetadata, and (CSTD-12 fix)
+        // also strips internal operational metadata (AssignedToRole, CompletedByActor) even
+        // from the one action a client is legitimately allowed to see.
         var list = result.ToList();
         Assert.Single(list);
         Assert.Equal("Upload ID Proof", list[0].Title);
         Assert.False(list[0].IsInternalOnly);
         Assert.Null(list[0].SourceMetadata);
+        Assert.Null(list[0].AssignedToRole);
+        Assert.Null(list[0].CompletedByActor);
     }
 
     [Fact]
@@ -133,7 +164,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
 
         // Act: Attempt to retrieve action with wrong tenant ID
         var result = await service.GetActionsByEngagementAsync(engagementId, "tenant-attacker", isClientView: false);
@@ -172,7 +203,7 @@ public class ClientActionServiceTests
         );
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
 
         // Act: Filter by status = "Completed"
         var result = await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: false, statusFilter: "Completed");
@@ -188,7 +219,7 @@ public class ClientActionServiceTests
     {
         // Arrange
         using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
         var engagementId = Guid.NewGuid();
         var tenantId = "tenant-001";
 
@@ -236,7 +267,7 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientActionService(db);
+        var service = CreateService(db);
 
         var completeDto = new CompleteClientActionDto
         {
@@ -254,5 +285,767 @@ public class ClientActionServiceTests
 
         var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
         Assert.Equal("Completed", dbAction!.Status);
+    }
+
+    [Fact]
+    public async Task CompleteActionAsync_RequirementBackedAction_ThrowsArgumentException_AndLeavesActionUnchanged()
+    {
+        // Arrange: CSTD-16 — a Requirement-backed action must go through
+        // PUT /requirements/{id}/submit, not the generic complete endpoint, or the underlying
+        // Requirement.Value/Status would never actually get set.
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var requirementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Provide: SourceOfFunds",
+            Type = "Requirement",
+            Status = ClientActionStatus.Pending,
+            Source = "RequirementSync",
+            LinkedRequirementId = requirementId
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var completeDto = new CompleteClientActionDto { CompletedByActor = "client-user-1" };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CompleteActionAsync(engagementId, actionId, tenantId, completeDto));
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.Equal(ClientActionStatus.Pending, dbAction!.Status);
+        Assert.Null(dbAction.CompletedAt);
+    }
+
+    [Fact]
+    public async Task CompleteActionAsync_LastActionInStage_GateBlocked_CompletesActionButDoesNotAdvanceStageOrPublishAudit()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-1",
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
+        });
+
+        // The only non-internal Stage 1 action — completing it is otherwise eligible to
+        // auto-advance the engagement into Stage 2 (DocumentCollection).
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Stage 1 Intake",
+            Status = ClientActionStatus.Pending,
+            StageNumber = 1,
+            IsInternalOnly = false
+        });
+        await db.SaveChangesAsync();
+
+        var gateEvaluator = new Mock<IGateEvaluator>();
+        gateEvaluator
+            .Setup(g => g.EvaluateAsync(engagementId, tenantId, EngagementStage.DocumentCollection, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GateEvaluationResult.Blocked("Required document not yet verified.", Array.Empty<GateRequirementResult>()));
+        var auditPublisher = new Mock<IAuditPublisher>();
+
+        var service = new ClientActionService(db, gateEvaluator.Object, auditPublisher.Object);
+        var completeDto = new CompleteClientActionDto { CompletedByActor = "client-user-1" };
+
+        // Act
+        var result = await service.CompleteActionAsync(engagementId, actionId, tenantId, completeDto);
+
+        // Assert: the action itself still completes — only the engagement's stage advance is gated
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Completed, result.Status);
+
+        var dbEngagement = await db.Engagements.FirstAsync(e => e.EngagementId == engagementId);
+        Assert.Equal(EngagementStage.Onboarding, dbEngagement.Stage);
+
+        auditPublisher.Verify(
+            a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), "StageChange", It.IsAny<object>()),
+            Times.Never());
+    }
+
+    [Fact]
+    public async Task CompleteActionAsync_LastActionInStage_GateSatisfied_AdvancesStageAndPublishesAuditEvent()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-1",
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
+        });
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Stage 1 Intake",
+            Status = ClientActionStatus.Pending,
+            StageNumber = 1,
+            IsInternalOnly = false
+        });
+        await db.SaveChangesAsync();
+
+        var gateEvaluator = new Mock<IGateEvaluator>();
+        gateEvaluator
+            .Setup(g => g.EvaluateAsync(engagementId, tenantId, EngagementStage.DocumentCollection, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GateEvaluationResult.Satisfied());
+        var auditPublisher = new Mock<IAuditPublisher>();
+
+        var service = new ClientActionService(db, gateEvaluator.Object, auditPublisher.Object);
+        var completeDto = new CompleteClientActionDto { CompletedByActor = "client-user-1" };
+
+        // Act
+        var result = await service.CompleteActionAsync(engagementId, actionId, tenantId, completeDto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Completed, result.Status);
+
+        var dbEngagement = await db.Engagements.FirstAsync(e => e.EngagementId == engagementId);
+        Assert.Equal(EngagementStage.DocumentCollection, dbEngagement.Stage);
+
+        auditPublisher.Verify(
+            a => a.PublishEventAsync(engagementId, tenantId, "client-user-1", "StageChange", It.IsAny<object>()),
+            Times.Once());
+    }
+
+    [Fact]
+    public async Task CreateActionAsync_WithStageAndDeadline_PersistsAndMapsFieldsCorrectly()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var deadline = DateTime.UtcNow.AddDays(3);
+
+        var service = CreateService(db);
+        var createDto = new CreateClientActionDto
+        {
+            Title = "Submit Proof of Address",
+            Type = "DocumentUpload",
+            StageNumber = 2,
+            DeadlineUtc = deadline,
+            Source = "Stage2Compliance",
+            IsInternalOnly = false,
+            AssignedToRole = "Client"
+        };
+
+        // Act
+        var created = await service.CreateActionAsync(engagementId, tenantId, createDto);
+
+        // Assert
+        Assert.NotNull(created);
+        Assert.Equal(2, created.StageNumber);
+        Assert.Equal(deadline, created.DeadlineUtc);
+        Assert.Equal(ClientActionStatus.Pending, created.Status);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == created.ActionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(2, dbAction.StageNumber);
+        Assert.Equal(deadline, dbAction.DeadlineUtc);
+    }
+
+    [Fact]
+    public async Task UploadEvidenceAsync_PendingAction_TransitionsToUploaded()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Tax Certificate",
+            Status = ClientActionStatus.Pending
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var uploadDto = new UploadActionEvidenceDto
+        {
+            UploaderActor = "client-user-1",
+            DocumentId = Guid.NewGuid()
+        };
+
+        // Act
+        var result = await service.UploadEvidenceAsync(engagementId, actionId, tenantId, uploadDto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Uploaded, result.Status);
+        Assert.Equal("client-user-1", result.CompletedByActor);
+        Assert.Null(result.CompletedAt); // Still awaiting review
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.Equal(ClientActionStatus.Uploaded, dbAction!.Status);
+    }
+
+    [Fact]
+    public async Task UploadEvidenceAsync_RejectedCompliance_TransitionsToRejected_PreservingDeterministicReason()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var documentId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Utility Bill",
+            Status = ClientActionStatus.Pending
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var uploadDto = new UploadActionEvidenceDto
+        {
+            UploaderActor = "client-user-1",
+            DocumentId = documentId,
+            ComplianceStatus = "Rejected",
+            RejectionReason = "Document exceeds maximum allowable age of 90 days (issued 120 days ago)."
+        };
+
+        // Act
+        var result = await service.UploadEvidenceAsync(engagementId, actionId, tenantId, uploadDto);
+
+        // Assert: Workflow contract requires automatic rejection without human staff review
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Rejected, result.Status);
+        Assert.Equal("client-user-1", result.CompletedByActor);
+        Assert.Null(result.CompletedAt);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(ClientActionStatus.Rejected, dbAction.Status);
+        Assert.Contains("Rejected", dbAction.SourceMetadata);
+        Assert.Contains("exceeds maximum allowable age of 90 days", dbAction.SourceMetadata);
+    }
+
+    [Fact]
+    public async Task UploadEvidenceAsync_CompliantCompliance_TransitionsToUploaded_AwaitingHumanVerification()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var documentId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Valid Passport",
+            Status = ClientActionStatus.Pending
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var uploadDto = new UploadActionEvidenceDto
+        {
+            UploaderActor = "client-user-1",
+            DocumentId = documentId,
+            ComplianceStatus = "Compliant"
+        };
+
+        // Act
+        var result = await service.UploadEvidenceAsync(engagementId, actionId, tenantId, uploadDto);
+
+        // Assert: Automatic check passed -> transitions to Uploaded (human verification is a separate state)
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Uploaded, result.Status);
+        Assert.Equal("client-user-1", result.CompletedByActor);
+        Assert.Null(result.CompletedAt);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(ClientActionStatus.Uploaded, dbAction.Status);
+        Assert.Contains("Compliant", dbAction.SourceMetadata);
+    }
+
+    [Fact]
+    public async Task ReviewActionAsync_Accept_TransitionsToCompleted()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Tax Certificate",
+            Status = ClientActionStatus.Uploaded
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var reviewDto = new ReviewActionDto
+        {
+            Status = ClientActionStatus.Completed,
+            ReviewerActor = "staff-reviewer-99",
+            ReviewNote = "Document verified successfully."
+        };
+
+        // Act
+        var result = await service.ReviewActionAsync(engagementId, actionId, tenantId, reviewDto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Completed, result.Status);
+        Assert.NotNull(result.CompletedAt);
+        Assert.Equal("staff-reviewer-99", result.CompletedByActor);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.Equal(ClientActionStatus.Completed, dbAction!.Status);
+    }
+
+    [Fact]
+    public async Task ReviewActionAsync_Reject_TransitionsToRejected()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Tax Certificate",
+            Status = ClientActionStatus.Uploaded
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var reviewDto = new ReviewActionDto
+        {
+            Status = ClientActionStatus.Rejected,
+            ReviewerActor = "staff-reviewer-99",
+            ReviewNote = "Image is blurry. Please re-upload a clear copy."
+        };
+
+        // Act
+        var result = await service.ReviewActionAsync(engagementId, actionId, tenantId, reviewDto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Rejected, result.Status);
+        Assert.Null(result.CompletedAt); // Not completed
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.Equal(ClientActionStatus.Rejected, dbAction!.Status);
+        Assert.Contains("blurry", dbAction.SourceMetadata);
+    }
+
+    [Fact]
+    public async Task UploadEvidenceAsync_Compliant_WithVerifiedStatus_TransitionsActionToCompleted()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var documentId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Articles of Incorporation",
+            Status = ClientActionStatus.Pending
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var uploadDto = new UploadActionEvidenceDto
+        {
+            UploaderActor = "client-user-1",
+            DocumentId = documentId,
+            ComplianceStatus = "Compliant",
+            VerificationStatus = DocumentVerificationStatus.Verified,
+            VerifiedBy = "staff-analyst-1",
+            VerificationReason = "State registry seal confirmed valid."
+        };
+
+        // Act
+        var result = await service.UploadEvidenceAsync(engagementId, actionId, tenantId, uploadDto);
+
+        // Assert: Only human-confirmed evidence satisfies a required gate -> Completed
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Completed, result.Status);
+        Assert.NotNull(result.CompletedAt);
+        Assert.Equal("staff-analyst-1", result.CompletedByActor);
+        Assert.Equal(DocumentVerificationStatus.Verified, result.VerificationStatus);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(ClientActionStatus.Completed, dbAction.Status);
+        Assert.Contains("Compliant", dbAction.SourceMetadata);
+        Assert.Contains("Verified", dbAction.SourceMetadata);
+        Assert.Contains("State registry seal confirmed valid", dbAction.SourceMetadata);
+    }
+
+    [Fact]
+    public async Task UploadEvidenceAsync_Compliant_WithRejectedVerification_TransitionsActionToRejected_PreservingCompliance()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var documentId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Articles of Incorporation",
+            Status = ClientActionStatus.Pending
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var uploadDto = new UploadActionEvidenceDto
+        {
+            UploaderActor = "client-user-1",
+            DocumentId = documentId,
+            ComplianceStatus = "Compliant",
+            VerificationStatus = DocumentVerificationStatus.Rejected,
+            VerifiedBy = "staff-analyst-1",
+            VerificationReason = "Notary signature does not match official registry."
+        };
+
+        // Act
+        var result = await service.UploadEvidenceAsync(engagementId, actionId, tenantId, uploadDto);
+
+        // Assert: Compliance is preserved as Compliant, but human verification failed -> Rejected
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Rejected, result.Status);
+        Assert.Null(result.CompletedAt);
+        Assert.Equal("staff-analyst-1", result.CompletedByActor);
+        Assert.Equal(DocumentVerificationStatus.Rejected, result.VerificationStatus);
+        Assert.Equal("Notary signature does not match official registry.", result.VerificationReason);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(ClientActionStatus.Rejected, dbAction.Status);
+        Assert.Contains("Compliant", dbAction.SourceMetadata);
+        Assert.Contains("Rejected", dbAction.SourceMetadata);
+        Assert.Contains("Notary signature does not match official registry", dbAction.SourceMetadata);
+    }
+
+    [Fact]
+    public async Task ApplyVerificationOutcomeAsync_Verified_TransitionsToCompleted_AndPreservesMetadata()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var documentId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Passport Verification",
+            Status = ClientActionStatus.Uploaded,
+            SourceMetadata = $"{{\"documentId\":\"{documentId}\",\"complianceStatus\":\"Compliant\"}}"
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var dto = new ApplyActionVerificationDto
+        {
+            VerificationStatus = DocumentVerificationStatus.Verified,
+            VerifiedBy = "compliance-officer-5",
+            VerificationReason = "MRZ checksum and human photo verified against passport."
+        };
+
+        // Act
+        var result = await service.ApplyVerificationOutcomeAsync(engagementId, actionId, tenantId, dto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Completed, result.Status);
+        Assert.NotNull(result.CompletedAt);
+        Assert.Equal("compliance-officer-5", result.CompletedByActor);
+        Assert.Equal(DocumentVerificationStatus.Verified, result.VerificationStatus);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(ClientActionStatus.Completed, dbAction.Status);
+        Assert.Contains(documentId.ToString(), dbAction.SourceMetadata);
+        Assert.Contains("Compliant", dbAction.SourceMetadata);
+        Assert.Contains("Verified", dbAction.SourceMetadata);
+    }
+
+    [Fact]
+    public async Task ApplyVerificationOutcomeAsync_Rejected_TransitionsToRejected_WithStaffReason()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var documentId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Passport Verification",
+            Status = ClientActionStatus.Uploaded,
+            SourceMetadata = $"{{\"documentId\":\"{documentId}\",\"complianceStatus\":\"Compliant\"}}"
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var dto = new ApplyActionVerificationDto
+        {
+            VerificationStatus = DocumentVerificationStatus.Rejected,
+            VerifiedBy = "compliance-officer-5",
+            VerificationReason = "Passport page is cropped; MRZ lines are cut off."
+        };
+
+        // Act
+        var result = await service.ApplyVerificationOutcomeAsync(engagementId, actionId, tenantId, dto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Rejected, result.Status);
+        Assert.Null(result.CompletedAt);
+        Assert.Equal("compliance-officer-5", result.CompletedByActor);
+        Assert.Equal(DocumentVerificationStatus.Rejected, result.VerificationStatus);
+        Assert.Equal("Passport page is cropped; MRZ lines are cut off.", result.VerificationReason);
+
+        var dbAction = await db.ClientActions.FirstOrDefaultAsync(a => a.ActionId == actionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(ClientActionStatus.Rejected, dbAction.Status);
+        Assert.Contains(documentId.ToString(), dbAction.SourceMetadata);
+        Assert.Contains("Compliant", dbAction.SourceMetadata);
+        Assert.Contains("Rejected", dbAction.SourceMetadata);
+        Assert.Contains("Passport page is cropped", dbAction.SourceMetadata);
+    }
+
+    [Fact]
+    public async Task ApplyVerificationOutcomeAsync_InvalidStatus_ThrowsArgumentException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Passport Verification",
+            Status = ClientActionStatus.Uploaded
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var dto = new ApplyActionVerificationDto
+        {
+            VerificationStatus = "InvalidStatus",
+            VerifiedBy = "compliance-officer-5"
+        };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.ApplyVerificationOutcomeAsync(engagementId, actionId, tenantId, dto));
+    }
+
+    [Fact]
+    public async Task EnsureLifecycleActionsAsync_SeedsAllFiveStages()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-seeder";
+
+        var service = CreateService(db);
+
+        // Act
+        var actions = await service.EnsureLifecycleActionsAsync(engagementId, tenantId);
+
+        // Assert
+        Assert.NotNull(actions);
+        Assert.True(actions.Count >= 5);
+        Assert.Contains(actions, a => a.StageNumber == 1);
+        Assert.Contains(actions, a => a.StageNumber == 2 && a.Type == "KycDocument");
+        Assert.Contains(actions, a => a.StageNumber == 3);
+        Assert.Contains(actions, a => a.StageNumber == 4);
+        Assert.Contains(actions, a => a.StageNumber == 5);
+    }
+
+    [Fact]
+    public void GenerateDefaultLifecycleActions_Stage2_IncludesProofOfAddress()
+    {
+        // Arrange / Act: GateRequirements requires BOTH KYC_PASSPORT and PROOF_OF_ADDRESS to
+        // leave Document Collection — the seeded task list must actually ask the client for
+        // both, or the gate becomes satisfiable only via an unguided vault upload.
+        var actions = ClientActionService.GenerateDefaultLifecycleActions(Guid.NewGuid(), "tenant-seeder");
+
+        // Assert
+        Assert.Contains(actions, a => a.StageNumber == 2 && a.Type == "KycDocument");
+        Assert.Contains(actions, a => a.StageNumber == 2 && a.Type == "ProofOfAddress");
+        Assert.Contains(actions, a => a.StageNumber == 2 && a.Type == "SignAgreement");
+    }
+
+    [Fact]
+    public async Task GetActionsByEngagementAsync_WhenEngagementExistsAndHasNoActions_AutoSeedsLifecycleActions()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-seeder";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-1",
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act
+        var actions = (await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: false)).ToList();
+
+        // Assert
+        Assert.NotEmpty(actions);
+        Assert.Contains(actions, a => a.StageNumber == 1);
+        Assert.Contains(actions, a => a.StageNumber == 2);
+    }
+
+    [Fact]
+    public async Task ClientOwnsEngagementAsync_MatchingClientAndTenant_ReturnsTrue()
+    {
+        // Arrange (CSTD-22 IDOR protection, extended to ClientActionsController)
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-owner",
+            StaffId = "staff-1"
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act
+        var owns = await service.ClientOwnsEngagementAsync(engagementId, tenantId, "client-owner");
+
+        // Assert
+        Assert.True(owns);
+    }
+
+    [Fact]
+    public async Task ClientOwnsEngagementAsync_DifferentClient_ReturnsFalse()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-owner",
+            StaffId = "staff-1"
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act: a different client in the same tenant
+        var owns = await service.ClientOwnsEngagementAsync(engagementId, tenantId, "client-attacker");
+
+        // Assert
+        Assert.False(owns);
+    }
+
+    [Fact]
+    public async Task ClientOwnsEngagementAsync_DifferentTenant_ReturnsFalse()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = "tenant-legitimate",
+            ClientId = "client-owner",
+            StaffId = "staff-1"
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act
+        var owns = await service.ClientOwnsEngagementAsync(engagementId, "tenant-attacker", "client-owner");
+
+        // Assert
+        Assert.False(owns);
     }
 }
