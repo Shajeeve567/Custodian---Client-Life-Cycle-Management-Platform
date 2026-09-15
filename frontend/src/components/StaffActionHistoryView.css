@@ -226,6 +226,18 @@
   color: #94a3b8;
 }
 
+.badge-verified {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+.badge-rejected {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
+
 .action-description {
   margin: 8px 0 14px 0;
   color: #cbd5e1;

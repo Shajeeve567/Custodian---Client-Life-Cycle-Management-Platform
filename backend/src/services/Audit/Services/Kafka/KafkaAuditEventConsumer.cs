@@ -21,7 +21,10 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
     {
         "Genesis",
         "StatusChange",
-        "StageChange"
+        "StageChange",
+        // CSTD-16 (Requirements Collection)
+        "RequirementRequested",
+        "RequirementSubmitted"
     };
 
     private readonly KafkaOptions _kafkaOptions;
@@ -57,6 +60,18 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
                 : AutoOffsetReset.Earliest,
             EnableAutoCommit = false
         };
+
+        if (!string.IsNullOrWhiteSpace(_kafkaOptions.SecurityProtocol) &&
+            Enum.TryParse<SecurityProtocol>(_kafkaOptions.SecurityProtocol, true, out var secProtocol))
+        {
+            config.SecurityProtocol = secProtocol;
+            if (Enum.TryParse<SaslMechanism>(_kafkaOptions.SaslMechanism ?? "Plain", true, out var saslMech))
+            {
+                config.SaslMechanism = saslMech;
+            }
+            config.SaslUsername = !string.IsNullOrWhiteSpace(_kafkaOptions.SaslUsername) ? _kafkaOptions.SaslUsername : "$ConnectionString";
+            config.SaslPassword = _kafkaOptions.SaslPassword;
+        }
 
         try
         {

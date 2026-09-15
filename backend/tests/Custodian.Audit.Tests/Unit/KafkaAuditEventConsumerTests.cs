@@ -76,6 +76,34 @@ public class KafkaAuditEventConsumerTests
         Assert.Contains("DocumentCollection", stored.Payload);
     }
 
+    [Theory]
+    [InlineData("RequirementRequested")]
+    [InlineData("RequirementSubmitted")]
+    public async Task ProcessMessageAsync_RequirementEvent_RecordsAuditEvent(string eventType)
+    {
+        // Arrange: CSTD-16 (Requirements Collection) events
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+
+        var json = BuildEnvelopeJson(eventType, engagementId, "staff-actor", new
+        {
+            requirementId = Guid.NewGuid(),
+            requirementType = "CompanyRegistrationNumber"
+        });
+
+        // Act
+        await consumer.ProcessMessageAsync(json);
+
+        // Assert
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var stored = await db.Events.SingleOrDefaultAsync(e => e.EngagementId == engagementId);
+
+        Assert.NotNull(stored);
+        Assert.Equal(eventType, stored.Type);
+    }
+
     [Fact]
     public async Task ProcessMessageAsync_UnhandledEventType_IsIgnored()
     {

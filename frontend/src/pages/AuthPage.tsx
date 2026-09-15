@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { jwtDecode } from 'jwt-decode';
 import { useAuth } from '../context/AuthContext';
 import { IdentityApi, ApiError } from '../services/api';
-import { TenantMembership } from '../types';
+import { TenantMembership, JwtPayload } from '../types';
 import {
     Shield,
     Lock,
@@ -21,7 +22,7 @@ interface AuthPageProps {
 export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => {
     const navigate = useNavigate();
     const location = useLocation();
-    const { isAuthenticated, setWorkspaceToken } = useAuth();
+    const { isAuthenticated, role, setWorkspaceToken } = useAuth();
 
     // Determine mode from prop or path
     const [mode, setMode] = useState<'login' | 'register'>(
@@ -36,12 +37,22 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
         }
     }, [location.pathname]);
 
-    // If already authenticated with workspace token, redirect to /engagements
+    // If already authenticated with workspace token, redirect based on role
     useEffect(() => {
         if (isAuthenticated) {
-            navigate('/engagements', { replace: true });
+            navigate(role === 'Client' ? '/portal' : '/engagements', { replace: true });
         }
-    }, [isAuthenticated, navigate]);
+    }, [isAuthenticated, role, navigate]);
+
+    const getTargetRouteForToken = (token: string): string => {
+        try {
+            const decoded = jwtDecode<JwtPayload>(token);
+            const roleClaim = decoded['http://schemas.microsoft.com/ws/2008/06/identity/claims/role'] || decoded.role;
+            return roleClaim === 'Client' ? '/portal' : '/engagements';
+        } catch {
+            return '/engagements';
+        }
+    };
 
     // Form inputs
     const [email, setEmail] = useState('');
@@ -157,7 +168,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
                 setStatusMessage(`Connecting to workspace "${target.name}"...`);
                 const wsRes = await IdentityApi.selectWorkspace(target.tenantId, gToken);
                 setWorkspaceToken(wsRes.token, target.tenantId, target.name);
-                navigate('/engagements');
+                navigate(getTargetRouteForToken(wsRes.token));
             } else {
                 // 0 workspaces (needs creation) OR >1 workspaces (needs selection)
                 setAvailableWorkspaces(workspaces || []);
@@ -188,7 +199,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
             setStatusMessage(`Entering "${workspace.name}"...`);
             const wsRes = await IdentityApi.selectWorkspace(workspace.tenantId, globalToken);
             setWorkspaceToken(wsRes.token, workspace.tenantId, workspace.name);
-            navigate('/engagements');
+            navigate(getTargetRouteForToken(wsRes.token));
         } catch (err: any) {
             console.error('Workspace selection failed:', err);
             setErrorMessage(err?.message || 'Failed to enter workspace.');

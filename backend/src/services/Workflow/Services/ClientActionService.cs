@@ -1,6 +1,9 @@
+using System.Text.Json;
+using Custodian.Shared.Contracts;
 using Custodian.Workflow.Data;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
+using Custodian.Workflow.Services.Gates;
 using Microsoft.EntityFrameworkCore;
 
 namespace Custodian.Workflow.Services;
@@ -8,10 +11,22 @@ namespace Custodian.Workflow.Services;
 public class ClientActionService : IClientActionService
 {
     private readonly WorkflowDbContext _dbContext;
+    private readonly IGateEvaluator _gateEvaluator;
+    private readonly IAuditPublisher _auditPublisher;
 
-    public ClientActionService(WorkflowDbContext dbContext)
+    public ClientActionService(WorkflowDbContext dbContext, IGateEvaluator gateEvaluator, IAuditPublisher auditPublisher)
     {
         _dbContext = dbContext;
+        _gateEvaluator = gateEvaluator;
+        _auditPublisher = auditPublisher;
+    }
+
+    public async Task<bool> ClientOwnsEngagementAsync(Guid engagementId, string tenantId, string clientId)
+    {
+        return await _dbContext.Engagements.AsNoTracking().AnyAsync(e =>
+            e.EngagementId == engagementId &&
+            e.TenantId == tenantId &&
+            e.ClientId == clientId);
     }
 
     public async Task<IEnumerable<ClientActionResponseDto>> GetActionsByEngagementAsync(
@@ -23,6 +38,35 @@ public class ClientActionService : IClientActionService
         if (string.IsNullOrWhiteSpace(tenantId))
         {
             return Enumerable.Empty<ClientActionResponseDto>();
+        }
+
+        // Check if this is an existing engagement in the system.
+        // If it exists in Engagements, ensure default lifecycle actions are seeded for all 5 stages.
+        var engagementExists = await _dbContext.Engagements
+            .AnyAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId);
+
+        if (engagementExists)
+        {
+            var existingActionCount = await _dbContext.ClientActions
+                .CountAsync(a => a.EngagementId == engagementId && a.TenantId == tenantId);
+
+            if (existingActionCount == 0)
+            {
+                await EnsureLifecycleActionsAsync(engagementId, tenantId);
+            }
+            else
+            {
+                var distinctStages = await _dbContext.ClientActions
+                    .Where(a => a.EngagementId == engagementId && a.TenantId == tenantId)
+                    .Select(a => a.StageNumber)
+                    .Distinct()
+                    .ToListAsync();
+
+                if (distinctStages.Count < 5)
+                {
+                    await EnsureLifecycleActionsAsync(engagementId, tenantId);
+                }
+            }
         }
 
         var query = _dbContext.ClientActions
@@ -42,7 +86,8 @@ public class ClientActionService : IClientActionService
         }
 
         var actions = await query
-            .OrderByDescending(a => a.CreatedAt)
+            .OrderBy(a => a.StageNumber)
+            .ThenBy(a => a.CreatedAt)
             .ToListAsync();
 
         return actions.Select(a => MapToResponseDto(a, isClientView));
@@ -63,7 +108,9 @@ public class ClientActionService : IClientActionService
             Title = dto.Title,
             Description = dto.Description,
             Type = dto.Type,
-            Status = "Pending",
+            Status = ClientActionStatus.Pending,
+            StageNumber = dto.StageNumber > 0 ? dto.StageNumber : 1,
+            DeadlineUtc = dto.DeadlineUtc,
             Source = dto.Source,
             IsInternalOnly = dto.IsInternalOnly,
             AssignedToRole = dto.AssignedToRole,
@@ -92,17 +139,348 @@ public class ClientActionService : IClientActionService
             return null;
         }
 
-        action.Status = "Completed";
+        if (action.LinkedRequirementId.HasValue)
+        {
+            // CSTD-16: a Requirement-backed action must be completed by actually submitting a
+            // value (PUT /requirements/{id}/submit), not by the generic complete endpoint —
+            // otherwise the mirrored action would clear from Next Action while the underlying
+            // Requirement stays stuck at Requested with no Value, silently losing the submission.
+            throw new ArgumentException(
+                $"This action represents Requirement '{action.LinkedRequirementId}' and must be submitted via " +
+                $"PUT /api/engagements/{engagementId}/requirements/{action.LinkedRequirementId}/submit, not completed directly.");
+        }
+
+        action.Status = ClientActionStatus.Completed;
         action.CompletedByActor = dto.CompletedByActor;
         action.CompletedAt = DateTime.UtcNow;
+
+        // Auto-advance engagement stage if all client-facing actions for this stage are now completed
+        var engagement = await _dbContext.Engagements
+            .FirstOrDefaultAsync(e => e.EngagementId == action.EngagementId && e.TenantId == tenantId);
+
+        if (engagement != null && engagement.Status != EngagementStatus.Closed && engagement.Status != EngagementStatus.Cancelled)
+        {
+            var currentStageNum = (int)engagement.Stage + 1;
+            if (action.StageNumber == currentStageNum)
+            {
+                // Check if any other non-internal actions for this stage remain incomplete
+                var hasIncompleteTasks = await _dbContext.ClientActions
+                    .AnyAsync(a => a.EngagementId == action.EngagementId &&
+                                   a.TenantId == tenantId &&
+                                   a.StageNumber == currentStageNum &&
+                                   a.ActionId != action.ActionId &&
+                                   !a.IsInternalOnly &&
+                                   a.Status != ClientActionStatus.Completed);
+
+                if (!hasIncompleteTasks && (int)engagement.Stage < 4)
+                {
+                    var targetStage = (EngagementStage)((int)engagement.Stage + 1);
+
+                    // CSTD-18: this auto-advance must respect the exact same mandatory gate
+                    // as the staff-facing PUT /stage endpoint — completing the last
+                    // client-visible task in a stage must never silently skip a required
+                    // document's compliance/verification requirement. If the gate isn't
+                    // satisfied (e.g. a KYC document is compliant but not yet staff-verified),
+                    // the engagement simply stays put; the client sees "AllCaughtUp" until the
+                    // gate condition actually clears.
+                    var gateResult = await _gateEvaluator.EvaluateAsync(engagement.EngagementId, tenantId, targetStage);
+                    if (gateResult.IsSatisfied)
+                    {
+                        var previousStage = engagement.Stage;
+                        engagement.Stage = targetStage;
+
+                        await _auditPublisher.PublishEventAsync(
+                            engagement.EngagementId,
+                            tenantId,
+                            dto.CompletedByActor ?? "System",
+                            "StageChange",
+                            new
+                            {
+                                fromStage = previousStage.ToString(),
+                                toStage = targetStage.ToString(),
+                                changedAt = DateTime.UtcNow,
+                                trigger = "ClientActionAutoAdvance"
+                            });
+                    }
+                }
+            }
+        }
 
         await _dbContext.SaveChangesAsync();
 
         return MapToResponseDto(action, isClientView: false);
     }
 
+    public async Task<ClientActionResponseDto?> UploadEvidenceAsync(Guid engagementId, Guid actionId, string tenantId, UploadActionEvidenceDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return null;
+        }
+
+        var action = await _dbContext.ClientActions
+            .FirstOrDefaultAsync(a => a.ActionId == actionId && (engagementId == Guid.Empty || a.EngagementId == engagementId) && a.TenantId == tenantId);
+
+        if (action == null)
+        {
+            return null;
+        }
+
+        // Workflow contract: Automatic checks and human verification are deliberately separate states.
+        // If automatic compliance validation rejected the document, immediately mark the action as Rejected
+        // with the deterministic rejection reason, bypassing human staff review.
+        var isComplianceRejected = string.Equals(dto.ComplianceStatus, "Rejected", StringComparison.OrdinalIgnoreCase);
+
+        if (isComplianceRejected)
+        {
+            action.Status = ClientActionStatus.Rejected;
+            action.CompletedAt = null;
+            action.CompletedByActor = dto.UploaderActor;
+
+            var reason = !string.IsNullOrWhiteSpace(dto.RejectionReason)
+                ? dto.RejectionReason.Trim()
+                : "The submitted evidence does not meet compliance standards.";
+
+            var metaObj = new
+            {
+                documentId = dto.DocumentId?.ToString(),
+                complianceStatus = "Rejected",
+                rejectionReason = reason,
+                verificationStatus = DocumentVerificationStatus.Unverified
+            };
+            action.SourceMetadata = JsonSerializer.Serialize(metaObj);
+        }
+        else
+        {
+            // Document passed automatic compliance check.
+            // Check verification status: only human-confirmed verification can satisfy a gate.
+            var isVerified = string.Equals(dto.VerificationStatus, DocumentVerificationStatus.Verified, StringComparison.OrdinalIgnoreCase);
+            var isVerificationRejected = string.Equals(dto.VerificationStatus, DocumentVerificationStatus.Rejected, StringComparison.OrdinalIgnoreCase);
+
+            if (isVerified)
+            {
+                action.Status = ClientActionStatus.Completed;
+                action.CompletedAt = DateTime.UtcNow;
+                action.CompletedByActor = !string.IsNullOrWhiteSpace(dto.VerifiedBy) ? dto.VerifiedBy : dto.UploaderActor;
+
+                var metaObj = new
+                {
+                    documentId = dto.DocumentId?.ToString(),
+                    complianceStatus = "Compliant",
+                    verificationStatus = DocumentVerificationStatus.Verified,
+                    verifiedBy = dto.VerifiedBy,
+                    verificationReason = dto.VerificationReason
+                };
+                action.SourceMetadata = JsonSerializer.Serialize(metaObj);
+            }
+            else if (isVerificationRejected)
+            {
+                action.Status = ClientActionStatus.Rejected;
+                action.CompletedAt = null;
+                action.CompletedByActor = !string.IsNullOrWhiteSpace(dto.VerifiedBy) ? dto.VerifiedBy : dto.UploaderActor;
+
+                var reason = !string.IsNullOrWhiteSpace(dto.VerificationReason)
+                    ? dto.VerificationReason.Trim()
+                    : (!string.IsNullOrWhiteSpace(dto.RejectionReason) ? dto.RejectionReason.Trim() : "Evidence verification rejected by staff.");
+
+                var metaObj = new
+                {
+                    documentId = dto.DocumentId?.ToString(),
+                    complianceStatus = "Compliant",
+                    verificationStatus = DocumentVerificationStatus.Rejected,
+                    verifiedBy = dto.VerifiedBy,
+                    verificationReason = reason,
+                    rejectionReason = reason
+                };
+                action.SourceMetadata = JsonSerializer.Serialize(metaObj);
+            }
+            else
+            {
+                // Auto-compliant, awaiting human staff verification -> Uploaded
+                action.Status = ClientActionStatus.Uploaded;
+                action.CompletedAt = null;
+                action.CompletedByActor = dto.UploaderActor;
+
+                var metaObj = new
+                {
+                    documentId = dto.DocumentId?.ToString(),
+                    complianceStatus = "Compliant",
+                    verificationStatus = DocumentVerificationStatus.Pending
+                };
+                action.SourceMetadata = JsonSerializer.Serialize(metaObj);
+            }
+        }
+
+        await _dbContext.SaveChangesAsync();
+
+        return MapToResponseDto(action, isClientView: false);
+    }
+
+    public async Task<ClientActionResponseDto?> ReviewActionAsync(Guid engagementId, Guid actionId, string tenantId, ReviewActionDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return null;
+        }
+
+        var action = await _dbContext.ClientActions
+            .FirstOrDefaultAsync(a => a.ActionId == actionId && (engagementId == Guid.Empty || a.EngagementId == engagementId) && a.TenantId == tenantId);
+
+        if (action == null)
+        {
+            return null;
+        }
+
+        var (docId, compStatus, _, _) = ParseSourceMetadata(action.SourceMetadata);
+
+        if (string.Equals(dto.Status, ClientActionStatus.Completed, StringComparison.OrdinalIgnoreCase))
+        {
+            action.Status = ClientActionStatus.Completed;
+            action.CompletedAt = DateTime.UtcNow;
+            action.CompletedByActor = dto.ReviewerActor;
+
+            var metaObj = new Dictionary<string, object?>
+            {
+                ["documentId"] = docId,
+                ["complianceStatus"] = compStatus ?? "Compliant",
+                ["verificationStatus"] = DocumentVerificationStatus.Verified,
+                ["verifiedBy"] = dto.ReviewerActor,
+                ["verificationReason"] = dto.VerificationReason ?? dto.ReviewNote
+            };
+            action.SourceMetadata = JsonSerializer.Serialize(metaObj);
+        }
+        else if (string.Equals(dto.Status, ClientActionStatus.Rejected, StringComparison.OrdinalIgnoreCase))
+        {
+            action.Status = ClientActionStatus.Rejected;
+            action.CompletedAt = null;
+            action.CompletedByActor = dto.ReviewerActor;
+
+            var reason = !string.IsNullOrWhiteSpace(dto.VerificationReason)
+                ? dto.VerificationReason.Trim()
+                : (!string.IsNullOrWhiteSpace(dto.ReviewNote) ? dto.ReviewNote.Trim() : "Action verification rejected.");
+
+            var metaObj = new Dictionary<string, object?>
+            {
+                ["documentId"] = docId,
+                ["complianceStatus"] = compStatus ?? "Compliant",
+                ["verificationStatus"] = DocumentVerificationStatus.Rejected,
+                ["verifiedBy"] = dto.ReviewerActor,
+                ["verificationReason"] = reason,
+                ["rejectionReason"] = reason
+            };
+            action.SourceMetadata = JsonSerializer.Serialize(metaObj);
+        }
+        else
+        {
+            throw new ArgumentException($"Invalid review status '{dto.Status}'. Must be '{ClientActionStatus.Completed}' or '{ClientActionStatus.Rejected}'.");
+        }
+
+        await _dbContext.SaveChangesAsync();
+
+        return MapToResponseDto(action, isClientView: false);
+    }
+
+    public async Task<ClientActionResponseDto?> ApplyVerificationOutcomeAsync(
+        Guid engagementId,
+        Guid actionId,
+        string tenantId,
+        ApplyActionVerificationDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return null;
+        }
+
+        var action = await _dbContext.ClientActions
+            .FirstOrDefaultAsync(a => a.ActionId == actionId && (engagementId == Guid.Empty || a.EngagementId == engagementId) && a.TenantId == tenantId);
+
+        if (action == null)
+        {
+            return null;
+        }
+
+        var isVerified = string.Equals(dto.VerificationStatus, DocumentVerificationStatus.Verified, StringComparison.OrdinalIgnoreCase);
+        var isRejected = string.Equals(dto.VerificationStatus, DocumentVerificationStatus.Rejected, StringComparison.OrdinalIgnoreCase);
+
+        if (!isVerified && !isRejected)
+        {
+            throw new ArgumentException($"Invalid verification status '{dto.VerificationStatus}'. Must be '{DocumentVerificationStatus.Verified}' or '{DocumentVerificationStatus.Rejected}'.", nameof(dto));
+        }
+
+        var (docId, compStatus, _, _) = ParseSourceMetadata(action.SourceMetadata);
+
+        if (isVerified)
+        {
+            action.Status = ClientActionStatus.Completed;
+            action.CompletedAt = DateTime.UtcNow;
+            action.CompletedByActor = dto.VerifiedBy;
+
+            var metaObj = new Dictionary<string, object?>
+            {
+                ["documentId"] = docId,
+                ["complianceStatus"] = compStatus ?? "Compliant",
+                ["verificationStatus"] = DocumentVerificationStatus.Verified,
+                ["verifiedBy"] = dto.VerifiedBy,
+                ["verificationReason"] = dto.VerificationReason
+            };
+            action.SourceMetadata = JsonSerializer.Serialize(metaObj);
+        }
+        else
+        {
+            action.Status = ClientActionStatus.Rejected;
+            action.CompletedAt = null;
+            action.CompletedByActor = dto.VerifiedBy;
+
+            var reason = !string.IsNullOrWhiteSpace(dto.VerificationReason)
+                ? dto.VerificationReason.Trim()
+                : "Document verification was rejected by staff.";
+
+            var metaObj = new Dictionary<string, object?>
+            {
+                ["documentId"] = docId,
+                ["complianceStatus"] = compStatus ?? "Compliant",
+                ["verificationStatus"] = DocumentVerificationStatus.Rejected,
+                ["verifiedBy"] = dto.VerifiedBy,
+                ["verificationReason"] = reason,
+                ["rejectionReason"] = reason
+            };
+            action.SourceMetadata = JsonSerializer.Serialize(metaObj);
+        }
+
+        await _dbContext.SaveChangesAsync();
+
+        return MapToResponseDto(action, isClientView: false);
+    }
+
+    private static (string? DocumentId, string? ComplianceStatus, string? VerificationStatus, string? VerificationReason) ParseSourceMetadata(string? sourceMetadata)
+    {
+        if (string.IsNullOrWhiteSpace(sourceMetadata))
+        {
+            return (null, null, null, null);
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(sourceMetadata);
+            var root = doc.RootElement;
+            string? docId = root.TryGetProperty("documentId", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null;
+            string? comp = root.TryGetProperty("complianceStatus", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
+            string? ver = root.TryGetProperty("verificationStatus", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            string? reason = root.TryGetProperty("verificationReason", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString() :
+                (root.TryGetProperty("rejectionReason", out var rr) && rr.ValueKind == JsonValueKind.String ? rr.GetString() : null);
+
+            return (docId, comp, ver, reason);
+        }
+        catch
+        {
+            return (null, null, null, null);
+        }
+    }
+
     private static ClientActionResponseDto MapToResponseDto(ClientAction entity, bool isClientView)
     {
+        var (_, _, verStatus, verReason) = ParseSourceMetadata(entity.SourceMetadata);
+
         return new ClientActionResponseDto
         {
             ActionId = entity.ActionId,
@@ -112,14 +490,190 @@ public class ClientActionService : IClientActionService
             Description = entity.Description,
             Type = entity.Type,
             Status = entity.Status,
+            StageNumber = entity.StageNumber,
+            DeadlineUtc = entity.DeadlineUtc,
             Source = entity.Source,
             IsInternalOnly = entity.IsInternalOnly,
-            AssignedToRole = entity.AssignedToRole,
-            CompletedByActor = entity.CompletedByActor,
+            // Client-safe DTO (CSTD-12 fix): AssignedToRole/CompletedByActor are internal
+            // operational/staff-identity metadata and must not reach client callers, on top of
+            // the existing internal-action filtering and SourceMetadata stripping below.
+            AssignedToRole = isClientView ? null : entity.AssignedToRole,
+            CompletedByActor = isClientView ? null : entity.CompletedByActor,
             CompletedAt = entity.CompletedAt,
             CreatedAt = entity.CreatedAt,
             // Client-safe security rule: Strip SourceMetadata if called from client view
-            SourceMetadata = isClientView ? null : entity.SourceMetadata
+            SourceMetadata = isClientView ? null : entity.SourceMetadata,
+            VerificationStatus = verStatus,
+            VerificationReason = verReason,
+            LinkedRequirementId = entity.LinkedRequirementId
+        };
+    }
+
+    public async Task<List<ClientActionResponseDto>> EnsureLifecycleActionsAsync(Guid engagementId, string tenantId)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId) || engagementId == Guid.Empty)
+        {
+            return new List<ClientActionResponseDto>();
+        }
+
+        var existingActions = await _dbContext.ClientActions
+            .Where(a => a.EngagementId == engagementId && a.TenantId == tenantId)
+            .ToListAsync();
+
+        if (existingActions.Count == 0)
+        {
+            var seeded = GenerateDefaultLifecycleActions(engagementId, tenantId);
+            await _dbContext.ClientActions.AddRangeAsync(seeded);
+            await _dbContext.SaveChangesAsync();
+            return seeded.Select(a => MapToResponseDto(a, isClientView: false)).ToList();
+        }
+
+        var existingStages = existingActions.Select(a => a.StageNumber).ToHashSet();
+        var missingStages = GenerateDefaultLifecycleActions(engagementId, tenantId)
+            .Where(a => !existingStages.Contains(a.StageNumber))
+            .ToList();
+
+        if (missingStages.Count > 0)
+        {
+            await _dbContext.ClientActions.AddRangeAsync(missingStages);
+            await _dbContext.SaveChangesAsync();
+            existingActions.AddRange(missingStages);
+        }
+
+        return existingActions
+            .OrderBy(a => a.StageNumber)
+            .ThenBy(a => a.CreatedAt)
+            .Select(a => MapToResponseDto(a, isClientView: false))
+            .ToList();
+    }
+
+    public static List<ClientAction> GenerateDefaultLifecycleActions(Guid engagementId, string tenantId)
+    {
+        var now = DateTime.UtcNow;
+        return new List<ClientAction>
+        {
+            // Stage 1: Onboarding
+            new ClientAction
+            {
+                ActionId = Guid.NewGuid(),
+                EngagementId = engagementId,
+                TenantId = tenantId,
+                Title = "Client Intake & Kickoff Assessment",
+                Description = "Review engagement terms, confirm primary point of contact, and outline project objectives.",
+                Type = "CustomTask",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 1,
+                DeadlineUtc = now.AddDays(3),
+                Source = "LifecycleDefault",
+                IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CreatedAt = now
+            },
+            // Stage 2: Document Collection
+            new ClientAction
+            {
+                ActionId = Guid.NewGuid(),
+                EngagementId = engagementId,
+                TenantId = tenantId,
+                Title = "Identity Verification (KYC Passport / ID)",
+                Description = "Upload certified government-issued photo ID or international passport for compliance verification.",
+                Type = "KycDocument",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 2,
+                DeadlineUtc = now.AddDays(7),
+                Source = "LifecycleDefault",
+                IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CreatedAt = now.AddSeconds(1)
+            },
+            new ClientAction
+            {
+                ActionId = Guid.NewGuid(),
+                EngagementId = engagementId,
+                TenantId = tenantId,
+                Title = "Signed Master Services Agreement",
+                Description = "Upload signed onboarding contract and service agreements for custodian legal records.",
+                Type = "SignAgreement",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 2,
+                DeadlineUtc = now.AddDays(14),
+                Source = "LifecycleDefault",
+                IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CreatedAt = now.AddSeconds(2)
+            },
+            // CSTD-18's document gate for entering Verification requires BOTH KYC_PASSPORT
+            // and PROOF_OF_ADDRESS (see GateRequirements.cs) — without this seeded task, a
+            // client following their guided task list would never be prompted to submit a
+            // proof of address at all, so the gate could only ever be satisfied by an
+            // unguided, undiscoverable direct vault upload.
+            new ClientAction
+            {
+                ActionId = Guid.NewGuid(),
+                EngagementId = engagementId,
+                TenantId = tenantId,
+                Title = "Proof of Address",
+                Description = "Upload a recent utility bill or bank statement (issued within the last 90 days) confirming your current residential address.",
+                Type = "ProofOfAddress",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 2,
+                DeadlineUtc = now.AddDays(7),
+                Source = "LifecycleDefault",
+                IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CreatedAt = now.AddSeconds(2.5)
+            },
+            // Stage 3: Verification
+            new ClientAction
+            {
+                ActionId = Guid.NewGuid(),
+                EngagementId = engagementId,
+                TenantId = tenantId,
+                Title = "Compliance Review & Verification Evaluation",
+                Description = "Custodian compliance team evaluates submitted KYC documentation and legal agreements.",
+                Type = "CustomTask",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 3,
+                DeadlineUtc = now.AddDays(21),
+                Source = "LifecycleDefault",
+                IsInternalOnly = false,
+                AssignedToRole = "Staff",
+                CreatedAt = now.AddSeconds(3)
+            },
+            // Stage 4: Execution
+            new ClientAction
+            {
+                ActionId = Guid.NewGuid(),
+                EngagementId = engagementId,
+                TenantId = tenantId,
+                Title = "Service Delivery Milestone Sign-off",
+                Description = "Confirm completion of primary engagement deliverables and operational milestone acceptance.",
+                Type = "CustomTask",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 4,
+                DeadlineUtc = now.AddDays(30),
+                Source = "LifecycleDefault",
+                IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CreatedAt = now.AddSeconds(4)
+            },
+            // Stage 5: Closure
+            new ClientAction
+            {
+                ActionId = Guid.NewGuid(),
+                EngagementId = engagementId,
+                TenantId = tenantId,
+                Title = "Final Handoff & Ledger Seal",
+                Description = "Receive audited compliance report, engagement deliverables receipt, and finalize lifecycle records.",
+                Type = "CustomTask",
+                Status = ClientActionStatus.Pending,
+                StageNumber = 5,
+                DeadlineUtc = now.AddDays(35),
+                Source = "LifecycleDefault",
+                IsInternalOnly = false,
+                AssignedToRole = "Client",
+                CreatedAt = now.AddSeconds(5)
+            }
         };
     }
 }

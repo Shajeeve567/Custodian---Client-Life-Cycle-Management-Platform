@@ -98,6 +98,11 @@ public class AuthController(IUserAccountRepository userRepo, IConfiguration conf
             new Claim(ClaimTypes.Role, membership.Role.ToString())
         };
 
+        if (membership.Role == Role.Client)
+        {
+            claims.Add(new Claim("client_id", user.Id.ToString()));
+        }
+
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions!.SigningKey));
         var token = new JwtSecurityToken(
             issuer: jwtOptions.Issuer,

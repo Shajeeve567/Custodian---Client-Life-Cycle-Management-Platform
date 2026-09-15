@@ -11,4 +11,8 @@ public sealed class KafkaProducerOptions
     public string BootstrapServers { get; set; } = "localhost:9092";
     public string Topic { get; set; } = "custodian.events";
     public string ClientId { get; set; } = "workflow-service";
+    public string? SecurityProtocol { get; set; }
+    public string? SaslMechanism { get; set; }
+    public string? SaslUsername { get; set; }
+    public string? SaslPassword { get; set; }
 }

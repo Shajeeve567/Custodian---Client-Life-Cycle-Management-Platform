@@ -1,10 +1,12 @@
 using System.Security.Claims;
 using Custodian.Audit.DTOs;
 using Custodian.Audit.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Custodian.Audit.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/audit-events")]
 [Route("api/events")]
@@ -25,7 +27,12 @@ public class AuditEventsController : ControllerBase
         [FromBody] CreateAuditEventRequest request,
         [FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId, request.TenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId, request.TenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (effectiveTenantId == Guid.Empty)
         {
             return BadRequest(new { message = "Tenant ID could not be resolved from JWT claim or query parameters." });
@@ -50,7 +57,12 @@ public class AuditEventsController : ControllerBase
         Guid engagementId,
         [FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (effectiveTenantId == Guid.Empty)
         {
             return BadRequest(new { message = "Tenant ID could not be resolved from JWT claim or query parameters." });
@@ -66,7 +78,12 @@ public class AuditEventsController : ControllerBase
     [HttpGet("verify")]
     public async Task<ActionResult> VerifyChain([FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (effectiveTenantId == Guid.Empty)
         {
             return BadRequest(new { message = "Tenant ID could not be resolved." });
@@ -84,7 +101,12 @@ public class AuditEventsController : ControllerBase
         Guid id,
         [FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (effectiveTenantId == Guid.Empty)
         {
             return BadRequest(new { message = "Tenant ID could not be resolved from JWT claim or query parameters." });
@@ -106,7 +128,12 @@ public class AuditEventsController : ControllerBase
     public async Task<ActionResult<IEnumerable<AuditEventResponse>>> GetEvents(
         [FromQuery] string? tenantId)
     {
-        var effectiveTenantId = ResolveTenantId(tenantId);
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
         if (effectiveTenantId == Guid.Empty)
         {
             return BadRequest(new { message = "Tenant ID could not be resolved from JWT claim or query parameters." });
@@ -116,33 +143,69 @@ public class AuditEventsController : ControllerBase
         return Ok(results);
     }
 
-    private Guid ResolveTenantId(string? tenantIdQuery = null, params Guid?[] fallbackTenantIds)
+    /// <summary>
+    /// Resolves tenant ID server-side from HttpContext JWT claims if authenticated.
+    /// Strictly rejects cross-tenant requests where a caller specifies a different tenant ID than their JWT claim.
+    /// Falls back to request header/query parameter only in unauthenticated test mock contexts.
+    /// </summary>
+    private (Guid TenantId, bool IsForbidden) TryResolveTenantId(string? tenantIdQuery = null, params Guid?[] fallbackTenantIds)
     {
-        if (!string.IsNullOrWhiteSpace(tenantIdQuery))
-        {
-            return StringToGuid(tenantIdQuery);
-        }
-
         var claim = User?.FindFirst("tenant_id") ?? User?.FindFirst("tenantId");
         if (claim != null && !string.IsNullOrWhiteSpace(claim.Value))
         {
-            return StringToGuid(claim.Value);
+            var jwtTenantGuid = StringToGuid(claim.Value.Trim());
+
+            // Check if query parameter conflicts with JWT claim
+            if (!string.IsNullOrWhiteSpace(tenantIdQuery))
+            {
+                var queryTenantGuid = StringToGuid(tenantIdQuery.Trim());
+                if (queryTenantGuid != jwtTenantGuid)
+                {
+                    return (Guid.Empty, true);
+                }
+            }
+
+            // Check if header conflicts with JWT claim
+            if (Request?.Headers.TryGetValue("X-Tenant-Id", out var tenantHeader) == true && !string.IsNullOrWhiteSpace(tenantHeader.ToString()))
+            {
+                var headerTenantGuid = StringToGuid(tenantHeader.ToString().Trim());
+                if (headerTenantGuid != jwtTenantGuid)
+                {
+                    return (Guid.Empty, true);
+                }
+            }
+
+            // Check if explicit fallback (e.g. from body payload) conflicts with JWT claim
+            foreach (var fallback in fallbackTenantIds)
+            {
+                if (fallback.HasValue && fallback.Value != Guid.Empty && fallback.Value != jwtTenantGuid)
+                {
+                    return (Guid.Empty, true);
+                }
+            }
+
+            return (jwtTenantGuid, false);
         }
 
-        if (Request?.Headers.TryGetValue("X-Tenant-Id", out var tenantHeader) == true && !string.IsNullOrWhiteSpace(tenantHeader.ToString()))
+        if (!string.IsNullOrWhiteSpace(tenantIdQuery))
         {
-            return StringToGuid(tenantHeader.ToString());
+            return (StringToGuid(tenantIdQuery.Trim()), false);
+        }
+
+        if (Request?.Headers.TryGetValue("X-Tenant-Id", out var header) == true && !string.IsNullOrWhiteSpace(header.ToString()))
+        {
+            return (StringToGuid(header.ToString().Trim()), false);
         }
 
         foreach (var fallback in fallbackTenantIds)
         {
             if (fallback.HasValue && fallback.Value != Guid.Empty)
             {
-                return fallback.Value;
+                return (fallback.Value, false);
             }
         }
 
-        return Guid.Empty;
+        return (Guid.Empty, false);
     }
 
     private static Guid StringToGuid(string value)

@@ -3,8 +3,11 @@ using Custodian.Shared.Reporting.Reports;
 using Custodian.Workflow.Data;
 using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Gates;
 using Custodian.Workflow.Services.Kafka;
 using Custodian.Shared.Http;
+using Custodian.Shared.Auth;
+using Custodian.Shared.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Scalar.AspNetCore;
@@ -14,6 +17,9 @@ var builder = WebApplication.CreateBuilder(args);
 // Add controllers & CORS
 builder.Services.AddControllers();
 builder.Services.AddCustodianCors(builder.Configuration);
+builder.Services.AddTenantContext();
+builder.Services.AddJwtAuthentication(builder.Configuration);
+builder.Services.AddHttpContextAccessor();
 
 // Configure EF Core with MySQL
 var connectionString = builder.Configuration.GetConnectionString("AzureMySqlConnection");
@@ -31,6 +37,8 @@ if (!string.IsNullOrWhiteSpace(connectionString))
 // Register Repository & Audit Services
 builder.Services.AddScoped<IEngagementRepository, EngagementRepository>();
 builder.Services.AddScoped<IClientActionService, ClientActionService>();
+builder.Services.AddScoped<IClientPortalService, ClientPortalService>();
+builder.Services.AddScoped<IRequirementService, RequirementService>();
 
 // Dynamic report generation (ReportsController) — stateless, so a singleton is fine.
 builder.Services.AddSingleton<ReportGenerator>();
@@ -46,14 +54,28 @@ if (string.Equals(auditTransport, "Kafka", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IProducer<string, string>>(sp =>
     {
         var opts = sp.GetRequiredService<IOptions<KafkaProducerOptions>>().Value;
-        return new ProducerBuilder<string, string>(new ProducerConfig
+        var config = new ProducerConfig
         {
             BootstrapServers = opts.BootstrapServers,
             ClientId = opts.ClientId,
             Acks = Acks.All,
             EnableIdempotence = true,
             MessageTimeoutMs = 10000
-        }).Build();
+        };
+
+        if (!string.IsNullOrWhiteSpace(opts.SecurityProtocol) &&
+            Enum.TryParse<SecurityProtocol>(opts.SecurityProtocol, true, out var secProtocol))
+        {
+            config.SecurityProtocol = secProtocol;
+            if (Enum.TryParse<SaslMechanism>(opts.SaslMechanism ?? "Plain", true, out var saslMech))
+            {
+                config.SaslMechanism = saslMech;
+            }
+            config.SaslUsername = !string.IsNullOrWhiteSpace(opts.SaslUsername) ? opts.SaslUsername : "$ConnectionString";
+            config.SaslPassword = opts.SaslPassword;
+        }
+
+        return new ProducerBuilder<string, string>(config).Build();
     });
     builder.Services.AddSingleton<IAuditPublisher, KafkaAuditPublisher>();
 }
@@ -65,6 +87,15 @@ else
         client.BaseAddress = new Uri(auditBaseUrl);
     });
 }
+
+// CSTD-18: Gate Evaluation — mandatory gates (required documents today) that must be
+// satisfied before an engagement's stage transition proceeds.
+builder.Services.AddHttpClient<IDocumentComplianceClient, DocumentComplianceClient>(client =>
+{
+    var documentsBaseUrl = builder.Configuration["Services:DocumentsUrl"] ?? "http://localhost:5171";
+    client.BaseAddress = new Uri(documentsBaseUrl);
+});
+builder.Services.AddScoped<IGateEvaluator, GateEvaluator>();
 
 builder.Services.AddOpenApi();
 
@@ -89,7 +120,9 @@ using (var scope = app.Services.CreateScope())
 
 app.UseCors();
 // app.UseHttpsRedirection();
+app.UseAuthentication();
 app.UseAuthorization();
+app.UseTenantContext();
 app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Workflow Service" }));
 app.MapControllers();
 
