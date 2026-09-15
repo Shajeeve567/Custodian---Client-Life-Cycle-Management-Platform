@@ -156,6 +156,29 @@ GitHub
    └── Frontend ─────────────────────→ Vercel
 ```
 
+### Event Messaging (Azure Event Hubs)
+
+Asynchronous event streaming between microservices uses Azure Event Hubs via its Kafka-compatible endpoint, powered by `Confluent.Kafka`:
+* **Workflow** acts as the Kafka producer.
+* **Audit** acts as the Kafka consumer.
+* **Shared Topic / Event Hub:** `custodian.events`.
+* **Broker Endpoint:** Azure Event Hubs at `custodian-events.servicebus.windows.net:9093` with `SASL_SSL` (`PLAIN`).
+* Application code continues using standard `Confluent.Kafka` without SDK changes.
+* Secrets are supplied exclusively via runtime environment variables and are never committed.
+* The codebase remains compatible with local Kafka brokers for development when SASL configuration is omitted.
+
+```text
+Workflow
+→ Azure Event Hubs
+→ custodian.events
+→ Audit
+→ audit_db
+```
+
+For detailed setup, configuration, and troubleshooting guides, see:
+* [Azure Event Hubs Kafka Integration](docs/deployment/event-hubs-kafka.md)
+* [Troubleshooting Guide](docs/troubleshooting.md)
+
 ## Documentation
 
 Detailed project documentation is available in the [`docs/`](docs/) directory.
@@ -165,6 +188,7 @@ Detailed project documentation is available in the [`docs/`](docs/) directory.
 | [Deployment Architecture](docs/architecture/deployment-architecture.md) | System architecture and deployment overview |
 | [Development Setup](docs/development/development-setup.md)              | Local development and setup instructions    |
 | [Azure Backend Deployment](docs/deployment/azure-backend.md)            | Backend deployment to Azure App Services    |
+| [Azure Event Hubs Kafka Integration](docs/deployment/event-hubs-kafka.md) | Event Hubs Kafka messaging and runtime setup |
 | [Vercel Frontend Deployment](docs/deployment/vercel-frontend.md)        | Frontend deployment and configuration       |
 | [GitHub Actions CI/CD](docs/ci-cd/github-actions.md)                    | CI/CD workflows and deployment automation   |
 | [Troubleshooting](docs/troubleshooting.md)                              | Common development and deployment issues    |

@@ -81,3 +81,61 @@ and restarted the local infrastructure when necessary:
 docker compose down
 docker compose up -d
 ```
+
+---
+
+## 7. Workflow Service Fails to Start or MySQL Access Denied
+
+**Problem:**
+Workflow service terminates on startup with database connection exceptions or MySQL `Access denied for user` errors.
+
+**Cause:**
+If database connection string environment variables are not supplied at runtime, the application falls back to default development or localhost database connection settings in `appsettings.json`, which may not be accessible or may lack correct credentials for the target Azure MySQL database.
+
+**Solution:**
+Ensure the appropriate database connection string environment variable is explicitly provided at runtime before starting the service:
+
+```bash
+ConnectionStrings__Default="Server=<MYSQL_HOST>;Port=3306;Database=workflow_db;User=<USER>;Password=<PASSWORD>;SslMode=Required;"
+ConnectionStrings__AzureMySqlConnection="Server=<MYSQL_HOST>;Port=3306;Database=workflow_db;User=<USER>;Password=<PASSWORD>;SslMode=Required;"
+```
+
+*(Never commit actual database credentials or connection strings to source control.)*
+
+---
+
+## 8. Azure Event Hubs TLS Certificate Verification Failure
+
+**Problem:**
+The Kafka producer or consumer fails to establish a secure connection to Azure Event Hubs, logging an SSL handshake error:
+
+```text
+SSL handshake failed: error:0A000086:SSL routines::certificate verify failed: broker certificate could not be verified
+```
+
+**Cause:**
+In certain network environments (e.g., enterprise, campus, or firewall-monitored Wi-Fi networks), a deep-packet SSL inspection firewall (such as Fortinet) intercepts outbound port 9093 TLS connections and presents a custom or self-signed proxy certificate that is not trusted by the underlying `librdkafka` OpenSSL trust store.
+
+**Solution:**
+1. Switch to an unintercepted network connection (e.g., standard cellular hotspot or trusted external network).
+2. Keep TLS certificate verification enabled.
+3. Do not permanently disable SSL certificate verification in production or application configuration, as this circumvents transit encryption validation.
+
+---
+
+## 9. Known Deferred Reliability Item: Audit Consumer Offset Commit on Processing Failure
+
+> **Status:** Known reliability hardening item / deferred to next sprint.
+
+**Issue Description:**
+In the current implementation of `KafkaAuditEventConsumer`, the message processing call `ProcessMessageAsync` internally catches general exceptions (`catch (Exception ex)`), logs the error, and returns without rethrowing. As a result, the outer consumption loop in `ExecuteAsync` considers message execution complete and proceeds to call `consumer.Commit(consumeResult)`.
+
+**Impact & Risk:**
+If a transient downstream processing failure occurs (such as a temporary Azure MySQL database connection timeout or transient deadlock), the error is logged, but the Kafka consumer offset is still advanced and committed to Azure Event Hubs. Consequently, the affected audit event will not be redelivered or retried by the same consumer group once the database recovers, presenting a risk of missing records in the audit log during outages.
+
+**Current State & Scope:**
+* Basic poison message / malformed JSON handling is present (unparseable envelopes are logged and discarded without crashing the service).
+* Dedicated dead-letter queue (DLQ) behavior and secondary retry topics are not yet implemented.
+* No separate failure topic exists.
+* Remediation (propagating transient DB exceptions, deferring commit, and applying consumer retry/backoff policies) is tracked as a planned reliability hardening item for the upcoming sprint.
+
