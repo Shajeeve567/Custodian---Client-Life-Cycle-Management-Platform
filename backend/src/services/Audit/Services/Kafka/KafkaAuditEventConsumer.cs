@@ -61,6 +61,18 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
             EnableAutoCommit = false
         };
 
+        if (!string.IsNullOrWhiteSpace(_kafkaOptions.SecurityProtocol) &&
+            Enum.TryParse<SecurityProtocol>(_kafkaOptions.SecurityProtocol, true, out var secProtocol))
+        {
+            config.SecurityProtocol = secProtocol;
+            if (Enum.TryParse<SaslMechanism>(_kafkaOptions.SaslMechanism ?? "Plain", true, out var saslMech))
+            {
+                config.SaslMechanism = saslMech;
+            }
+            config.SaslUsername = !string.IsNullOrWhiteSpace(_kafkaOptions.SaslUsername) ? _kafkaOptions.SaslUsername : "$ConnectionString";
+            config.SaslPassword = _kafkaOptions.SaslPassword;
+        }
+
         try
         {
             using var consumer = new ConsumerBuilder<string, string>(config).Build();
