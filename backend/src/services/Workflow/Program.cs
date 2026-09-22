@@ -135,3 +135,5 @@ app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Workflow S
 app.MapControllers();
 
 app.Run();
+
+public partial class Program { }
