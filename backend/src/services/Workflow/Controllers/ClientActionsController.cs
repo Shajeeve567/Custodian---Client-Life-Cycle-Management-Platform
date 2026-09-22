@@ -13,12 +13,23 @@ public class ClientActionsController : ControllerBase
 {
     private readonly IClientActionService _actionService;
     private readonly ILogger<ClientActionsController> _logger;
-
+    private readonly IStallDetectionService _stall;
+    private readonly IStallActionsProvider _stallActionsProvider;
+    private readonly IStallEventDeduplicator _stallDeduplicator;
+    private readonly IAuditPublisher _auditPublisher;
     public ClientActionsController(
         IClientActionService actionService,
+        IStallDetectionService stall,
+        IStallActionsProvider stallActionsProvider,
+        IStallEventDeduplicator stallDeduplicator,
+        IAuditPublisher auditPublisher,
         ILogger<ClientActionsController> logger)
     {
         _actionService = actionService;
+        _stall = stall;
+        _stallActionsProvider = stallActionsProvider;
+        _stallDeduplicator = stallDeduplicator;
+        _auditPublisher = auditPublisher;
         _logger = logger;
     }
 
@@ -452,5 +463,53 @@ public class ClientActionsController : ControllerBase
         }
 
         return (null, false);
+    }
+
+    [HttpGet("~/api/engagements/{engagementId:guid}/stall")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<StallStatusDto>> GetStallStatus(
+        [FromRoute] Guid engagementId,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden) return Forbid();
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+            return BadRequest(new { message = "Tenant identification is required." });
+
+        var rawActions = await _stallActionsProvider.GetRawActionsAsync(
+            engagementId, effectiveTenantId);
+
+        if (rawActions is null)
+            return NotFound(new { message = $"Engagement '{engagementId}' was not found." });
+
+        var status = _stall.EvaluateForEngagement(
+            engagementId, rawActions, DateTime.UtcNow);
+
+        // Fire the overdue event only the first time we observe this stall. Dedup key
+        // includes the deadline so extending the deadline allows a future fire.
+        if (status.IsStalled
+            && status.ActionId.HasValue
+            && status.DeadlineUtc.HasValue
+            && !_stallDeduplicator.HasFired(engagementId, status.ActionId.Value, status.DeadlineUtc.Value))
+        {
+            _stallDeduplicator.MarkFired(engagementId, status.ActionId.Value, status.DeadlineUtc.Value);
+
+            await _auditPublisher.PublishEventAsync(
+                engagementId,
+                effectiveTenantId,
+                "System",
+                "action.overdue",
+                new
+                {
+                    actionId = status.ActionId,
+                    actionTitle = status.ActionTitle,
+                    stageNumber = status.StageNumber,
+                    deadlineUtc = status.DeadlineUtc,
+                    hoursOverdue = status.HoursOverdue
+                });
+        }
+
+        return Ok(status);
     }
 }

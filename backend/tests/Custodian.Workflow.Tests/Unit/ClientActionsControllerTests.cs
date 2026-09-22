@@ -15,14 +15,29 @@ namespace Custodian.Workflow.Tests.Unit;
 public class ClientActionsControllerTests
 {
     private readonly Mock<IClientActionService> _mockService;
+    private readonly Mock<IStallDetectionService> _mockStall;
+    private readonly Mock<IStallActionsProvider> _mockStallActions;
+    private readonly Mock<IStallEventDeduplicator> _mockStallDedup;
+    private readonly Mock<IAuditPublisher> _mockAuditPublisher;
     private readonly Mock<ILogger<ClientActionsController>> _mockLogger;
     private readonly ClientActionsController _controller;
 
     public ClientActionsControllerTests()
     {
         _mockService = new Mock<IClientActionService>();
+        _mockStall = new Mock<IStallDetectionService>();
+        _mockStallActions = new Mock<IStallActionsProvider>();
+        _mockStallDedup = new Mock<IStallEventDeduplicator>();
+        _mockAuditPublisher = new Mock<IAuditPublisher>();
         _mockLogger = new Mock<ILogger<ClientActionsController>>();
-        _controller = new ClientActionsController(_mockService.Object, _mockLogger.Object);
+
+        _controller = new ClientActionsController(
+            _mockService.Object,
+            _mockStall.Object,
+            _mockStallActions.Object,
+            _mockStallDedup.Object,
+            _mockAuditPublisher.Object,
+            _mockLogger.Object);
     }
 
     private void SetupTenantHeader(string tenantId)
