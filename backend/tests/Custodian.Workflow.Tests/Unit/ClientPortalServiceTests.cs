@@ -3,6 +3,7 @@ using Custodian.Workflow.Data;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace Custodian.Workflow.Tests.Unit;
@@ -16,6 +17,18 @@ public class ClientPortalServiceTests
             .Options;
 
         return new WorkflowDbContext(options);
+    }
+
+    private static ClientPortalService BuildService(WorkflowDbContext db)
+    {
+        var sla = Options.Create(new Custodian.Workflow.Configuration.SlaOptions
+        {
+            DefaultOverdueHours = 72,
+            StageOverdueHours = new Dictionary<int, int>()
+        });
+
+        var stall = new StallDetectionService(sla);
+        return new ClientPortalService(db, stall);
     }
 
     [Fact]
@@ -46,7 +59,7 @@ public class ClientPortalServiceTests
         );
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = BuildService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -130,7 +143,7 @@ public class ClientPortalServiceTests
         );
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = BuildService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -175,7 +188,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = BuildService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -206,7 +219,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = BuildService(db);
 
         // Act: Attempt to access engagement owned by client-owner-123 using client-attacker-999
         var result = await service.GetDashboardForEngagementAsync(engagementId, tenantId, attackerClient);
@@ -247,7 +260,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = BuildService(db);
 
         // Act: Client doesn't pass any engagement GUID
         var dashboard = await service.GetActiveDashboardForClientAsync(tenantId, clientId);
@@ -289,7 +302,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = BuildService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -345,7 +358,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = BuildService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -417,7 +430,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = BuildService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -462,7 +475,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = BuildService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -496,7 +509,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = BuildService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -561,7 +574,7 @@ public class ClientPortalServiceTests
         );
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = BuildService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -612,7 +625,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = BuildService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -669,7 +682,7 @@ public class ClientPortalServiceTests
         );
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = BuildService(db);
 
         // Act
         var dashboard = await service.GetActiveDashboardForClientAsync(tenantId, clientId);

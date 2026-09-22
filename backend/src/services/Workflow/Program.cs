@@ -45,6 +45,9 @@ builder.Services.AddScoped<IClientActionService, ClientActionService>();
 builder.Services.AddScoped<IClientPortalService, ClientPortalService>();
 builder.Services.AddScoped<IRequirementService, RequirementService>();
 
+// CSTD-33
+builder.Services.AddScoped<IStallDetectionService, StallDetectionService>();
+
 // Audit transport is feature-flagged: "Http" (default) keeps the existing
 // synchronous HTTP call to the Audit service; "Kafka" switches to publishing
 // onto the shared "custodian.events" topic instead. Toggle via Audit:Transport

@@ -8,6 +8,7 @@ namespace Custodian.Workflow.Services;
 public class ClientPortalService : IClientPortalService
 {
     private readonly WorkflowDbContext _dbContext;
+    private readonly IStallDetectionService _stall;
 
     // Canonical stage names/taglines (CSTD-17) — must match frontend/src/constants/engagementStages.ts
     // exactly, so the client portal and the staff/owner dashboard show identical stage names for
@@ -22,9 +23,10 @@ public class ClientPortalService : IClientPortalService
         (5, "Closure", "Final delivery & handoff")
     };
 
-    public ClientPortalService(WorkflowDbContext dbContext)
+    public ClientPortalService(WorkflowDbContext dbContext, IStallDetectionService stall)
     {
         _dbContext = dbContext;
+        _stall = stall;
     }
 
     public async Task<ClientPortalDashboardDto?> GetDashboardForEngagementAsync(Guid engagementId, string tenantId, string? clientId = null)
@@ -266,7 +268,7 @@ public class ClientPortalService : IClientPortalService
         return ClientActionService.GenerateDefaultLifecycleActions(engagement.EngagementId, engagement.TenantId);
     }
 
-    private static (ClientAction? Primary, List<ClientAction> Others) SelectStageBasedActions(
+    private (ClientAction? Primary, List<ClientAction> Others) SelectStageBasedActions(
         List<ClientAction> clientActions,
         int currentStageNumber)
     {
@@ -324,7 +326,7 @@ public class ClientPortalService : IClientPortalService
         return (primary, others);
     }
 
-    private static (string Status, string Description) EvaluateConditionStatus(
+    private (string Status, string Description) EvaluateConditionStatus(
         Engagement engagement,
         int currentStageNumber,
         ClientAction? primaryAction,
@@ -337,14 +339,14 @@ public class ClientPortalService : IClientPortalService
 
         if (primaryAction != null)
         {
-            var isOverdue = primaryAction.DeadlineUtc.HasValue && primaryAction.DeadlineUtc.Value < DateTime.UtcNow;
+            var stall = _stall.Evaluate(primaryAction, engagement.EngagementId, DateTime.UtcNow);
 
             if (primaryAction.Status == ClientActionStatus.Rejected)
             {
                 return ("RevisionRequired", $"Action requires revision: {primaryAction.Title}. Please re-submit the required evidence.");
             }
 
-            if (isOverdue)
+            if (stall.IsStalled)
             {
                 return ("Overdue", $"Action overdue: {primaryAction.Title}. Please complete immediately to clear the Stage {primaryAction.StageNumber} gate.");
             }
@@ -362,12 +364,18 @@ public class ClientPortalService : IClientPortalService
         return ("AllCaughtUp", $"All client tasks in Stage {currentStageNumber} are satisfied. Awaiting custodian milestone gate advance.");
     }
 
-    private static ClientSafeActionDto MapToSafeActionDto(ClientAction action)
+    private ClientSafeActionDto MapToSafeActionDto(ClientAction action)
     {
         var now = DateTime.UtcNow;
-        var isOverdue = action.DeadlineUtc.HasValue && action.DeadlineUtc.Value < now && action.Status != ClientActionStatus.Completed;
-        int? daysRemaining = action.DeadlineUtc.HasValue
-            ? (int)Math.Ceiling((action.DeadlineUtc.Value - now).TotalDays)
+        var stall = _stall.Evaluate(action, action.EngagementId, now);
+
+        // Effective deadline now comes from stall service not the raw DeadlineUtc
+        // an action with no explicit deadline still gets a fallback from the SLA config
+        // client should see that resolved deadline
+        var effectiveDeadline = stall.DeadlineUtc;
+
+        int? daysRemaining = effectiveDeadline.HasValue
+            ? (int)Math.Ceiling((effectiveDeadline.Value - now).TotalDays)
             : null;
 
         string? rejectionReason = null;
@@ -386,8 +394,8 @@ public class ClientPortalService : IClientPortalService
             Type = action.Type,
             Status = action.Status,
             StageNumber = action.StageNumber,
-            DeadlineUtc = action.DeadlineUtc,
-            IsOverdue = isOverdue,
+            DeadlineUtc = effectiveDeadline,
+            IsOverdue = stall.IsStalled,
             DaysRemaining = daysRemaining,
             RejectionReason = rejectionReason,
             VerificationStatus = verificationStatus,
