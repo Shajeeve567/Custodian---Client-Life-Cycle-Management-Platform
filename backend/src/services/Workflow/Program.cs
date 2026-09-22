@@ -47,6 +47,7 @@ builder.Services.AddScoped<IRequirementService, RequirementService>();
 
 // CSTD-33
 builder.Services.AddScoped<IStallDetectionService, StallDetectionService>();
+builder.Services.AddScoped<IStallActionsProvider, StallActionsProvider>();
 builder.Services.AddSingleton<IStallEventDeduplicator, StallEventDeduplicator>();
 
 
