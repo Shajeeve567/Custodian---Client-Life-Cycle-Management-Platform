@@ -20,6 +20,12 @@ builder.Services.AddTenantContext();
 builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 
+// CSTD-33: SLA thresholds are config driven
+// No runtime editing
+builder.Services.Configure<Custodian.Workflow.Configuration.SlaOptions>(
+    builder.Configuration.GetSection(Custodian.Workflow.Configuration.SlaOptions.SectionName)
+);
+
 // Configure EF Core with MySQL
 var connectionString = builder.Configuration.GetConnectionString("AzureMySqlConnection");
 if (string.IsNullOrWhiteSpace(connectionString) || connectionString.Contains("YOUR_SECRET_STRING"))
