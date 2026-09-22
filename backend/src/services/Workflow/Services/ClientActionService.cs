@@ -112,9 +112,11 @@ public class ClientActionService : IClientActionService
             StageNumber = dto.StageNumber > 0 ? dto.StageNumber : 1,
             DeadlineUtc = dto.DeadlineUtc,
             Source = dto.Source,
+            SourceType = ClientActionSourceType.Manual,
             IsInternalOnly = dto.IsInternalOnly,
             AssignedToRole = dto.AssignedToRole,
             CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
             SourceMetadata = dto.SourceMetadata
         };
 
@@ -492,7 +494,9 @@ public class ClientActionService : IClientActionService
             Status = entity.Status,
             StageNumber = entity.StageNumber,
             DeadlineUtc = entity.DeadlineUtc,
+            ActivatedAt = isClientView ? null : entity.ActivatedAt,
             Source = entity.Source,
+            SourceType = entity.SourceType,
             IsInternalOnly = entity.IsInternalOnly,
             // Client-safe DTO (CSTD-12 fix): AssignedToRole/CompletedByActor are internal
             // operational/staff-identity metadata and must not reach client callers, on top of
@@ -501,11 +505,15 @@ public class ClientActionService : IClientActionService
             CompletedByActor = isClientView ? null : entity.CompletedByActor,
             CompletedAt = entity.CompletedAt,
             CreatedAt = entity.CreatedAt,
+            UpdatedAt = entity.UpdatedAt,
             // Client-safe security rule: Strip SourceMetadata if called from client view
             SourceMetadata = isClientView ? null : entity.SourceMetadata,
             VerificationStatus = verStatus,
             VerificationReason = verReason,
-            LinkedRequirementId = entity.LinkedRequirementId
+            LinkedRequirementId = entity.LinkedRequirementId,
+            LinkedDocumentId = isClientView ? null : entity.LinkedDocumentId,
+            LinkedConditionId = isClientView ? null : entity.LinkedConditionId,
+            LinkedMeetingId = isClientView ? null : entity.LinkedMeetingId
         };
     }
 
@@ -564,10 +572,13 @@ public class ClientActionService : IClientActionService
                 Status = ClientActionStatus.Pending,
                 StageNumber = 1,
                 DeadlineUtc = now.AddDays(3),
+                ActivatedAt = now,
                 Source = "LifecycleDefault",
+                SourceType = ClientActionSourceType.Lifecycle,
                 IsInternalOnly = false,
                 AssignedToRole = "Client",
-                CreatedAt = now
+                CreatedAt = now,
+                UpdatedAt = now
             },
             // Stage 2: Document Collection
             new ClientAction
@@ -581,10 +592,13 @@ public class ClientActionService : IClientActionService
                 Status = ClientActionStatus.Pending,
                 StageNumber = 2,
                 DeadlineUtc = now.AddDays(7),
+                ActivatedAt = null,
                 Source = "LifecycleDefault",
+                SourceType = ClientActionSourceType.Lifecycle,
                 IsInternalOnly = false,
                 AssignedToRole = "Client",
-                CreatedAt = now.AddSeconds(1)
+                CreatedAt = now.AddSeconds(1),
+                UpdatedAt = now
             },
             new ClientAction
             {
@@ -597,10 +611,13 @@ public class ClientActionService : IClientActionService
                 Status = ClientActionStatus.Pending,
                 StageNumber = 2,
                 DeadlineUtc = now.AddDays(14),
+                ActivatedAt = null,
                 Source = "LifecycleDefault",
+                SourceType = ClientActionSourceType.Lifecycle,
                 IsInternalOnly = false,
                 AssignedToRole = "Client",
-                CreatedAt = now.AddSeconds(2)
+                CreatedAt = now.AddSeconds(2),
+                UpdatedAt = now
             },
             // CSTD-18's document gate for entering Verification requires BOTH KYC_PASSPORT
             // and PROOF_OF_ADDRESS (see GateRequirements.cs) — without this seeded task, a
@@ -618,10 +635,13 @@ public class ClientActionService : IClientActionService
                 Status = ClientActionStatus.Pending,
                 StageNumber = 2,
                 DeadlineUtc = now.AddDays(7),
+                ActivatedAt = null,
                 Source = "LifecycleDefault",
+                SourceType = ClientActionSourceType.Lifecycle,
                 IsInternalOnly = false,
                 AssignedToRole = "Client",
-                CreatedAt = now.AddSeconds(2.5)
+                CreatedAt = now.AddSeconds(2.5),
+                UpdatedAt = now
             },
             // Stage 3: Verification
             new ClientAction
@@ -635,10 +655,13 @@ public class ClientActionService : IClientActionService
                 Status = ClientActionStatus.Pending,
                 StageNumber = 3,
                 DeadlineUtc = now.AddDays(21),
+                ActivatedAt = null,
                 Source = "LifecycleDefault",
+                SourceType = ClientActionSourceType.Lifecycle,
                 IsInternalOnly = false,
                 AssignedToRole = "Staff",
-                CreatedAt = now.AddSeconds(3)
+                CreatedAt = now.AddSeconds(3),
+                UpdatedAt = now
             },
             // Stage 4: Execution
             new ClientAction
@@ -652,10 +675,13 @@ public class ClientActionService : IClientActionService
                 Status = ClientActionStatus.Pending,
                 StageNumber = 4,
                 DeadlineUtc = now.AddDays(30),
+                ActivatedAt = null,
                 Source = "LifecycleDefault",
+                SourceType = ClientActionSourceType.Lifecycle,
                 IsInternalOnly = false,
                 AssignedToRole = "Client",
-                CreatedAt = now.AddSeconds(4)
+                CreatedAt = now.AddSeconds(4),
+                UpdatedAt = now
             },
             // Stage 5: Closure
             new ClientAction
@@ -669,10 +695,13 @@ public class ClientActionService : IClientActionService
                 Status = ClientActionStatus.Pending,
                 StageNumber = 5,
                 DeadlineUtc = now.AddDays(35),
+                ActivatedAt = null,
                 Source = "LifecycleDefault",
+                SourceType = ClientActionSourceType.Lifecycle,
                 IsInternalOnly = false,
                 AssignedToRole = "Client",
-                CreatedAt = now.AddSeconds(5)
+                CreatedAt = now.AddSeconds(5),
+                UpdatedAt = now
             }
         };
     }

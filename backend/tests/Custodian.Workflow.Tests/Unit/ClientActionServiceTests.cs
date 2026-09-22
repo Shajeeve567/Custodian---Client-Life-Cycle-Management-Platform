@@ -1048,4 +1048,144 @@ public class ClientActionServiceTests
         // Assert
         Assert.False(owns);
     }
+
+    [Fact]
+    public async Task GetActions_StaffCaller_ExposesNewLifecycleAndSourceLinks()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var activatedAt = DateTime.UtcNow.AddHours(-2);
+        var updatedAt = DateTime.UtcNow.AddMinutes(-30);
+        var docId = Guid.NewGuid();
+        var condId = Guid.NewGuid();
+        var meetId = Guid.NewGuid();
+        var reqId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Staff Full View Action",
+            Type = ClientActionType.DocumentUpload,
+            Status = ClientActionStatus.Pending,
+            Source = "ManualTest",
+            SourceType = ClientActionSourceType.Document,
+            ActivatedAt = activatedAt,
+            UpdatedAt = updatedAt,
+            LinkedRequirementId = reqId,
+            LinkedDocumentId = docId,
+            LinkedConditionId = condId,
+            LinkedMeetingId = meetId,
+            IsInternalOnly = false,
+            AssignedToRole = "Client"
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act: staff view (isClientView = false)
+        var result = (await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: false)).ToList();
+
+        // Assert: all fields are exposed in staff view
+        Assert.Single(result);
+        var dto = result[0];
+        Assert.Equal(activatedAt, dto.ActivatedAt);
+        Assert.Equal(ClientActionSourceType.Document, dto.SourceType);
+        Assert.Equal(updatedAt, dto.UpdatedAt);
+        Assert.Equal(reqId, dto.LinkedRequirementId);
+        Assert.Equal(docId, dto.LinkedDocumentId);
+        Assert.Equal(condId, dto.LinkedConditionId);
+        Assert.Equal(meetId, dto.LinkedMeetingId);
+    }
+
+    [Fact]
+    public async Task GetActions_ClientCaller_StripsSensitiveSourceLinksAndActivatedAt()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var activatedAt = DateTime.UtcNow.AddHours(-2);
+        var updatedAt = DateTime.UtcNow.AddMinutes(-30);
+        var docId = Guid.NewGuid();
+        var condId = Guid.NewGuid();
+        var meetId = Guid.NewGuid();
+        var reqId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Client Safe View Action",
+            Type = ClientActionType.DocumentUpload,
+            Status = ClientActionStatus.Pending,
+            Source = "ManualTest",
+            SourceType = ClientActionSourceType.Document,
+            ActivatedAt = activatedAt,
+            UpdatedAt = updatedAt,
+            LinkedRequirementId = reqId,
+            LinkedDocumentId = docId,
+            LinkedConditionId = condId,
+            LinkedMeetingId = meetId,
+            IsInternalOnly = false,
+            AssignedToRole = "Client"
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act: client view (isClientView = true)
+        var result = (await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: true)).ToList();
+
+        // Assert: client view preserves SourceType and LinkedRequirementId, but strips ActivatedAt and external linked IDs
+        Assert.Single(result);
+        var dto = result[0];
+        Assert.Null(dto.ActivatedAt);
+        Assert.Null(dto.LinkedDocumentId);
+        Assert.Null(dto.LinkedConditionId);
+        Assert.Null(dto.LinkedMeetingId);
+        Assert.Equal(ClientActionSourceType.Document, dto.SourceType);
+        Assert.Equal(reqId, dto.LinkedRequirementId);
+        Assert.Equal(updatedAt, dto.UpdatedAt);
+    }
+
+    [Fact]
+    public void ClientActionSchema_ConstantsAndDefaults_AreProperlyConfigured()
+    {
+        // Assert: ClientActionStatus includes Cancelled
+        Assert.Equal("Cancelled", ClientActionStatus.Cancelled);
+
+        // Assert: ClientActionSourceType constants
+        Assert.Equal("Requirement", ClientActionSourceType.Requirement);
+        Assert.Equal("Document", ClientActionSourceType.Document);
+        Assert.Equal("Condition", ClientActionSourceType.Condition);
+        Assert.Equal("Meeting", ClientActionSourceType.Meeting);
+        Assert.Equal("Lifecycle", ClientActionSourceType.Lifecycle);
+        Assert.Equal("Manual", ClientActionSourceType.Manual);
+
+        // Assert: ClientActionType constants
+        Assert.Equal("DocumentUpload", ClientActionType.DocumentUpload);
+        Assert.Equal("KycDocument", ClientActionType.KycDocument);
+        Assert.Equal("SignAgreement", ClientActionType.SignAgreement);
+        Assert.Equal("ProofOfAddress", ClientActionType.ProofOfAddress);
+        Assert.Equal("CustomTask", ClientActionType.CustomTask);
+        Assert.Equal("Requirement", ClientActionType.Requirement);
+        Assert.Equal("Approval", ClientActionType.Approval);
+        Assert.Equal("Payment", ClientActionType.Payment);
+        Assert.Equal("Meeting", ClientActionType.Meeting);
+
+        // Assert: ClientAction defaults
+        var action = new ClientAction();
+        Assert.Equal(ClientActionStatus.Pending, action.Status);
+        Assert.Equal(ClientActionSourceType.Manual, action.SourceType);
+        Assert.Equal(ClientActionType.DocumentUpload, action.Type);
+        Assert.Null(action.ActivatedAt);
+        Assert.Null(action.LinkedDocumentId);
+        Assert.Null(action.LinkedConditionId);
+        Assert.Null(action.LinkedMeetingId);
+    }
 }

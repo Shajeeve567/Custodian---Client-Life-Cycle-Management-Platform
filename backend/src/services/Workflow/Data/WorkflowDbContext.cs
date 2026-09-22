@@ -83,14 +83,20 @@ public class WorkflowDbContext : DbContext
             entity.Property(a => a.Status).HasColumnName("status").HasMaxLength(30).IsRequired();
             entity.Property(a => a.StageNumber).HasColumnName("stage_number").HasDefaultValue(1).IsRequired();
             entity.Property(a => a.DeadlineUtc).HasColumnName("deadline_utc");
+            entity.Property(a => a.ActivatedAt).HasColumnName("activated_at");
             entity.Property(a => a.Source).HasColumnName("source").HasMaxLength(100).IsRequired();
+            entity.Property(a => a.SourceType).HasColumnName("source_type").HasMaxLength(30).IsRequired();
             entity.Property(a => a.IsInternalOnly).HasColumnName("is_internal_only").IsRequired();
             entity.Property(a => a.AssignedToRole).HasColumnName("assigned_to_role").HasMaxLength(50);
             entity.Property(a => a.CompletedByActor).HasColumnName("completed_by_actor").HasMaxLength(100);
             entity.Property(a => a.CompletedAt).HasColumnName("completed_at");
             entity.Property(a => a.CreatedAt).HasColumnName("created_at").IsRequired();
+            entity.Property(a => a.UpdatedAt).HasColumnName("updated_at").IsRequired();
             entity.Property(a => a.SourceMetadata).HasColumnName("source_metadata");
             entity.Property(a => a.LinkedRequirementId).HasColumnName("linked_requirement_id");
+            entity.Property(a => a.LinkedDocumentId).HasColumnName("linked_document_id");
+            entity.Property(a => a.LinkedConditionId).HasColumnName("linked_condition_id");
+            entity.Property(a => a.LinkedMeetingId).HasColumnName("linked_meeting_id");
 
             entity.HasIndex(a => a.TenantId).HasDatabaseName("idx_action_tenant_id");
             entity.HasIndex(a => a.EngagementId).HasDatabaseName("idx_action_engagement_id");

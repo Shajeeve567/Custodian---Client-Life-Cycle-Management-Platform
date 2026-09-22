@@ -84,14 +84,16 @@ public class RequirementService : IRequirementService
             TenantId = tenantId,
             Title = !string.IsNullOrWhiteSpace(dto.Title) ? dto.Title! : $"Provide: {dto.Type}",
             Description = dto.Description,
-            Type = "Requirement",
+            Type = ClientActionType.Requirement,
             Status = ClientActionStatus.Pending,
             StageNumber = dto.StageNumber ?? 1,
             DeadlineUtc = dto.DeadlineUtc,
             Source = "RequirementSync",
+            SourceType = ClientActionSourceType.Requirement,
             IsInternalOnly = false,
             AssignedToRole = dto.AssignedToRole,
             CreatedAt = now,
+            UpdatedAt = now,
             LinkedRequirementId = requirement.RequirementId
         };
 

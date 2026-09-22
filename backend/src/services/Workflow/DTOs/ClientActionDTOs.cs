@@ -14,16 +14,22 @@ public class ClientActionResponseDto
     public string Status { get; set; } = string.Empty;
     public int StageNumber { get; set; } = 1;
     public DateTime? DeadlineUtc { get; set; }
+    public DateTime? ActivatedAt { get; set; }
     public string Source { get; set; } = string.Empty;
+    public string SourceType { get; set; } = string.Empty;
     public bool IsInternalOnly { get; set; }
     public string? AssignedToRole { get; set; }
     public string? CompletedByActor { get; set; }
     public DateTime? CompletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
     public string? SourceMetadata { get; set; }
     public string? VerificationStatus { get; set; }
     public string? VerificationReason { get; set; }
     public Guid? LinkedRequirementId { get; set; }
+    public Guid? LinkedDocumentId { get; set; }
+    public Guid? LinkedConditionId { get; set; }
+    public Guid? LinkedMeetingId { get; set; }
 }
 
 public class CreateClientActionDto
