@@ -7,6 +7,7 @@ using Custodian.Shared.Http;
 using Custodian.Shared.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
+using Custodian.Audit.Services.HashChain;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -40,6 +41,10 @@ builder.Services.AddDbContext<AuditDbContext>(options =>
 builder.Services.AddScoped<IAuditEventRepository, AuditEventRepository>();
 builder.Services.AddScoped<IAuditEventService, AuditEventService>();
 
+// SHA-256 hash chain: stateless, deterministic, no shared mutable state
+// Singleton so the genesis constant and canonicalization are one instance
+builder.Services.AddSingleton<IHashChainService, HashChainService>();
+
 // Configure Kafka Background Consumer (mirrors Identity's registration pattern)
 builder.Services.Configure<KafkaOptions>(builder.Configuration.GetSection(KafkaOptions.SectionName));
 builder.Services.AddHostedService<KafkaAuditEventConsumer>();
@@ -56,7 +61,7 @@ if (app.Environment.IsDevelopment())
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetService<AuditDbContext>();
-    dbContext?.Database.EnsureCreated();
+    dbContext?.Database.Migrate();
 }
 
 app.UseCors();

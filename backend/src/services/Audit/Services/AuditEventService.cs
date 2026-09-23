@@ -4,16 +4,19 @@ using System.Text.Json;
 using Custodian.Audit.DTOs;
 using Custodian.Audit.Models;
 using Custodian.Audit.Repositories;
+using Custodian.Audit.Services.HashChain;
 
 namespace Custodian.Audit.Services;
 
 public class AuditEventService : IAuditEventService
 {
     private readonly IAuditEventRepository _repository;
+    private readonly IHashChainService _hashChain;
 
-    public AuditEventService(IAuditEventRepository repository)
+    public AuditEventService(IAuditEventRepository repository, IHashChainService hashChain)
     {
         _repository = repository;
+        _hashChain = hashChain;
     }
 
     public async Task<AuditEventResponse> RecordEventAsync(CreateAuditEventRequest request, Guid effectiveTenantId)
@@ -38,7 +41,6 @@ public class AuditEventService : IAuditEventService
             throw new ArgumentException("Event Type is required.", nameof(request.Type));
         }
 
-        // Validate JSON payload
         string validPayload = request.Payload;
         try
         {
@@ -49,10 +51,8 @@ public class AuditEventService : IAuditEventService
             throw new ArgumentException("Payload must be a valid JSON string.", nameof(request.Payload));
         }
 
-        // Idempotency: if the caller supplied an EventId (the Kafka consumer does,
-        // carrying it through from the KafkaEnvelope), check whether it's already
-        // been recorded before inserting again. Kafka delivers at-least-once, so a
-        // redelivered message must not create a second audit row.
+        // Idempotency: if the caller supplied an EventId (the Kafka consumer does),
+        // a redelivered message must not create a second audit row.
         if (request.EventId.HasValue)
         {
             var existing = await _repository.GetByIdAsync(request.EventId.Value, effectiveTenantId);
@@ -63,11 +63,26 @@ public class AuditEventService : IAuditEventService
         }
 
         var utcNow = DateTime.UtcNow;
+        utcNow = utcNow.AddTicks(-(utcNow.Ticks % TimeSpan.TicksPerMicrosecond));
         var eventId = request.EventId ?? Guid.NewGuid();
 
-        // Calculate tamper-evident hash
-        string hashInput = $"{eventId}:{request.EngagementId}:{effectiveTenantId}:{request.Actor}:{request.Type}:{utcNow:O}:{validPayload}";
-        string computedHash = ComputeSha256Hash(hashInput);
+        // Previous hash: the tenant's latest event, or genesis for the first.
+        var latest = await _repository.GetLatestForTenantAsync(effectiveTenantId);
+        var previousHash = latest?.Hash ?? _hashChain.GenesisHash;
+
+        var hashInput = new EventHashInput
+        {
+            EventId = eventId,
+            EngagementId = request.EngagementId,
+            TenantId = effectiveTenantId,
+            Actor = request.Actor,
+            Type = request.Type,
+            Timestamp = utcNow,
+            Payload = validPayload,
+            PreviousHash = previousHash,
+        };
+
+        var computedHash = _hashChain.ComputeEventHash(hashInput);
 
         var auditEvent = new AuditEvent
         {
@@ -78,7 +93,8 @@ public class AuditEventService : IAuditEventService
             Type = request.Type,
             Timestamp = utcNow,
             Payload = validPayload,
-            Hash = computedHash
+            Hash = computedHash,
+            PreviousHash = previousHash,
         };
 
         var createdEvent = await _repository.AddAsync(auditEvent);
@@ -103,16 +119,57 @@ public class AuditEventService : IAuditEventService
         return auditEvent != null ? MapToResponse(auditEvent) : null;
     }
 
-    private static string ComputeSha256Hash(string rawData)
+    public async Task<ChainVerificationResult> VerifyChainAsync(Guid effectiveTenantId)
     {
-        using var sha256 = SHA256.Create();
-        byte[] bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(rawData));
-        var builder = new StringBuilder();
-        foreach (byte b in bytes)
+        var events = await _repository.GetByTenantIdInChainOrderAsync(effectiveTenantId);
+
+        if (events.Count == 0)
         {
-            builder.Append(b.ToString("x2"));
+            return new ChainVerificationResult { IsVerified = true, Count = 0 };
         }
-        return builder.ToString();
+
+        var expectedPrevious = _hashChain.GenesisHash;
+
+        foreach (var e in events)
+        {
+            if (!string.Equals(e.PreviousHash, expectedPrevious, StringComparison.Ordinal))
+            {
+                return new ChainVerificationResult
+                {
+                    IsVerified = false,
+                    Count = events.Count,
+                    BrokenAtEventId = e.EventId,
+                    Reason = "previous_hash does not match the prior event's hash"
+                };
+            }
+
+            var input = new EventHashInput
+            {
+                EventId = e.EventId,
+                EngagementId = e.EngagementId,
+                TenantId = e.TenantId,
+                Actor = e.Actor,
+                Type = e.Type,
+                Timestamp = e.Timestamp,
+                Payload = e.Payload,
+                PreviousHash = e.PreviousHash ?? string.Empty,
+            };
+
+            if (!_hashChain.VerifyEventHash(input, e.Hash ?? string.Empty))
+            {
+                return new ChainVerificationResult
+                {
+                    IsVerified = false,
+                    Count = events.Count,
+                    BrokenAtEventId = e.EventId,
+                    Reason = "stored hash does not match recomputed hash",
+                };
+            }
+
+            expectedPrevious = e.Hash!;
+        }
+
+        return new ChainVerificationResult { IsVerified = true, Count = events.Count };
     }
 
     private static AuditEventResponse MapToResponse(AuditEvent entity)
@@ -127,7 +184,8 @@ public class AuditEventService : IAuditEventService
             Timestamp = entity.Timestamp,
             Payload = entity.Payload,
             SequenceNumber = entity.SequenceNumber,
-            Hash = entity.Hash
+            Hash = entity.Hash,
+            PreviousHash = entity.PreviousHash,
         };
     }
 }

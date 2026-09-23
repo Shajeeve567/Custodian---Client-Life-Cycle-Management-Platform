@@ -44,4 +44,22 @@ public class AuditEventRepository : IAuditEventRepository
             .OrderByDescending(e => e.Timestamp)
             .ToListAsync();
     }
+
+    public async Task<IReadOnlyList<AuditEvent>> GetByTenantIdInChainOrderAsync(Guid tenantId)
+    {
+        return await _context.Events
+            .AsNoTracking()
+            .Where(e => e.TenantId == tenantId)
+            .OrderBy(e => e.SequenceNumber)
+            .ToListAsync();
+    }
+
+    public async Task<AuditEvent?> GetLatestForTenantAsync(Guid tenantId)
+    {
+        return await _context.Events
+            .AsNoTracking()
+            .Where(e => e.TenantId == tenantId)
+            .OrderByDescending(e => e.SequenceNumber)
+            .FirstOrDefaultAsync();
+    }
 }
