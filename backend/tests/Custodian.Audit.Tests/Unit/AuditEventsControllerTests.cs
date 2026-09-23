@@ -171,8 +171,8 @@ public class AuditEventsControllerTests
         var result = await _controller.VerifyChain(attackerTenantId);
 
         // Assert
-        Assert.IsType<ForbidResult>(result);
-        _mockService.Verify(s => s.GetEventsByTenantAsync(It.IsAny<Guid>()), Times.Never);
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.VerifyChainAsync(It.IsAny<Guid>()), Times.Never);
     }
 
     [Fact]

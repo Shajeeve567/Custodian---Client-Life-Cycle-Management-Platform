@@ -2,6 +2,7 @@ using System.Text.Json;
 using Custodian.Audit.Data;
 using Custodian.Audit.Repositories;
 using Custodian.Audit.Services;
+using Custodian.Audit.Services.HashChain;
 using Custodian.Audit.Services.Kafka;
 using Custodian.Shared.Messaging;
 using Microsoft.EntityFrameworkCore;
@@ -25,6 +26,7 @@ public class KafkaAuditEventConsumerTests
         services.AddDbContext<AuditDbContext>(opt => opt.UseInMemoryDatabase(dbName));
         services.AddScoped<IAuditEventRepository, AuditEventRepository>();
         services.AddScoped<IAuditEventService, AuditEventService>();
+        services.AddScoped<IHashChainService, HashChainService>();
         return services.BuildServiceProvider();
     }
 

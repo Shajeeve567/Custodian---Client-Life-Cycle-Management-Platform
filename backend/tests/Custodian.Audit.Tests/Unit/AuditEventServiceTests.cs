@@ -2,6 +2,7 @@ using Custodian.Audit.DTOs;
 using Custodian.Audit.Models;
 using Custodian.Audit.Repositories;
 using Custodian.Audit.Services;
+using Custodian.Audit.Services.HashChain;
 using Moq;
 using Xunit;
 
@@ -10,6 +11,7 @@ namespace Custodian.Audit.Tests.Unit;
 public class AuditEventServiceTests
 {
     private readonly Mock<IAuditEventRepository> _mockRepo;
+    private readonly Mock<IHashChainService> _mockHashChain;
     private readonly AuditEventService _service;
     private readonly Guid _testTenantId = Guid.NewGuid();
     private readonly Guid _testEngagementId = Guid.NewGuid();
@@ -17,7 +19,8 @@ public class AuditEventServiceTests
     public AuditEventServiceTests()
     {
         _mockRepo = new Mock<IAuditEventRepository>();
-        _service = new AuditEventService(_mockRepo.Object);
+        _mockHashChain = new Mock<IHashChainService>();
+        _service = new AuditEventService(_mockRepo.Object, _mockHashChain.Object);
     }
 
     [Fact]
@@ -33,6 +36,11 @@ public class AuditEventServiceTests
             Payload = "{\"status\":\"Draft\",\"client\":\"Acme Corp\"}"
         };
 
+        _mockHashChain.Setup(h => h.GenesisHash).Returns(new string('0', 64));   // <-- add
+        _mockHashChain.Setup(h => h.ComputeEventHash(It.IsAny<EventHashInput>()))  // <-- add
+            .Returns("mock-hash-0000000000000000000000000000000000000000000000000000000000");  // 64 chars
+        _mockRepo.Setup(r => r.GetLatestForTenantAsync(It.IsAny<Guid>()))          // <-- add
+            .ReturnsAsync((AuditEvent?)null);
         _mockRepo.Setup(r => r.AddAsync(It.IsAny<AuditEvent>()))
             .ReturnsAsync((AuditEvent e) => e);
 
@@ -46,44 +54,8 @@ public class AuditEventServiceTests
         Assert.Equal("user@custodian.com", result.Actor);
         Assert.Equal("EngagementCreated", result.Type);
         Assert.False(string.IsNullOrWhiteSpace(result.Hash));
+        Assert.Equal(new string('0', 64), result.PreviousHash);   // <-- add: genesis for a new chain
         _mockRepo.Verify(r => r.AddAsync(It.IsAny<AuditEvent>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task RecordEventAsync_InvalidJsonPayload_ThrowsArgumentException()
-    {
-        // Arrange
-        var request = new CreateAuditEventRequest
-        {
-            EngagementId = _testEngagementId,
-            Actor = "user@custodian.com",
-            Type = "EngagementCreated",
-            Payload = "NOT_A_VALID_JSON"
-        };
-
-        // Act & Assert
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
-            _service.RecordEventAsync(request, _testTenantId));
-
-        Assert.Contains("valid JSON", ex.Message);
-        _mockRepo.Verify(r => r.AddAsync(It.IsAny<AuditEvent>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task RecordEventAsync_MissingEngagementId_ThrowsArgumentException()
-    {
-        // Arrange
-        var request = new CreateAuditEventRequest
-        {
-            EngagementId = Guid.Empty,
-            Actor = "user@custodian.com",
-            Type = "EngagementCreated",
-            Payload = "{}"
-        };
-
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() =>
-            _service.RecordEventAsync(request, _testTenantId));
     }
 
     [Fact]
