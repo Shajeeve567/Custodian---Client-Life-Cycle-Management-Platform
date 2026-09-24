@@ -13,19 +13,24 @@ public sealed class StallActionsProvider : IStallActionsProvider
         _dbContext = dbContext;
     }
 
-    public async Task<IReadOnlyList<ClientAction>?> GetRawActionsAsync(Guid engagementId, string tenantId, CancellationToken ct = default)
+    public async Task<StallActionsResult?> GetRawActionsAsync(Guid engagementId, string tenantId, CancellationToken ct = default)
     {
-        // Confirm the engagement exists in this tenant first, so a valid tenant
-        // with the wrong engagementId returns 404 rather than an empty stall status.
-        var exists = await _dbContext.Engagements
+        // Project only ClientId — we don't need the full entity, and reading the
+        // Status/Stage columns would force enum conversion on data that may not
+        // match the current enum shape (e.g. legacy seed rows).
+        var clientId = await _dbContext.Engagements
             .AsNoTracking()
-            .AnyAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId, ct);
+            .Where(e => e.EngagementId == engagementId && e.TenantId == tenantId)
+            .Select(e => e.ClientId)
+            .FirstOrDefaultAsync(ct);
 
-        if (!exists) return null;
+        if (clientId is null) return null;
 
-        return await _dbContext.ClientActions
+        var actions = await _dbContext.ClientActions
             .AsNoTracking()
             .Where(a => a.EngagementId == engagementId && a.TenantId == tenantId)
             .ToListAsync(ct);
+
+        return new StallActionsResult(clientId, actions);
     }
 }

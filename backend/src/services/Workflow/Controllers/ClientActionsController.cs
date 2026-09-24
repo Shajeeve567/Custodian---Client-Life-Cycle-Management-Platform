@@ -477,14 +477,14 @@ public class ClientActionsController : ControllerBase
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
             return BadRequest(new { message = "Tenant identification is required." });
 
-        var rawActions = await _stallActionsProvider.GetRawActionsAsync(
+        var result = await _stallActionsProvider.GetRawActionsAsync(
             engagementId, effectiveTenantId);
 
-        if (rawActions is null)
+        if (result is null)
             return NotFound(new { message = $"Engagement '{engagementId}' was not found." });
 
         var status = _stall.EvaluateForEngagement(
-            engagementId, rawActions, DateTime.UtcNow);
+            engagementId, result.Actions, DateTime.UtcNow);
 
         // Fire the overdue event only the first time we observe this stall. Dedup key
         // includes the deadline so extending the deadline allows a future fire.
@@ -502,6 +502,7 @@ public class ClientActionsController : ControllerBase
                 "action.overdue",
                 new
                 {
+                    clientId = result.ClientId,
                     actionId = status.ActionId,
                     actionTitle = status.ActionTitle,
                     stageNumber = status.StageNumber,
