@@ -1403,4 +1403,343 @@ public class ClientActionServiceTests
             It.Is<object>(payload => payload != null)),
             Times.Once);
     }
+
+    [Theory]
+    [InlineData(ClientActionSourceType.Document, true, false, false)]
+    [InlineData(ClientActionSourceType.Condition, false, true, false)]
+    [InlineData(ClientActionSourceType.Meeting, false, false, true)]
+    [InlineData(ClientActionSourceType.Manual, false, false, false)]
+    [InlineData(ClientActionSourceType.Lifecycle, false, false, false)]
+    public async Task CreateActionAsync_ValidSourceTypesAndLinkedIds_RoundTripsCorrectly(
+        string sourceType, bool hasDocId, bool hasCondId, bool hasMeetId)
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var docId = hasDocId ? Guid.NewGuid() : (Guid?)null;
+        var condId = hasCondId ? Guid.NewGuid() : (Guid?)null;
+        var meetId = hasMeetId ? Guid.NewGuid() : (Guid?)null;
+
+        var dto = new CreateClientActionDto
+        {
+            Title = $"Action for {sourceType}",
+            Source = "Test",
+            SourceType = sourceType,
+            LinkedDocumentId = docId,
+            LinkedConditionId = condId,
+            LinkedMeetingId = meetId
+        };
+
+        // Act
+        var result = await service.CreateActionAsync(engagementId, tenantId, dto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(sourceType, result.SourceType);
+        Assert.Equal(docId, result.LinkedDocumentId);
+        Assert.Equal(condId, result.LinkedConditionId);
+        Assert.Equal(meetId, result.LinkedMeetingId);
+    }
+
+    [Fact]
+    public async Task CreateActionAsync_InvalidSourceType_ThrowsArgumentException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        var service = CreateService(db);
+        var dto = new CreateClientActionDto
+        {
+            Title = "Invalid Source",
+            Source = "Test",
+            SourceType = "NonExistentSource"
+        };
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateActionAsync(engagementId, tenantId, dto));
+        Assert.Contains("Invalid source type", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateActionAsync_RequirementSourceType_ThrowsArgumentException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        var service = CreateService(db);
+        var dto = new CreateClientActionDto
+        {
+            Title = "Requirement Source",
+            Source = "Test",
+            SourceType = ClientActionSourceType.Requirement
+        };
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateActionAsync(engagementId, tenantId, dto));
+        Assert.Contains("Requirement-linked actions cannot be created directly", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateActionAsync_MultipleLinkedIds_ThrowsArgumentException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        var service = CreateService(db);
+        var dto = new CreateClientActionDto
+        {
+            Title = "Multiple Linked IDs",
+            Source = "Test",
+            SourceType = ClientActionSourceType.Document,
+            LinkedDocumentId = Guid.NewGuid(),
+            LinkedConditionId = Guid.NewGuid()
+        };
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateActionAsync(engagementId, tenantId, dto));
+        Assert.Contains("At most one linked identifier", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateActionAsync_MismatchedLinkedId_ThrowsArgumentException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        var service = CreateService(db);
+
+        // Document with LinkedConditionId
+        var dto1 = new CreateClientActionDto
+        {
+            Title = "Doc with ConditionId",
+            Source = "Test",
+            SourceType = ClientActionSourceType.Document,
+            LinkedConditionId = Guid.NewGuid()
+        };
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateActionAsync(engagementId, tenantId, dto1));
+
+        // Manual with LinkedDocumentId
+        var dto2 = new CreateClientActionDto
+        {
+            Title = "Manual with DocId",
+            Source = "Test",
+            SourceType = ClientActionSourceType.Manual,
+            LinkedDocumentId = Guid.NewGuid()
+        };
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateActionAsync(engagementId, tenantId, dto2));
+    }
+
+    [Fact]
+    public async Task UploadEvidenceAsync_SetsLinkedDocumentId_AndUpdatesSourceTypeToDocument()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var docId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Financials",
+            SourceType = ClientActionSourceType.Manual,
+            Status = ClientActionStatus.Pending
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act
+        var result = await service.UploadEvidenceAsync(engagementId, actionId, tenantId, new UploadActionEvidenceDto
+        {
+            DocumentId = docId,
+            ComplianceStatus = "Compliant",
+            UploaderActor = "client-user"
+        });
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(docId, result.LinkedDocumentId);
+        Assert.Equal(ClientActionSourceType.Document, result.SourceType);
+        Assert.Contains(docId.ToString(), result.SourceMetadata);
+
+        var dbAction = await db.ClientActions.FindAsync(actionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(docId, dbAction.LinkedDocumentId);
+        Assert.Equal(ClientActionSourceType.Document, dbAction.SourceType);
+    }
+
+    [Fact]
+    public async Task CreateLinkedActionAsync_ConditionAndMeeting_CreatesActionWithCorrectLinks()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var conditionId = Guid.NewGuid();
+        var meetingId = Guid.NewGuid();
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act 1: Condition action
+        var condAction = await service.CreateLinkedActionAsync(
+            engagementId,
+            tenantId,
+            ClientActionSourceType.Condition,
+            conditionId,
+            "Sign Off Condition 4B",
+            description: "Owner approval required",
+            type: ClientActionType.Approval);
+
+        // Act 2: Meeting action
+        var meetAction = await service.CreateLinkedActionAsync(
+            engagementId,
+            tenantId,
+            new CreateLinkedActionDto
+            {
+                Title = "Kickoff Strategy Meeting",
+                SourceType = ClientActionSourceType.Meeting,
+                SourceId = meetingId,
+                Type = ClientActionType.Meeting
+            });
+
+        // Assert
+        Assert.NotNull(condAction);
+        Assert.Equal(ClientActionSourceType.Condition, condAction.SourceType);
+        Assert.Equal(conditionId, condAction.LinkedConditionId);
+        Assert.Equal(ClientActionType.Approval, condAction.Type);
+
+        Assert.NotNull(meetAction);
+        Assert.Equal(ClientActionSourceType.Meeting, meetAction.SourceType);
+        Assert.Equal(meetingId, meetAction.LinkedMeetingId);
+        Assert.Equal(ClientActionType.Meeting, meetAction.Type);
+    }
+
+    [Fact]
+    public async Task CancelActionsForSourceAsync_CancelsPendingAndUploadedActions_LeavesCompletedUntouched()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var conditionId = Guid.NewGuid();
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+
+        var pendingAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = conditionId,
+            Status = ClientActionStatus.Pending
+        };
+        var uploadedAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = conditionId,
+            Status = ClientActionStatus.Uploaded
+        };
+        var completedAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = conditionId,
+            Status = ClientActionStatus.Completed
+        };
+        var unrelatedAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = Guid.NewGuid(),
+            Status = ClientActionStatus.Pending
+        };
+
+        db.ClientActions.AddRange(pendingAction, uploadedAction, completedAction, unrelatedAction);
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var gateEvaluator = new Mock<IGateEvaluator>();
+        var service = new ClientActionService(db, gateEvaluator.Object, mockAudit.Object);
+
+        // Act
+        await service.CancelActionsForSourceAsync(
+            engagementId,
+            tenantId,
+            ClientActionSourceType.Condition,
+            conditionId,
+            "StaffUser",
+            "Condition waived by credit committee");
+
+        // Assert
+        var updatedPending = await db.ClientActions.FindAsync(pendingAction.ActionId);
+        var updatedUploaded = await db.ClientActions.FindAsync(uploadedAction.ActionId);
+        var updatedCompleted = await db.ClientActions.FindAsync(completedAction.ActionId);
+        var updatedUnrelated = await db.ClientActions.FindAsync(unrelatedAction.ActionId);
+
+        Assert.Equal(ClientActionStatus.Cancelled, updatedPending!.Status);
+        Assert.Equal(ClientActionStatus.Cancelled, updatedUploaded!.Status);
+        Assert.Equal(ClientActionStatus.Completed, updatedCompleted!.Status);
+        Assert.Equal(ClientActionStatus.Pending, updatedUnrelated!.Status);
+
+        // Audit emitted for pending and uploaded actions
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "StaffUser",
+            "ClientActionStatusChanged",
+            It.IsAny<object>()),
+            Times.Exactly(2));
+    }
 }

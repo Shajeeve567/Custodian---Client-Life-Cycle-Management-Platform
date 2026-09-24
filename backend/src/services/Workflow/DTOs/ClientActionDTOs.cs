@@ -59,6 +59,46 @@ public class CreateClientActionDto
     public string AssignedToRole { get; set; } = "Client";
 
     public string? SourceMetadata { get; set; }
+
+    [MaxLength(30)]
+    public string? SourceType { get; set; }
+
+    public Guid? LinkedDocumentId { get; set; }
+
+    public Guid? LinkedConditionId { get; set; }
+
+    public Guid? LinkedMeetingId { get; set; }
+}
+
+public class CreateLinkedActionDto
+{
+    [Required]
+    [MaxLength(200)]
+    public string Title { get; set; } = string.Empty;
+
+    public string? Description { get; set; }
+
+    [MaxLength(50)]
+    public string Type { get; set; } = ClientActionType.CustomTask;
+
+    [Range(1, 5)]
+    public int StageNumber { get; set; } = 1;
+
+    public DateTime? DeadlineUtc { get; set; }
+
+    [Required]
+    [MaxLength(30)]
+    public string SourceType { get; set; } = string.Empty;
+
+    [Required]
+    public Guid SourceId { get; set; }
+
+    public bool IsInternalOnly { get; set; } = false;
+
+    [MaxLength(50)]
+    public string AssignedToRole { get; set; } = "Client";
+
+    public string? SourceMetadata { get; set; }
 }
 
 public class CompleteClientActionDto

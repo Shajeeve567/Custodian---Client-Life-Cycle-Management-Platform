@@ -679,4 +679,46 @@ public class ClientPortalServiceTests
         Assert.Equal(newDraftId, dashboard.EngagementId);
         Assert.Equal(2, dashboard.CurrentStageNumber);
     }
+
+    [Fact]
+    public async Task GetDashboard_PopulatesSourceTypeOnClientSafeActionDto()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = clientId,
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started
+        });
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Submit Business Plan",
+            StageNumber = 1,
+            Status = ClientActionStatus.Pending,
+            SourceType = ClientActionSourceType.Document,
+            IsInternalOnly = false
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ClientPortalService(db);
+
+        // Act
+        var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+
+        // Assert
+        Assert.NotNull(dashboard);
+        Assert.NotNull(dashboard.PrimaryNextAction);
+        Assert.Equal(ClientActionSourceType.Document, dashboard.PrimaryNextAction.SourceType);
+    }
 }

@@ -391,7 +391,8 @@ public class ClientPortalService : IClientPortalService
             DaysRemaining = daysRemaining,
             RejectionReason = rejectionReason,
             VerificationStatus = verificationStatus,
-            LinkedRequirementId = action.LinkedRequirementId
+            LinkedRequirementId = action.LinkedRequirementId,
+            SourceType = action.SourceType
         };
     }
 

@@ -19,6 +19,16 @@ public static class ClientActionSourceType
     public const string Meeting = "Meeting";
     public const string Lifecycle = "Lifecycle";
     public const string Manual = "Manual";
+
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        Requirement,
+        Document,
+        Condition,
+        Meeting,
+        Lifecycle,
+        Manual
+    };
 }
 
 public static class ClientActionType

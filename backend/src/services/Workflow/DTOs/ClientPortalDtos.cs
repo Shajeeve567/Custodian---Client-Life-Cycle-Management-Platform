@@ -58,6 +58,8 @@ public class ClientSafeActionDto
     /// endpoints. Null for every other action type.
     /// </summary>
     public Guid? LinkedRequirementId { get; set; }
+
+    public string SourceType { get; set; } = string.Empty;
 }
 
 /// <summary>

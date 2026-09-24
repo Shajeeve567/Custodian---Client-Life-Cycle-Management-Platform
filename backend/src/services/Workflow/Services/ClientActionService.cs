@@ -109,6 +109,53 @@ public class ClientActionService : IClientActionService
             throw new InvalidOperationException($"Cannot create actions for an engagement with status '{engagement.Status}'.");
         }
 
+        var sourceType = string.IsNullOrWhiteSpace(dto.SourceType)
+            ? ClientActionSourceType.Manual
+            : dto.SourceType.Trim();
+
+        if (!ClientActionSourceType.All.Contains(sourceType))
+        {
+            throw new ArgumentException($"Invalid source type '{dto.SourceType}'. Allowed types: {string.Join(", ", ClientActionSourceType.All)}", nameof(dto));
+        }
+
+        if (string.Equals(sourceType, ClientActionSourceType.Requirement, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("Requirement-linked actions cannot be created directly; use Requirements endpoints.", nameof(dto));
+        }
+
+        int linkedIdCount = (dto.LinkedDocumentId.HasValue ? 1 : 0) +
+                            (dto.LinkedConditionId.HasValue ? 1 : 0) +
+                            (dto.LinkedMeetingId.HasValue ? 1 : 0);
+
+        if (linkedIdCount > 1)
+        {
+            throw new ArgumentException("At most one linked identifier can be specified.", nameof(dto));
+        }
+
+        if (dto.LinkedDocumentId.HasValue && !string.Equals(sourceType, ClientActionSourceType.Document, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"LinkedDocumentId cannot be set when SourceType is '{sourceType}'.", nameof(dto));
+        }
+
+        if (dto.LinkedConditionId.HasValue && !string.Equals(sourceType, ClientActionSourceType.Condition, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"LinkedConditionId cannot be set when SourceType is '{sourceType}'.", nameof(dto));
+        }
+
+        if (dto.LinkedMeetingId.HasValue && !string.Equals(sourceType, ClientActionSourceType.Meeting, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"LinkedMeetingId cannot be set when SourceType is '{sourceType}'.", nameof(dto));
+        }
+
+        if (string.Equals(sourceType, ClientActionSourceType.Manual, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(sourceType, ClientActionSourceType.Lifecycle, StringComparison.OrdinalIgnoreCase))
+        {
+            if (linkedIdCount > 0)
+            {
+                throw new ArgumentException($"Linked identifiers cannot be set when SourceType is '{sourceType}'.", nameof(dto));
+            }
+        }
+
         int currentStageNumber = engagement != null ? (int)engagement.Stage + 1 : 1;
         int stageNumber = dto.StageNumber > 0 ? dto.StageNumber : 1;
         var now = DateTime.UtcNow;
@@ -127,7 +174,10 @@ public class ClientActionService : IClientActionService
             DeadlineUtc = dto.DeadlineUtc,
             ActivatedAt = activatedAt,
             Source = dto.Source,
-            SourceType = ClientActionSourceType.Manual,
+            SourceType = sourceType,
+            LinkedDocumentId = dto.LinkedDocumentId,
+            LinkedConditionId = dto.LinkedConditionId,
+            LinkedMeetingId = dto.LinkedMeetingId,
             IsInternalOnly = dto.IsInternalOnly,
             AssignedToRole = dto.AssignedToRole,
             CreatedAt = now,
@@ -139,6 +189,150 @@ public class ClientActionService : IClientActionService
         await _dbContext.SaveChangesAsync();
 
         return MapToResponseDto(action, isClientView: false);
+    }
+
+    public async Task<ClientAction> CreateLinkedActionAsync(Guid engagementId, string tenantId, CreateLinkedActionDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId) || engagementId == Guid.Empty)
+        {
+            throw new ArgumentException("TenantId and EngagementId are required.", nameof(dto));
+        }
+
+        var engagement = await _dbContext.Engagements
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId);
+
+        if (engagement != null && (engagement.Status == EngagementStatus.Closed || engagement.Status == EngagementStatus.Cancelled))
+        {
+            throw new InvalidOperationException($"Cannot create actions for an engagement with status '{engagement.Status}'.");
+        }
+
+        var sourceType = string.IsNullOrWhiteSpace(dto.SourceType)
+            ? throw new ArgumentException("SourceType is required.", nameof(dto))
+            : dto.SourceType.Trim();
+
+        if (!ClientActionSourceType.All.Contains(sourceType))
+        {
+            throw new ArgumentException($"Invalid source type '{dto.SourceType}'. Allowed types: {string.Join(", ", ClientActionSourceType.All)}", nameof(dto));
+        }
+
+        if (dto.SourceId == Guid.Empty)
+        {
+            throw new ArgumentException("SourceId must be a non-empty Guid.", nameof(dto));
+        }
+
+        int currentStageNumber = engagement != null ? (int)engagement.Stage + 1 : 1;
+        int stageNumber = dto.StageNumber > 0 ? dto.StageNumber : 1;
+        var now = DateTime.UtcNow;
+        DateTime? activatedAt = stageNumber <= currentStageNumber ? now : null;
+
+        var action = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = dto.Title,
+            Description = dto.Description,
+            Type = !string.IsNullOrWhiteSpace(dto.Type)
+                ? dto.Type
+                : (string.Equals(sourceType, ClientActionSourceType.Meeting, StringComparison.OrdinalIgnoreCase)
+                    ? ClientActionType.Meeting
+                    : (string.Equals(sourceType, ClientActionSourceType.Condition, StringComparison.OrdinalIgnoreCase)
+                        ? ClientActionType.Approval
+                        : ClientActionType.CustomTask)),
+            Status = ClientActionStatus.Pending,
+            StageNumber = stageNumber,
+            DeadlineUtc = dto.DeadlineUtc,
+            ActivatedAt = activatedAt,
+            Source = $"{sourceType}:{dto.SourceId}",
+            SourceType = sourceType,
+            IsInternalOnly = dto.IsInternalOnly,
+            AssignedToRole = dto.AssignedToRole,
+            CreatedAt = now,
+            UpdatedAt = now,
+            SourceMetadata = dto.SourceMetadata
+        };
+
+        if (string.Equals(sourceType, ClientActionSourceType.Requirement, StringComparison.OrdinalIgnoreCase))
+        {
+            action.LinkedRequirementId = dto.SourceId;
+        }
+        else if (string.Equals(sourceType, ClientActionSourceType.Document, StringComparison.OrdinalIgnoreCase))
+        {
+            action.LinkedDocumentId = dto.SourceId;
+        }
+        else if (string.Equals(sourceType, ClientActionSourceType.Condition, StringComparison.OrdinalIgnoreCase))
+        {
+            action.LinkedConditionId = dto.SourceId;
+        }
+        else if (string.Equals(sourceType, ClientActionSourceType.Meeting, StringComparison.OrdinalIgnoreCase))
+        {
+            action.LinkedMeetingId = dto.SourceId;
+        }
+
+        _dbContext.ClientActions.Add(action);
+        await _dbContext.SaveChangesAsync();
+
+        return action;
+    }
+
+    public async Task<ClientAction> CreateLinkedActionAsync(
+        Guid engagementId,
+        string tenantId,
+        string sourceType,
+        Guid sourceId,
+        string title,
+        string? description = null,
+        string? type = null,
+        int stageNumber = 1,
+        DateTime? deadlineUtc = null,
+        string? assignedToRole = "Client",
+        bool isInternalOnly = false,
+        string? sourceMetadata = null)
+    {
+        var dto = new CreateLinkedActionDto
+        {
+            Title = title,
+            Description = description,
+            Type = type ?? ClientActionType.CustomTask,
+            StageNumber = stageNumber,
+            DeadlineUtc = deadlineUtc,
+            SourceType = sourceType,
+            SourceId = sourceId,
+            IsInternalOnly = isInternalOnly,
+            AssignedToRole = assignedToRole ?? "Client",
+            SourceMetadata = sourceMetadata
+        };
+
+        return await CreateLinkedActionAsync(engagementId, tenantId, dto);
+    }
+
+    public async Task CancelActionsForSourceAsync(Guid engagementId, string tenantId, string sourceType, Guid sourceId, string actor, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId) || engagementId == Guid.Empty || string.IsNullOrWhiteSpace(sourceType) || sourceId == Guid.Empty)
+        {
+            return;
+        }
+
+        var actions = await _dbContext.ClientActions
+            .Where(a => a.EngagementId == engagementId &&
+                        a.TenantId == tenantId &&
+                        a.SourceType == sourceType &&
+                        (a.LinkedRequirementId == sourceId ||
+                         a.LinkedDocumentId == sourceId ||
+                         a.LinkedConditionId == sourceId ||
+                         a.LinkedMeetingId == sourceId) &&
+                        a.Status != ClientActionStatus.Completed &&
+                        a.Status != ClientActionStatus.Cancelled)
+            .ToListAsync();
+
+        if (actions.Count > 0)
+        {
+            foreach (var action in actions)
+            {
+                await ApplyStatusAsync(action, ClientActionStatus.Cancelled, actor, reason);
+            }
+        }
     }
 
     public async Task<ClientActionResponseDto?> CompleteActionAsync(Guid engagementId, Guid actionId, string tenantId, CompleteClientActionDto dto)
@@ -333,6 +527,10 @@ public class ClientActionService : IClientActionService
         if (dto.DocumentId.HasValue)
         {
             action.LinkedDocumentId = dto.DocumentId.Value;
+            if (string.Equals(action.SourceType, ClientActionSourceType.Manual, StringComparison.OrdinalIgnoreCase))
+            {
+                action.SourceType = ClientActionSourceType.Document;
+            }
         }
 
         await ApplyStatusAsync(action, targetStatus, targetActor, targetReason);
