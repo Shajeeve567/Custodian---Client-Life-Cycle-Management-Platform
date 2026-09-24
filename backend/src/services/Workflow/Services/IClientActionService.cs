@@ -11,6 +11,7 @@ public interface IClientActionService
     Task<ClientActionResponseDto?> ReviewActionAsync(Guid engagementId, Guid actionId, string tenantId, ReviewActionDto dto);
     Task<ClientActionResponseDto?> ApplyVerificationOutcomeAsync(Guid engagementId, Guid actionId, string tenantId, ApplyActionVerificationDto dto);
     Task<List<ClientActionResponseDto>> EnsureLifecycleActionsAsync(Guid engagementId, string tenantId);
+    Task ActivateStageActionsAsync(Guid engagementId, string tenantId, int stageNumber);
 
     /// <summary>
     /// IDOR protection (CSTD-22 fix, extended here): confirms the engagement identified by

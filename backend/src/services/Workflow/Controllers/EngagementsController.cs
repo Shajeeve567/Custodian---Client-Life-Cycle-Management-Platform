@@ -241,6 +241,12 @@ public class EngagementsController : ControllerBase
         engagement.Stage = newStage;
 
         var updated = await _repository.UpdateAsync(engagement);
+        int newStageNumber = (int)newStage + 1;
+
+        if (_actionService != null)
+        {
+            await _actionService.ActivateStageActionsAsync(updated.EngagementId, effectiveTenantId, newStageNumber);
+        }
 
         // Subtask Audit: Publish Stage Change Event to Audit Service
         await _auditPublisher.PublishEventAsync(

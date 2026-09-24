@@ -8,6 +8,7 @@ namespace Custodian.Workflow.Services;
 public class ClientPortalService : IClientPortalService
 {
     private readonly WorkflowDbContext _dbContext;
+    private readonly IAuditPublisher? _auditPublisher;
 
     // Canonical stage names/taglines (CSTD-17) — must match frontend/src/constants/engagementStages.ts
     // exactly, so the client portal and the staff/owner dashboard show identical stage names for
@@ -22,9 +23,10 @@ public class ClientPortalService : IClientPortalService
         (5, "Closure", "Final delivery & handoff")
     };
 
-    public ClientPortalService(WorkflowDbContext dbContext)
+    public ClientPortalService(WorkflowDbContext dbContext, IAuditPublisher? auditPublisher = null)
     {
         _dbContext = dbContext;
+        _auditPublisher = auditPublisher;
     }
 
     public async Task<ClientPortalDashboardDto?> GetDashboardForEngagementAsync(Guid engagementId, string tenantId, string? clientId = null)
@@ -144,9 +146,7 @@ public class ClientPortalService : IClientPortalService
         {
             foreach (var act in earlierPending)
             {
-                act.Status = ClientActionStatus.Completed;
-                act.CompletedByActor = "Staff";
-                act.CompletedAt = DateTime.UtcNow;
+                await ApplyActionStatusAsync(act, ClientActionStatus.Completed, "Staff", "Stage auto-advanced");
             }
             await _dbContext.SaveChangesAsync();
         }
@@ -444,5 +444,56 @@ public class ClientPortalService : IClientPortalService
         }
 
         return null;
+    }
+
+    private async Task<bool> ApplyActionStatusAsync(ClientAction action, string newStatus, string? actor, string? reason)
+    {
+        if (string.Equals(action.Status, newStatus, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        ClientActionStateMachine.EnsureCanTransition(action.Status, newStatus);
+
+        var fromStatus = action.Status;
+        action.Status = newStatus;
+        var now = DateTime.UtcNow;
+        action.UpdatedAt = now;
+
+        action.CompletedByActor = actor ?? action.CompletedByActor;
+        if (string.Equals(newStatus, ClientActionStatus.Completed, StringComparison.OrdinalIgnoreCase))
+        {
+            action.CompletedAt = now;
+        }
+        else
+        {
+            action.CompletedAt = null;
+            if (string.Equals(newStatus, ClientActionStatus.Pending, StringComparison.OrdinalIgnoreCase))
+            {
+                action.CompletedByActor = null;
+            }
+        }
+
+        if (_auditPublisher != null)
+        {
+            Guid? sourceId = action.LinkedRequirementId ?? action.LinkedDocumentId ?? action.LinkedConditionId ?? action.LinkedMeetingId;
+
+            await _auditPublisher.PublishEventAsync(
+                action.EngagementId,
+                action.TenantId,
+                actor ?? "System",
+                "ClientActionStatusChanged",
+                new
+                {
+                    actionId = action.ActionId,
+                    fromStatus,
+                    toStatus = newStatus,
+                    sourceType = action.SourceType,
+                    sourceId,
+                    reason
+                });
+        }
+
+        return true;
     }
 }

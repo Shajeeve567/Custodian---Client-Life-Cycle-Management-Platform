@@ -142,6 +142,11 @@ public class ClientActionsController : ControllerBase
             _logger.LogWarning(ex, "Failed to create action for engagement {EngagementId}", engagementId);
             return BadRequest(new { message = ex.Message });
         }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Conflict creating action for engagement {EngagementId}", engagementId);
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     /// <summary>
@@ -194,6 +199,10 @@ public class ClientActionsController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     /// <summary>
@@ -232,13 +241,24 @@ public class ClientActionsController : ControllerBase
             }
         }
 
-        var result = await _actionService.UploadEvidenceAsync(engagementId, actionId, effectiveTenantId, dto);
-        if (result == null)
+        try
         {
-            return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
-        }
+            var result = await _actionService.UploadEvidenceAsync(engagementId, actionId, effectiveTenantId, dto);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
 
-        return Ok(result);
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     /// <summary>
@@ -291,6 +311,10 @@ public class ClientActionsController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     /// <summary>
@@ -342,6 +366,10 @@ public class ClientActionsController : ControllerBase
         catch (ArgumentException ex)
         {
             return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
         }
     }
 

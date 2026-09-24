@@ -100,6 +100,20 @@ public class ClientActionService : IClientActionService
             throw new ArgumentException("TenantId is required.", nameof(tenantId));
         }
 
+        var engagement = await _dbContext.Engagements
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId);
+
+        if (engagement != null && (engagement.Status == EngagementStatus.Closed || engagement.Status == EngagementStatus.Cancelled))
+        {
+            throw new InvalidOperationException($"Cannot create actions for an engagement with status '{engagement.Status}'.");
+        }
+
+        int currentStageNumber = engagement != null ? (int)engagement.Stage + 1 : 1;
+        int stageNumber = dto.StageNumber > 0 ? dto.StageNumber : 1;
+        var now = DateTime.UtcNow;
+        DateTime? activatedAt = stageNumber <= currentStageNumber ? now : null;
+
         var action = new ClientAction
         {
             ActionId = Guid.NewGuid(),
@@ -109,14 +123,15 @@ public class ClientActionService : IClientActionService
             Description = dto.Description,
             Type = dto.Type,
             Status = ClientActionStatus.Pending,
-            StageNumber = dto.StageNumber > 0 ? dto.StageNumber : 1,
+            StageNumber = stageNumber,
             DeadlineUtc = dto.DeadlineUtc,
+            ActivatedAt = activatedAt,
             Source = dto.Source,
             SourceType = ClientActionSourceType.Manual,
             IsInternalOnly = dto.IsInternalOnly,
             AssignedToRole = dto.AssignedToRole,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
+            CreatedAt = now,
+            UpdatedAt = now,
             SourceMetadata = dto.SourceMetadata
         };
 
@@ -152,9 +167,7 @@ public class ClientActionService : IClientActionService
                 $"PUT /api/engagements/{engagementId}/requirements/{action.LinkedRequirementId}/submit, not completed directly.");
         }
 
-        action.Status = ClientActionStatus.Completed;
-        action.CompletedByActor = dto.CompletedByActor;
-        action.CompletedAt = DateTime.UtcNow;
+        await ApplyStatusAsync(action, ClientActionStatus.Completed, dto.CompletedByActor, "ActionCompleted");
 
         // Auto-advance engagement stage if all client-facing actions for this stage are now completed
         var engagement = await _dbContext.Engagements
@@ -190,6 +203,8 @@ public class ClientActionService : IClientActionService
                     {
                         var previousStage = engagement.Stage;
                         engagement.Stage = targetStage;
+                        var newStageNum = (int)targetStage + 1;
+                        await ActivateStageActionsAsync(engagement.EngagementId, tenantId, newStageNum);
 
                         await _auditPublisher.PublishEventAsync(
                             engagement.EngagementId,
@@ -203,12 +218,12 @@ public class ClientActionService : IClientActionService
                                 changedAt = DateTime.UtcNow,
                                 trigger = "ClientActionAutoAdvance"
                             });
+
+                        await _dbContext.SaveChangesAsync();
                     }
                 }
             }
         }
-
-        await _dbContext.SaveChangesAsync();
 
         return MapToResponseDto(action, isClientView: false);
     }
@@ -233,13 +248,16 @@ public class ClientActionService : IClientActionService
         // with the deterministic rejection reason, bypassing human staff review.
         var isComplianceRejected = string.Equals(dto.ComplianceStatus, "Rejected", StringComparison.OrdinalIgnoreCase);
 
+        string targetStatus;
+        string? targetActor;
+        string? targetReason;
+
         if (isComplianceRejected)
         {
-            action.Status = ClientActionStatus.Rejected;
-            action.CompletedAt = null;
-            action.CompletedByActor = dto.UploaderActor;
+            targetStatus = ClientActionStatus.Rejected;
+            targetActor = dto.UploaderActor;
 
-            var reason = !string.IsNullOrWhiteSpace(dto.RejectionReason)
+            targetReason = !string.IsNullOrWhiteSpace(dto.RejectionReason)
                 ? dto.RejectionReason.Trim()
                 : "The submitted evidence does not meet compliance standards.";
 
@@ -247,7 +265,7 @@ public class ClientActionService : IClientActionService
             {
                 documentId = dto.DocumentId?.ToString(),
                 complianceStatus = "Rejected",
-                rejectionReason = reason,
+                rejectionReason = targetReason,
                 verificationStatus = DocumentVerificationStatus.Unverified
             };
             action.SourceMetadata = JsonSerializer.Serialize(metaObj);
@@ -261,9 +279,9 @@ public class ClientActionService : IClientActionService
 
             if (isVerified)
             {
-                action.Status = ClientActionStatus.Completed;
-                action.CompletedAt = DateTime.UtcNow;
-                action.CompletedByActor = !string.IsNullOrWhiteSpace(dto.VerifiedBy) ? dto.VerifiedBy : dto.UploaderActor;
+                targetStatus = ClientActionStatus.Completed;
+                targetActor = !string.IsNullOrWhiteSpace(dto.VerifiedBy) ? dto.VerifiedBy : dto.UploaderActor;
+                targetReason = dto.VerificationReason;
 
                 var metaObj = new
                 {
@@ -277,11 +295,10 @@ public class ClientActionService : IClientActionService
             }
             else if (isVerificationRejected)
             {
-                action.Status = ClientActionStatus.Rejected;
-                action.CompletedAt = null;
-                action.CompletedByActor = !string.IsNullOrWhiteSpace(dto.VerifiedBy) ? dto.VerifiedBy : dto.UploaderActor;
+                targetStatus = ClientActionStatus.Rejected;
+                targetActor = !string.IsNullOrWhiteSpace(dto.VerifiedBy) ? dto.VerifiedBy : dto.UploaderActor;
 
-                var reason = !string.IsNullOrWhiteSpace(dto.VerificationReason)
+                targetReason = !string.IsNullOrWhiteSpace(dto.VerificationReason)
                     ? dto.VerificationReason.Trim()
                     : (!string.IsNullOrWhiteSpace(dto.RejectionReason) ? dto.RejectionReason.Trim() : "Evidence verification rejected by staff.");
 
@@ -291,17 +308,17 @@ public class ClientActionService : IClientActionService
                     complianceStatus = "Compliant",
                     verificationStatus = DocumentVerificationStatus.Rejected,
                     verifiedBy = dto.VerifiedBy,
-                    verificationReason = reason,
-                    rejectionReason = reason
+                    verificationReason = targetReason,
+                    rejectionReason = targetReason
                 };
                 action.SourceMetadata = JsonSerializer.Serialize(metaObj);
             }
             else
             {
                 // Auto-compliant, awaiting human staff verification -> Uploaded
-                action.Status = ClientActionStatus.Uploaded;
-                action.CompletedAt = null;
-                action.CompletedByActor = dto.UploaderActor;
+                targetStatus = ClientActionStatus.Uploaded;
+                targetActor = dto.UploaderActor;
+                targetReason = "EvidenceUploadedAwaitingVerification";
 
                 var metaObj = new
                 {
@@ -313,7 +330,12 @@ public class ClientActionService : IClientActionService
             }
         }
 
-        await _dbContext.SaveChangesAsync();
+        if (dto.DocumentId.HasValue)
+        {
+            action.LinkedDocumentId = dto.DocumentId.Value;
+        }
+
+        await ApplyStatusAsync(action, targetStatus, targetActor, targetReason);
 
         return MapToResponseDto(action, isClientView: false);
     }
@@ -334,13 +356,11 @@ public class ClientActionService : IClientActionService
         }
 
         var (docId, compStatus, _, _) = ParseSourceMetadata(action.SourceMetadata);
+        string reason;
 
         if (string.Equals(dto.Status, ClientActionStatus.Completed, StringComparison.OrdinalIgnoreCase))
         {
-            action.Status = ClientActionStatus.Completed;
-            action.CompletedAt = DateTime.UtcNow;
-            action.CompletedByActor = dto.ReviewerActor;
-
+            reason = dto.VerificationReason ?? dto.ReviewNote ?? "ActionApproved";
             var metaObj = new Dictionary<string, object?>
             {
                 ["documentId"] = docId,
@@ -353,11 +373,7 @@ public class ClientActionService : IClientActionService
         }
         else if (string.Equals(dto.Status, ClientActionStatus.Rejected, StringComparison.OrdinalIgnoreCase))
         {
-            action.Status = ClientActionStatus.Rejected;
-            action.CompletedAt = null;
-            action.CompletedByActor = dto.ReviewerActor;
-
-            var reason = !string.IsNullOrWhiteSpace(dto.VerificationReason)
+            reason = !string.IsNullOrWhiteSpace(dto.VerificationReason)
                 ? dto.VerificationReason.Trim()
                 : (!string.IsNullOrWhiteSpace(dto.ReviewNote) ? dto.ReviewNote.Trim() : "Action verification rejected.");
 
@@ -377,7 +393,7 @@ public class ClientActionService : IClientActionService
             throw new ArgumentException($"Invalid review status '{dto.Status}'. Must be '{ClientActionStatus.Completed}' or '{ClientActionStatus.Rejected}'.");
         }
 
-        await _dbContext.SaveChangesAsync();
+        await ApplyStatusAsync(action, dto.Status, dto.ReviewerActor, reason);
 
         return MapToResponseDto(action, isClientView: false);
     }
@@ -410,12 +426,13 @@ public class ClientActionService : IClientActionService
         }
 
         var (docId, compStatus, _, _) = ParseSourceMetadata(action.SourceMetadata);
+        string targetStatus;
+        string reason;
 
         if (isVerified)
         {
-            action.Status = ClientActionStatus.Completed;
-            action.CompletedAt = DateTime.UtcNow;
-            action.CompletedByActor = dto.VerifiedBy;
+            targetStatus = ClientActionStatus.Completed;
+            reason = dto.VerificationReason ?? "DocumentVerified";
 
             var metaObj = new Dictionary<string, object?>
             {
@@ -429,11 +446,8 @@ public class ClientActionService : IClientActionService
         }
         else
         {
-            action.Status = ClientActionStatus.Rejected;
-            action.CompletedAt = null;
-            action.CompletedByActor = dto.VerifiedBy;
-
-            var reason = !string.IsNullOrWhiteSpace(dto.VerificationReason)
+            targetStatus = ClientActionStatus.Rejected;
+            reason = !string.IsNullOrWhiteSpace(dto.VerificationReason)
                 ? dto.VerificationReason.Trim()
                 : "Document verification was rejected by staff.";
 
@@ -449,9 +463,98 @@ public class ClientActionService : IClientActionService
             action.SourceMetadata = JsonSerializer.Serialize(metaObj);
         }
 
-        await _dbContext.SaveChangesAsync();
+        await ApplyStatusAsync(action, targetStatus, dto.VerifiedBy, reason);
 
         return MapToResponseDto(action, isClientView: false);
+    }
+
+    public async Task ActivateStageActionsAsync(Guid engagementId, string tenantId, int stageNumber)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId) || engagementId == Guid.Empty || stageNumber <= 0)
+        {
+            return;
+        }
+
+        var actionsToActivate = await _dbContext.ClientActions
+            .Where(a => a.EngagementId == engagementId &&
+                        a.TenantId == tenantId &&
+                        a.StageNumber == stageNumber &&
+                        a.ActivatedAt == null)
+            .ToListAsync();
+
+        if (actionsToActivate.Count > 0)
+        {
+            var now = DateTime.UtcNow;
+            foreach (var action in actionsToActivate)
+            {
+                action.ActivatedAt = now;
+                action.UpdatedAt = now;
+            }
+
+            await _dbContext.SaveChangesAsync();
+        }
+    }
+
+    private async Task<bool> ApplyStatusAsync(ClientAction action, string newStatus, string? actor, string? reason)
+    {
+        // 1. Same -> same is a no-op (return without event)
+        if (string.Equals(action.Status, newStatus, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // 2. Validate via authoritative state machine
+        ClientActionStateMachine.EnsureCanTransition(action.Status, newStatus);
+
+        // 3. Reject closed/cancelled engagements
+        var engagement = await _dbContext.Engagements
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.EngagementId == action.EngagementId && e.TenantId == action.TenantId);
+
+        if (engagement != null && (engagement.Status == EngagementStatus.Closed || engagement.Status == EngagementStatus.Cancelled))
+        {
+            throw new InvalidOperationException($"Cannot modify actions for an engagement with status '{engagement.Status}'.");
+        }
+
+        var fromStatus = action.Status;
+        action.Status = newStatus;
+        var now = DateTime.UtcNow;
+        action.UpdatedAt = now;
+
+        action.CompletedByActor = actor ?? action.CompletedByActor;
+        if (string.Equals(newStatus, ClientActionStatus.Completed, StringComparison.OrdinalIgnoreCase))
+        {
+            action.CompletedAt = now;
+        }
+        else
+        {
+            action.CompletedAt = null;
+            if (string.Equals(newStatus, ClientActionStatus.Pending, StringComparison.OrdinalIgnoreCase))
+            {
+                action.CompletedByActor = null;
+            }
+        }
+
+        await _dbContext.SaveChangesAsync();
+
+        Guid? sourceId = action.LinkedRequirementId ?? action.LinkedDocumentId ?? action.LinkedConditionId ?? action.LinkedMeetingId;
+
+        await _auditPublisher.PublishEventAsync(
+            action.EngagementId,
+            action.TenantId,
+            actor ?? "System",
+            "ClientActionStatusChanged",
+            new
+            {
+                actionId = action.ActionId,
+                fromStatus,
+                toStatus = newStatus,
+                sourceType = action.SourceType,
+                sourceId,
+                reason
+            });
+
+        return true;
     }
 
     private static (string? DocumentId, string? ComplianceStatus, string? VerificationStatus, string? VerificationReason) ParseSourceMetadata(string? sourceMetadata)

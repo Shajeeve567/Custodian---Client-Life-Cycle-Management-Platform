@@ -942,4 +942,54 @@ public class ClientActionsControllerTests
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
         Assert.Equal(200, okResult.StatusCode);
     }
+
+    [Fact]
+    public async Task CreateAction_InvalidOperationException_Returns409Conflict()
+    {
+        // Arrange
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+        SetupTenantHeader(tenantId);
+
+        var dto = new CreateClientActionDto
+        {
+            Title = "Submit Tax Return",
+            Type = ClientActionType.DocumentUpload
+        };
+
+        _mockService.Setup(s => s.CreateActionAsync(engagementId, tenantId, dto))
+            .ThrowsAsync(new InvalidOperationException("Cannot create action for an engagement with status 'Closed'."));
+
+        // Act
+        var result = await _controller.CreateAction(engagementId, dto, tenantId: null);
+
+        // Assert: 409 Conflict
+        var conflictResult = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(409, conflictResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task CompleteAction_InvalidOperationException_Returns409Conflict()
+    {
+        // Arrange
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        SetupTenantHeader(tenantId);
+
+        var dto = new CompleteClientActionDto
+        {
+            CompletedByActor = "StaffMember"
+        };
+
+        _mockService.Setup(s => s.CompleteActionAsync(engagementId, actionId, tenantId, dto))
+            .ThrowsAsync(new InvalidOperationException("Cannot transition from Cancelled to Completed."));
+
+        // Act
+        var result = await _controller.CompleteAction(engagementId, actionId, dto, tenantId: null);
+
+        // Assert: 409 Conflict
+        var conflictResult = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(409, conflictResult.StatusCode);
+    }
 }

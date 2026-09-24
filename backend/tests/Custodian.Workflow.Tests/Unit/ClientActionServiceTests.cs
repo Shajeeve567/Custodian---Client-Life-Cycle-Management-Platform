@@ -1188,4 +1188,219 @@ public class ClientActionServiceTests
         Assert.Null(action.LinkedConditionId);
         Assert.Null(action.LinkedMeetingId);
     }
+
+    [Fact]
+    public async Task ActivateStageActionsAsync_SetsActivatedAt_OnlyForTargetStageAndNullActivatedAt()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var existingActivatedTime = DateTime.UtcNow.AddDays(-1);
+
+        var actionStage1 = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            StageNumber = 1,
+            ActivatedAt = null,
+            Status = ClientActionStatus.Pending
+        };
+        var actionStage2Unactivated = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            StageNumber = 2,
+            ActivatedAt = null,
+            Status = ClientActionStatus.Pending
+        };
+        var actionStage2AlreadyActivated = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            StageNumber = 2,
+            ActivatedAt = existingActivatedTime,
+            Status = ClientActionStatus.Pending
+        };
+
+        db.ClientActions.AddRange(actionStage1, actionStage2Unactivated, actionStage2AlreadyActivated);
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act
+        await service.ActivateStageActionsAsync(engagementId, tenantId, 2);
+
+        // Assert
+        var dbActions = await db.ClientActions.ToListAsync();
+        var updatedStage1 = dbActions.First(a => a.ActionId == actionStage1.ActionId);
+        var updatedStage2Unactivated = dbActions.First(a => a.ActionId == actionStage2Unactivated.ActionId);
+        var updatedStage2AlreadyActivated = dbActions.First(a => a.ActionId == actionStage2AlreadyActivated.ActionId);
+
+        Assert.Null(updatedStage1.ActivatedAt);
+        Assert.NotNull(updatedStage2Unactivated.ActivatedAt);
+        Assert.Equal(existingActivatedTime, updatedStage2AlreadyActivated.ActivatedAt);
+    }
+
+    [Theory]
+    [InlineData(EngagementStatus.Closed)]
+    [InlineData(EngagementStatus.Cancelled)]
+    public async Task MutatingActions_OnClosedOrCancelledEngagement_ThrowsInvalidOperationException(EngagementStatus terminalStatus)
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = terminalStatus
+        });
+
+        var actionId = Guid.NewGuid();
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Status = ClientActionStatus.Pending,
+            Type = ClientActionType.DocumentUpload
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act & Assert: CreateAction throws
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreateActionAsync(engagementId, tenantId, new CreateClientActionDto
+            {
+                Title = "New Action",
+                Type = ClientActionType.CustomTask
+            }));
+
+        // Act & Assert: CompleteAction throws
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CompleteActionAsync(engagementId, actionId, tenantId, new CompleteClientActionDto
+            {
+                CompletedByActor = "Staff"
+            }));
+
+        // Act & Assert: UploadEvidence throws
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UploadEvidenceAsync(engagementId, actionId, tenantId, new UploadActionEvidenceDto
+            {
+                DocumentId = Guid.NewGuid(),
+                ComplianceStatus = "Compliant",
+                UploaderActor = "client-1"
+            }));
+
+        // Act & Assert: ReviewAction throws
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ReviewActionAsync(engagementId, actionId, tenantId, new ReviewActionDto
+            {
+                Status = ClientActionStatus.Completed,
+                ReviewerActor = "Staff"
+            }));
+    }
+
+    [Fact]
+    public async Task ApplyStatusAsync_TerminalCancelledState_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Status = ClientActionStatus.Cancelled,
+            Type = ClientActionType.DocumentUpload
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act & Assert: Cannot complete a cancelled action
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CompleteActionAsync(engagementId, actionId, tenantId, new CompleteClientActionDto
+            {
+                CompletedByActor = "Staff"
+            }));
+
+        Assert.Contains("Cancelled", ex.Message);
+    }
+
+    [Fact]
+    public async Task StatusChange_EmitsClientActionStatusChangedAuditEvent()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Status = ClientActionStatus.Pending,
+            Type = ClientActionType.DocumentUpload,
+            SourceType = ClientActionSourceType.Document,
+            LinkedDocumentId = Guid.NewGuid()
+        });
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var gateEvaluator = new Mock<IGateEvaluator>();
+        gateEvaluator
+            .Setup(g => g.EvaluateAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<EngagementStage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GateEvaluationResult.Satisfied());
+
+        var service = new ClientActionService(db, gateEvaluator.Object, mockAudit.Object);
+
+        // Act
+        var result = await service.CompleteActionAsync(engagementId, actionId, tenantId, new CompleteClientActionDto
+        {
+            CompletedByActor = "StaffMember"
+        });
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Completed, result.Status);
+
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "StaffMember",
+            "ClientActionStatusChanged",
+            It.Is<object>(payload => payload != null)),
+            Times.Once);
+    }
 }
