@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Text.Json;
 using Custodian.Audit.DTOs;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
@@ -9,10 +8,10 @@ using Xunit;
 namespace Custodian.Audit.Tests.Integration;
 
 /// <summary>
-/// Black-box tests through the real Audit pipeline: routing, JWT auth,
-/// tenant resolution, service, EF, MySQL. The tamper case runs a raw SQL
-/// UPDATE against audit_db to prove append-only-tamper detection — the
-/// headline acceptance criterion for CSTD-40.
+/// Black-box tests through the real Audit pipeline: routing, JWT auth, tenant
+/// resolution, service, EF, MySQL. Tamper tests run raw SQL against audit_db to
+/// prove append-only tamper detection — the headline acceptance criterion for
+/// CSTD-40. Chains are scoped per (tenant, engagement).
 /// Requires a reachable MySQL with audit_db migrated. Skips otherwise.
 /// </summary>
 public class HashChainEndpointTests : IClassFixture<WebApplicationFactory<Program>>
@@ -26,21 +25,20 @@ public class HashChainEndpointTests : IClassFixture<WebApplicationFactory<Progra
     }
 
     [SkippableFact]
-    public async Task Verify_EmptyTenant_ReturnsVerifiedTrueZero()
+    public async Task Verify_UnknownEngagement_ReturnsVerifiedTrueZero()
     {
         Skip.IfNot(DbReachable, "MySQL not reachable — integration test skipped.");
 
-        var client = _factory.CreateClient();
         var tenant = "tenant-integ-" + Guid.NewGuid().ToString("N");
-        client.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", TestTokenFactory.CreateOwnerToken(tenant));
-        client.DefaultRequestHeaders.Add("X-Tenant-Id", tenant);
+        var client = BuildClient(tenant);
+        var engagementId = Guid.NewGuid();
 
-        var result = await client.GetFromJsonAsync<ChainVerificationResult>("/api/audit-events/verify");
+        var result = await VerifyAsync(client, engagementId);
 
         Assert.NotNull(result);
         Assert.True(result!.IsVerified);
         Assert.Equal(0, result.Count);
+        Assert.Equal(engagementId, result.EngagementId);
     }
 
     [SkippableFact]
@@ -51,7 +49,8 @@ public class HashChainEndpointTests : IClassFixture<WebApplicationFactory<Progra
         var tenant = "tenant-integ-" + Guid.NewGuid().ToString("N");
         var client = BuildClient(tenant);
 
-        var (e1, e2, e3) = await PostThreeAsync(client);
+        var engagementId = Guid.NewGuid();
+        var (e1, e2, e3) = await PostThreeAsync(client, engagementId);
 
         Assert.Equal(e1.SequenceNumber + 1, e2.SequenceNumber);
         Assert.Equal(e2.SequenceNumber + 1, e3.SequenceNumber);
@@ -60,11 +59,50 @@ public class HashChainEndpointTests : IClassFixture<WebApplicationFactory<Progra
         Assert.Equal(e1.Hash, e2.PreviousHash);
         Assert.Equal(e2.Hash, e3.PreviousHash);
 
-        var result = await client.GetFromJsonAsync<ChainVerificationResult>("/api/audit-events/verify");
+        var result = await VerifyAsync(client, engagementId);
+
         Assert.NotNull(result);
         Assert.True(result!.IsVerified);
         Assert.Equal(3, result.Count);
         Assert.Null(result.BrokenAtEventId);
+    }
+
+    /// <summary>
+    /// Regression for BUG-CSTD40-001: two engagements under the same tenant each
+    /// start from genesis independently. Engagement B's first event must NOT chain
+    /// off Engagement A's latest hash.
+    /// </summary>
+    [SkippableFact]
+    public async Task TwoEngagementsSameTenant_EachStartsFromGenesis_Independently()
+    {
+        Skip.IfNot(DbReachable, "MySQL not reachable — integration test skipped.");
+
+        var tenant = "tenant-integ-" + Guid.NewGuid().ToString("N");
+        var client = BuildClient(tenant);
+
+        var engA = Guid.NewGuid();
+        var engB = Guid.NewGuid();
+
+        var (a1, a2, a3) = await PostThreeAsync(client, engA);
+
+        // First event of engagement B — should use genesis, not a3.Hash
+        var b1 = await PostOneAsync(client, engB, step: 1);
+
+        Assert.Equal(new string('0', 64), b1.PreviousHash);
+        Assert.NotEqual(a3.Hash, b1.PreviousHash);
+
+        // Both engagements verify independently, each with its own chain length
+        var resultA = await VerifyAsync(client, engA);
+        var resultB = await VerifyAsync(client, engB);
+
+        Assert.NotNull(resultA);
+        Assert.NotNull(resultB);
+        Assert.True(resultA!.IsVerified);
+        Assert.True(resultB!.IsVerified);
+        Assert.Equal(3, resultA.Count);
+        Assert.Equal(1, resultB.Count);
+        Assert.Equal(engA, resultA.EngagementId);
+        Assert.Equal(engB, resultB.EngagementId);
     }
 
     [SkippableFact]
@@ -74,12 +112,13 @@ public class HashChainEndpointTests : IClassFixture<WebApplicationFactory<Progra
 
         var tenant = "tenant-integ-" + Guid.NewGuid().ToString("N");
         var client = BuildClient(tenant);
+        var engagementId = Guid.NewGuid();
 
-        var (e1, _, _) = await PostThreeAsync(client);
+        var (e1, _, _) = await PostThreeAsync(client, engagementId);
 
         Tamper("UPDATE events SET payload = '{\"step\":999}' WHERE event_id = @id", e1.EventId);
 
-        var result = await client.GetFromJsonAsync<ChainVerificationResult>("/api/audit-events/verify");
+        var result = await VerifyAsync(client, engagementId);
 
         Assert.NotNull(result);
         Assert.False(result!.IsVerified);
@@ -94,12 +133,13 @@ public class HashChainEndpointTests : IClassFixture<WebApplicationFactory<Progra
 
         var tenant = "tenant-integ-" + Guid.NewGuid().ToString("N");
         var client = BuildClient(tenant);
+        var engagementId = Guid.NewGuid();
 
-        var (_, e2, _) = await PostThreeAsync(client);
+        var (_, e2, _) = await PostThreeAsync(client, engagementId);
 
         Tamper("UPDATE events SET previous_hash = REPEAT('f', 64) WHERE event_id = @id", e2.EventId);
 
-        var result = await client.GetFromJsonAsync<ChainVerificationResult>("/api/audit-events/verify");
+        var result = await VerifyAsync(client, engagementId);
 
         Assert.NotNull(result);
         Assert.False(result!.IsVerified);
@@ -118,30 +158,37 @@ public class HashChainEndpointTests : IClassFixture<WebApplicationFactory<Progra
         return client;
     }
 
-    private static async Task<(AuditEventResponse, AuditEventResponse, AuditEventResponse)> PostThreeAsync(HttpClient client)
+    private static async Task<ChainVerificationResult?> VerifyAsync(HttpClient client, Guid engagementId)
     {
-        var engagementId = Guid.NewGuid();
-        var results = new List<AuditEventResponse>();
+        return await client.GetFromJsonAsync<ChainVerificationResult>(
+            $"/api/audit-events/verify?engagementId={engagementId}");
+    }
 
-        for (var i = 1; i <= 3; i++)
+    private static async Task<(AuditEventResponse, AuditEventResponse, AuditEventResponse)> PostThreeAsync(
+        HttpClient client, Guid engagementId)
+    {
+        var e1 = await PostOneAsync(client, engagementId, step: 1);
+        var e2 = await PostOneAsync(client, engagementId, step: 2);
+        var e3 = await PostOneAsync(client, engagementId, step: 3);
+        return (e1, e2, e3);
+    }
+
+    private static async Task<AuditEventResponse> PostOneAsync(HttpClient client, Guid engagementId, int step)
+    {
+        var body = new CreateAuditEventRequest
         {
-            var body = new CreateAuditEventRequest
-            {
-                EngagementId = engagementId,
-                Actor = "integration-tester",
-                Type = "Genesis",
-                Payload = $"{{\"step\":{i}}}",
-            };
+            EngagementId = engagementId,
+            Actor = "integration-tester",
+            Type = "Genesis",
+            Payload = $"{{\"step\":{step}}}",
+        };
 
-            var response = await client.PostAsJsonAsync("/api/audit-events", body);
-            response.EnsureSuccessStatusCode();
+        var response = await client.PostAsJsonAsync("/api/audit-events", body);
+        response.EnsureSuccessStatusCode();
 
-            var dto = await response.Content.ReadFromJsonAsync<AuditEventResponse>();
-            Assert.NotNull(dto);
-            results.Add(dto!);
-        }
-
-        return (results[0], results[1], results[2]);
+        var dto = await response.Content.ReadFromJsonAsync<AuditEventResponse>();
+        Assert.NotNull(dto);
+        return dto!;
     }
 
     private static void Tamper(string sql, Guid eventId)

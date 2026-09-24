@@ -41,6 +41,7 @@ public class AuditEventResponse
 
 public class ChainVerificationResult
 {
+    public Guid? EngagementId { get; set; }
     public bool IsVerified { get; set; }
     public int Count { get; set; }
     public Guid? BrokenAtEventId { get; set; }

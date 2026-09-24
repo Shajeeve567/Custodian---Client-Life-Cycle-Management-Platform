@@ -10,10 +10,9 @@ public interface IAuditEventService
     Task<AuditEventResponse?> GetEventByIdAsync(Guid eventId, Guid effectiveTenantId);
 
     /// <summary>
-    /// Recomputes the tenant's hash chain from scratch
-    /// Reports whether it is intact
-    /// Reads every event for the tenant in sequence order
-    /// Returns the first event that fails verification if any
+    /// Recomputes the hash chain for a single engagement and reports whether it
+    /// is intact. Chains are scoped per (tenant, engagement), so each engagement
+    /// starts from genesis independently.
     /// </summary>
-    Task<ChainVerificationResult> VerifyChainAsync(Guid effectiveTenantId);
+    Task<ChainVerificationResult> VerifyChainAsync(Guid effectiveTenantId, Guid engagementId);
 }

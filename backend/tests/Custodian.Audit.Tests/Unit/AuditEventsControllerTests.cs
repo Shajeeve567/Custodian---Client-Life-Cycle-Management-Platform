@@ -168,11 +168,11 @@ public class AuditEventsControllerTests
     {
         // Act
         var attackerTenantId = Guid.NewGuid().ToString();
-        var result = await _controller.VerifyChain(attackerTenantId);
+        var result = await _controller.VerifyChain(Guid.NewGuid(), attackerTenantId);
 
         // Assert
         Assert.IsType<ForbidResult>(result.Result);
-        _mockService.Verify(s => s.VerifyChainAsync(It.IsAny<Guid>()), Times.Never);
+        _mockService.Verify(s => s.VerifyChainAsync(It.IsAny<Guid>(), It.IsAny<Guid>()), Times.Never);
     }
 
     [Fact]
@@ -194,6 +194,16 @@ public class AuditEventsControllerTests
         // Assert
         Assert.IsType<ForbidResult>(result.Result);
         _mockService.Verify(s => s.RecordEventAsync(It.IsAny<CreateAuditEventRequest>(), It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task VerifyChain_MissingEngagementId_Returns400BadRequest()
+    {
+        var result = await _controller.VerifyChain(Guid.Empty, null);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Equal(400, badRequest.StatusCode);
+        _mockService.Verify(s => s.VerifyChainAsync(It.IsAny<Guid>(), It.IsAny<Guid>()), Times.Never);
     }
 
     [Fact]

@@ -20,13 +20,16 @@ public class AuditEventServiceTests
     {
         _mockRepo = new Mock<IAuditEventRepository>();
         _mockHashChain = new Mock<IHashChainService>();
+        _mockHashChain.Setup(h => h.GenesisHash).Returns(new string('0', 64));
+        _mockHashChain.Setup(h => h.ComputeEventHash(It.IsAny<EventHashInput>())).Returns(new string('a', 64));
+        _mockRepo.Setup(r => r.GetLatestForEngagementAsync(It.IsAny<Guid>(), It.IsAny<Guid>())).ReturnsAsync((AuditEvent?)null);
+
         _service = new AuditEventService(_mockRepo.Object, _mockHashChain.Object);
     }
 
     [Fact]
     public async Task RecordEventAsync_ValidPayload_CreatesAndReturnsEventResponse()
     {
-        // Arrange
         var request = new CreateAuditEventRequest
         {
             EngagementId = _testEngagementId,
@@ -36,25 +39,18 @@ public class AuditEventServiceTests
             Payload = "{\"status\":\"Draft\",\"client\":\"Acme Corp\"}"
         };
 
-        _mockHashChain.Setup(h => h.GenesisHash).Returns(new string('0', 64));   // <-- add
-        _mockHashChain.Setup(h => h.ComputeEventHash(It.IsAny<EventHashInput>()))  // <-- add
-            .Returns("mock-hash-0000000000000000000000000000000000000000000000000000000000");  // 64 chars
-        _mockRepo.Setup(r => r.GetLatestForTenantAsync(It.IsAny<Guid>()))          // <-- add
-            .ReturnsAsync((AuditEvent?)null);
         _mockRepo.Setup(r => r.AddAsync(It.IsAny<AuditEvent>()))
             .ReturnsAsync((AuditEvent e) => e);
 
-        // Act
         var result = await _service.RecordEventAsync(request, _testTenantId);
 
-        // Assert
         Assert.NotNull(result);
         Assert.Equal(_testEngagementId, result.EngagementId);
         Assert.Equal(_testTenantId, result.TenantId);
         Assert.Equal("user@custodian.com", result.Actor);
         Assert.Equal("EngagementCreated", result.Type);
         Assert.False(string.IsNullOrWhiteSpace(result.Hash));
-        Assert.Equal(new string('0', 64), result.PreviousHash);   // <-- add: genesis for a new chain
+        Assert.Equal(new string('0', 64), result.PreviousHash);  // genesis for a new engagement
         _mockRepo.Verify(r => r.AddAsync(It.IsAny<AuditEvent>()), Times.Once);
     }
 

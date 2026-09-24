@@ -51,8 +51,6 @@ public class AuditEventService : IAuditEventService
             throw new ArgumentException("Payload must be a valid JSON string.", nameof(request.Payload));
         }
 
-        // Idempotency: if the caller supplied an EventId (the Kafka consumer does),
-        // a redelivered message must not create a second audit row.
         if (request.EventId.HasValue)
         {
             var existing = await _repository.GetByIdAsync(request.EventId.Value, effectiveTenantId);
@@ -63,11 +61,15 @@ public class AuditEventService : IAuditEventService
         }
 
         var utcNow = DateTime.UtcNow;
+        // MySQL datetime(6) stores microsecond precision; DateTime.Ticks is 100ns.
+        // Truncate to microseconds before hashing so the value we hash is byte-for-byte
+        // the value MySQL stores on round-trip.
         utcNow = utcNow.AddTicks(-(utcNow.Ticks % TimeSpan.TicksPerMicrosecond));
         var eventId = request.EventId ?? Guid.NewGuid();
 
-        // Previous hash: the tenant's latest event, or genesis for the first.
-        var latest = await _repository.GetLatestForTenantAsync(effectiveTenantId);
+        // Previous hash: the engagement's latest event, or genesis for the first.
+        // Chains are scoped per (tenant, engagement) — not per tenant.
+        var latest = await _repository.GetLatestForEngagementAsync(effectiveTenantId, request.EngagementId);
         var previousHash = latest?.Hash ?? _hashChain.GenesisHash;
 
         var hashInput = new EventHashInput
@@ -119,13 +121,18 @@ public class AuditEventService : IAuditEventService
         return auditEvent != null ? MapToResponse(auditEvent) : null;
     }
 
-    public async Task<ChainVerificationResult> VerifyChainAsync(Guid effectiveTenantId)
+    public async Task<ChainVerificationResult> VerifyChainAsync(Guid effectiveTenantId, Guid engagementId)
     {
-        var events = await _repository.GetByTenantIdInChainOrderAsync(effectiveTenantId);
+        var events = await _repository.GetByEngagementIdInChainOrderAsync(effectiveTenantId, engagementId);
 
         if (events.Count == 0)
         {
-            return new ChainVerificationResult { IsVerified = true, Count = 0 };
+            return new ChainVerificationResult
+            {
+                EngagementId = engagementId,
+                IsVerified = true,
+                Count = 0,
+            };
         }
 
         var expectedPrevious = _hashChain.GenesisHash;
@@ -136,10 +143,11 @@ public class AuditEventService : IAuditEventService
             {
                 return new ChainVerificationResult
                 {
+                    EngagementId = engagementId,
                     IsVerified = false,
                     Count = events.Count,
                     BrokenAtEventId = e.EventId,
-                    Reason = "previous_hash does not match the prior event's hash"
+                    Reason = "previous_hash does not match the prior event's hash",
                 };
             }
 
@@ -159,6 +167,7 @@ public class AuditEventService : IAuditEventService
             {
                 return new ChainVerificationResult
                 {
+                    EngagementId = engagementId,
                     IsVerified = false,
                     Count = events.Count,
                     BrokenAtEventId = e.EventId,
@@ -169,7 +178,12 @@ public class AuditEventService : IAuditEventService
             expectedPrevious = e.Hash!;
         }
 
-        return new ChainVerificationResult { IsVerified = true, Count = events.Count };
+        return new ChainVerificationResult
+        {
+            EngagementId = engagementId,
+            IsVerified = true,
+            Count = events.Count,
+        };
     }
 
     private static AuditEventResponse MapToResponse(AuditEvent entity)
