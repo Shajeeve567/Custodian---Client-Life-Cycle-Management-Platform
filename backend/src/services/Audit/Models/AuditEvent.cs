@@ -46,4 +46,13 @@ public class AuditEvent
     [Column("hash")]
     [MaxLength(64)]
     public string? Hash { get; set; }
+
+    /// <summary>
+    /// Hash of the immediately preceding event in the same tenant's chain,
+    /// or the genesis constant for the tenant's first event.
+    /// Immutable after insert.
+    /// </summary>
+    [Column("previous_hash")]
+    [MaxLength(64)]
+    public string? PreviousHash { get; set; }
 }

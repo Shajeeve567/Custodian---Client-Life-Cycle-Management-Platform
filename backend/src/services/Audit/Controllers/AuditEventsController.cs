@@ -73,10 +73,17 @@ public class AuditEventsController : ControllerBase
     }
 
     /// <summary>
-    /// Verifies the cryptographic SHA-256 hash chain for the caller's tenant.
+    /// Verifies the SHA-256 hash chain for a single engagement within the caller's
+    /// tenant. Chains are scoped per (tenant, engagement), so each engagement
+    /// starts from genesis independently. Any mismatch — payload edit, actor
+    /// change, timestamp tamper, previous-hash substitution — breaks verification
+    /// at the first bad event.
     /// </summary>
     [HttpGet("verify")]
-    public async Task<ActionResult> VerifyChain([FromQuery] string? tenantId)
+    public async Task<ActionResult<ChainVerificationResult>> VerifyChain(
+        [FromQuery] Guid engagementId,
+        [FromQuery] string? tenantId
+    )
     {
         var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
         if (isForbidden)
@@ -86,11 +93,16 @@ public class AuditEventsController : ControllerBase
 
         if (effectiveTenantId == Guid.Empty)
         {
-            return BadRequest(new { message = "Tenant ID could not be resolved." });
+            return BadRequest(new { message = "Tenant ID could not be resolved" });
         }
 
-        var events = (await _eventService.GetEventsByTenantAsync(effectiveTenantId)).ToList();
-        return Ok(new { isVerified = true, count = events.Count });
+        if (engagementId == Guid.Empty)
+        {
+            return BadRequest(new { message = "engagementId is required" });
+        }
+
+        var result = await _eventService.VerifyChainAsync(effectiveTenantId, engagementId);
+        return Ok(result);
     }
 
     /// <summary>
@@ -155,7 +167,6 @@ public class AuditEventsController : ControllerBase
         {
             var jwtTenantGuid = StringToGuid(claim.Value.Trim());
 
-            // Check if query parameter conflicts with JWT claim
             if (!string.IsNullOrWhiteSpace(tenantIdQuery))
             {
                 var queryTenantGuid = StringToGuid(tenantIdQuery.Trim());
@@ -165,7 +176,6 @@ public class AuditEventsController : ControllerBase
                 }
             }
 
-            // Check if header conflicts with JWT claim
             if (Request?.Headers.TryGetValue("X-Tenant-Id", out var tenantHeader) == true && !string.IsNullOrWhiteSpace(tenantHeader.ToString()))
             {
                 var headerTenantGuid = StringToGuid(tenantHeader.ToString().Trim());
@@ -175,7 +185,6 @@ public class AuditEventsController : ControllerBase
                 }
             }
 
-            // Check if explicit fallback (e.g. from body payload) conflicts with JWT claim
             foreach (var fallback in fallbackTenantIds)
             {
                 if (fallback.HasValue && fallback.Value != Guid.Empty && fallback.Value != jwtTenantGuid)

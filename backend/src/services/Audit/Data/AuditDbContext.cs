@@ -62,12 +62,20 @@ public class AuditDbContext : DbContext
                 .HasColumnName("hash")
                 .HasMaxLength(64);
 
+            entity.Property(e => e.PreviousHash)
+                .HasColumnName("previous_hash")
+                .HasMaxLength(64);
+
             // Performance Indexes
             entity.HasIndex(e => e.SequenceNumber, "idx_sequence_number").IsUnique();
             entity.HasIndex(e => e.EngagementId, "idx_engagement_id");
             entity.HasIndex(e => e.TenantId, "idx_tenant_id");
             entity.HasIndex(e => new { e.TenantId, e.EngagementId }, "idx_tenant_engagement");
             entity.HasIndex(e => e.Type, "idx_type");
+
+            // Chain verification reads the tenant's events in sequence order;
+            // this composite covers both the filter and the sort.
+            entity.HasIndex(e => new { e.TenantId, e.SequenceNumber }, "idx_tenant_sequence");
         });
     }
 }

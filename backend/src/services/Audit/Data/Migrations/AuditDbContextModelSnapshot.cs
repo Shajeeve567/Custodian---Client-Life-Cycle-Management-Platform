@@ -51,6 +51,11 @@ namespace Audit.Data.Migrations
                         .HasColumnType("json")
                         .HasColumnName("payload");
 
+                    b.Property<string>("PreviousHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("previous_hash");
+
                     b.Property<long>("SequenceNumber")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bigint")
@@ -77,9 +82,14 @@ namespace Audit.Data.Migrations
 
                     b.HasIndex(new[] { "EngagementId" }, "idx_engagement_id");
 
+                    b.HasIndex(new[] { "SequenceNumber" }, "idx_sequence_number")
+                        .IsUnique();
+
                     b.HasIndex(new[] { "TenantId", "EngagementId" }, "idx_tenant_engagement");
 
                     b.HasIndex(new[] { "TenantId" }, "idx_tenant_id");
+
+                    b.HasIndex(new[] { "TenantId", "SequenceNumber" }, "idx_tenant_sequence");
 
                     b.HasIndex(new[] { "Type" }, "idx_type");
 

@@ -36,4 +36,14 @@ public class AuditEventResponse
     public string Payload { get; set; } = "{}";
     public long SequenceNumber { get; set; }
     public string? Hash { get; set; }
+    public string? PreviousHash { get; set; }
+}
+
+public class ChainVerificationResult
+{
+    public Guid? EngagementId { get; set; }
+    public bool IsVerified { get; set; }
+    public int Count { get; set; }
+    public Guid? BrokenAtEventId { get; set; }
+    public string? Reason { get; set; }
 }
