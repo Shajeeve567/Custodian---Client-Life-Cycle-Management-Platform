@@ -721,4 +721,72 @@ public class ClientPortalServiceTests
         Assert.NotNull(dashboard.PrimaryNextAction);
         Assert.Equal(ClientActionSourceType.Document, dashboard.PrimaryNextAction.SourceType);
     }
+
+    [Fact]
+    public async Task GetDashboard_CancelledActions_ExcludedFromPendingAndDoNotBlockStageProgress()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = clientId,
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.DocumentCollection // Stage 2
+        });
+
+        // Stage 1 action was cancelled (e.g. requirement waived)
+        var cancelledActionStage1 = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Waived Step",
+            StageNumber = 1,
+            Status = ClientActionStatus.Cancelled,
+            IsInternalOnly = false,
+            AssignedToRole = "Client"
+        };
+
+        // Stage 2 active pending action
+        var pendingActionStage2 = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Incorporation Certificate",
+            StageNumber = 2,
+            Status = ClientActionStatus.Pending,
+            SourceType = ClientActionSourceType.Document,
+            IsInternalOnly = false,
+            AssignedToRole = "Client"
+        };
+
+        db.ClientActions.AddRange(cancelledActionStage1, pendingActionStage2);
+        await db.SaveChangesAsync();
+
+        var service = new ClientPortalService(db);
+
+        // Act
+        var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+
+        // Assert
+        Assert.NotNull(dashboard);
+        // Stage 1 cancelled action does NOT drag stage back to 1
+        Assert.Equal(2, dashboard.CurrentStageNumber);
+
+        // Primary next action is the stage 2 pending action, not the cancelled stage 1 action
+        Assert.NotNull(dashboard.PrimaryNextAction);
+        Assert.Equal(pendingActionStage2.ActionId, dashboard.PrimaryNextAction.ActionId);
+        Assert.Equal(ClientActionStatus.Pending, dashboard.PrimaryNextAction.Status);
+
+        // Cancelled action is not in pending actions either
+        Assert.DoesNotContain(dashboard.PendingActions, a => a.ActionId == cancelledActionStage1.ActionId);
+    }
 }

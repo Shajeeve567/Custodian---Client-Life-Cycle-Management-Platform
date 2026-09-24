@@ -1742,4 +1742,73 @@ public class ClientActionServiceTests
             It.IsAny<object>()),
             Times.Exactly(2));
     }
+
+    [Fact]
+    public async Task GetActionsByEngagementAsync_ClientSafeDto_StrictlyStripsSensitiveFieldsAndExcludesInternalActions()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var reqId = Guid.NewGuid();
+        var docId = Guid.NewGuid();
+        var condId = Guid.NewGuid();
+        var meetId = Guid.NewGuid();
+
+        var internalAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Internal Staff Review",
+            IsInternalOnly = true,
+            Status = ClientActionStatus.Pending
+        };
+
+        var clientAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Submit Proof of Identity",
+            IsInternalOnly = false,
+            Status = ClientActionStatus.Pending,
+            SourceType = ClientActionSourceType.Document,
+            SourceMetadata = "{\"documentId\":\"123\",\"complianceStatus\":\"Compliant\",\"staffNotes\":\"Confidential\"}",
+            AssignedToRole = "Client",
+            CompletedByActor = "StaffAuditor",
+            ActivatedAt = DateTime.UtcNow,
+            LinkedRequirementId = reqId,
+            LinkedDocumentId = docId,
+            LinkedConditionId = condId,
+            LinkedMeetingId = meetId
+        };
+
+        db.ClientActions.AddRange(internalAction, clientAction);
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act: Request client view (isClientView: true)
+        var clientViewActions = (await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: true)).ToList();
+
+        // Assert: Internal actions are completely excluded
+        Assert.Single(clientViewActions);
+        var dto = clientViewActions[0];
+        Assert.Equal(clientAction.ActionId, dto.ActionId);
+
+        // Assert: Sensitive staff/internal metadata fields are stripped
+        Assert.Null(dto.SourceMetadata);
+        Assert.Null(dto.AssignedToRole);
+        Assert.Null(dto.CompletedByActor);
+        Assert.Null(dto.ActivatedAt);
+        Assert.Null(dto.LinkedDocumentId);
+        Assert.Null(dto.LinkedConditionId);
+        Assert.Null(dto.LinkedMeetingId);
+
+        // Assert: Client-relevant fields are preserved
+        Assert.Equal(ClientActionSourceType.Document, dto.SourceType);
+        Assert.Equal(reqId, dto.LinkedRequirementId);
+        Assert.False(dto.IsInternalOnly);
+    }
 }

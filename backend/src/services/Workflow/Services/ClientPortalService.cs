@@ -151,8 +151,8 @@ public class ClientPortalService : IClientPortalService
             await _dbContext.SaveChangesAsync();
         }
 
-        // Client-facing actions: strictly exclude internal-only tasks
-        var clientVisibleActions = allActions.Where(a => !a.IsInternalOnly).ToList();
+        // Client-facing actions: strictly exclude internal-only tasks and cancelled actions from active progress
+        var clientVisibleActions = allActions.Where(a => !a.IsInternalOnly && a.Status != ClientActionStatus.Cancelled).ToList();
 
         // 1. Calculate Progress %: Total tasks completed vs total tasks
         var totalTasksCount = clientVisibleActions.Count;
@@ -241,9 +241,9 @@ public class ClientPortalService : IClientPortalService
         // Canonical persisted stage on the engagement model (0-indexed: Onboarding=0 -> Stage 1, DocumentCollection=1 -> Stage 2, etc.)
         var canonicalStage = Math.Clamp((int)engagement.Stage + 1, 1, 5);
 
-        // Find the earliest stage that has unfinished actions (Pending, Uploaded, or Rejected)
+        // Find the earliest stage that has unfinished actions (Pending, Uploaded, or Rejected; exclude Cancelled)
         var unfinishedStages = actions
-            .Where(a => a.Status != ClientActionStatus.Completed)
+            .Where(a => a.Status != ClientActionStatus.Completed && a.Status != ClientActionStatus.Cancelled)
             .Select(a => a.StageNumber)
             .ToList();
 
