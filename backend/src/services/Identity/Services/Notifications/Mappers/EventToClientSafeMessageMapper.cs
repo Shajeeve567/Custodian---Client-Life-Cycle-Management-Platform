@@ -90,7 +90,7 @@ public sealed class EventToClientSafeMessageMapper : IEventToMessageMapper
             _ => new ClientSafeMessageResult
             {
                 Subject = "Update on your Custodian Engagement",
-                Message = ExtractStringProperty(envelope.Payload, "clientMessage", "message") 
+                Message = ExtractStringProperty(envelope.Payload, "clientMessage", "message")
                           ?? "An update was made to your onboarding engagement. Please visit your client portal for details.",
                 ClientId = clientId,
                 ClientEmail = clientEmail
@@ -98,21 +98,39 @@ public sealed class EventToClientSafeMessageMapper : IEventToMessageMapper
         };
     }
 
-    private static Guid ExtractClientId(JsonElement payload)
+    /// <summary>
+    /// Produces the payload elements to search for fields, in preference order.
+    /// Engagement lifecycle events are wrapped in EngagementEventPayload
+    /// ({EngagementId, Actor, Data}), so the real fields live inside Data.
+    /// Fall back to the top-level payload for events that don't wrap.
+    /// </summary>
+    private static IEnumerable<JsonElement> CandidatePayloads(JsonElement payload)
     {
         if (payload.ValueKind != JsonValueKind.Object)
         {
-            return Guid.Empty;
+            yield break;
         }
 
-        if (payload.TryGetProperty("clientId", out var prop) && prop.TryGetGuid(out var id))
+        if (payload.TryGetProperty("Data", out var data) && data.ValueKind == JsonValueKind.Object)
         {
-            return id;
+            yield return data;
         }
 
-        if (payload.TryGetProperty("ClientId", out var prop2) && prop2.TryGetGuid(out var id2))
+        yield return payload;
+    }
+
+    private static Guid ExtractClientId(JsonElement payload)
+    {
+        foreach (var candidate in CandidatePayloads(payload))
         {
-            return id2;
+            if (candidate.TryGetProperty("clientId", out var prop) && prop.TryGetGuid(out var id))
+            {
+                return id;
+            }
+            if (candidate.TryGetProperty("ClientId", out var prop2) && prop2.TryGetGuid(out var id2))
+            {
+                return id2;
+            }
         }
 
         return Guid.Empty;
@@ -120,19 +138,17 @@ public sealed class EventToClientSafeMessageMapper : IEventToMessageMapper
 
     private static string? ExtractStringProperty(JsonElement payload, params string[] propertyNames)
     {
-        if (payload.ValueKind != JsonValueKind.Object)
+        foreach (var candidate in CandidatePayloads(payload))
         {
-            return null;
-        }
-
-        foreach (var name in propertyNames)
-        {
-            if (payload.TryGetProperty(name, out var prop) && prop.ValueKind == JsonValueKind.String)
+            foreach (var name in propertyNames)
             {
-                var val = prop.GetString();
-                if (!string.IsNullOrWhiteSpace(val))
+                if (candidate.TryGetProperty(name, out var prop) && prop.ValueKind == JsonValueKind.String)
                 {
-                    return val.Trim();
+                    var val = prop.GetString();
+                    if (!string.IsNullOrWhiteSpace(val))
+                    {
+                        return val.Trim();
+                    }
                 }
             }
         }
@@ -142,7 +158,6 @@ public sealed class EventToClientSafeMessageMapper : IEventToMessageMapper
 
     private static string SanitizeReason(string reason)
     {
-        // Strip any technical stack traces, SQL errors, or internal exception strings
         if (reason.Contains("Exception", StringComparison.OrdinalIgnoreCase) ||
             reason.Contains("Sql", StringComparison.OrdinalIgnoreCase) ||
             reason.Contains("Stack", StringComparison.OrdinalIgnoreCase))

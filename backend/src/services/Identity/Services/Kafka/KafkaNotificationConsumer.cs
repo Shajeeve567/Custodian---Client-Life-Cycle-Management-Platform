@@ -2,6 +2,7 @@ using System.Text.Json;
 using Confluent.Kafka;
 using Custodian.Identity.Services.Notifications;
 using Custodian.Shared.Messaging;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -39,8 +40,8 @@ public sealed class KafkaNotificationConsumer : BackgroundService
         {
             BootstrapServers = _kafkaOptions.BootstrapServers,
             GroupId = _kafkaOptions.GroupId,
-            AutoOffsetReset = Enum.TryParse<AutoOffsetReset>(_kafkaOptions.AutoOffsetReset, true, out var reset) 
-                ? reset 
+            AutoOffsetReset = Enum.TryParse<AutoOffsetReset>(_kafkaOptions.AutoOffsetReset, true, out var reset)
+                ? reset
                 : AutoOffsetReset.Earliest,
             EnableAutoCommit = false
         };
@@ -108,13 +109,15 @@ public sealed class KafkaNotificationConsumer : BackgroundService
                 return;
             }
 
+            _logger.LogInformation("Consumed envelope: type={EventType} tenant={TenantId} eventId={EventId}",
+                envelope.EventType, envelope.TenantId, envelope.EventId);
+
             using var scope = _scopeFactory.CreateScope();
             var dispatcher = scope.ServiceProvider.GetRequiredService<INotificationDispatcher>();
             var mapper = scope.ServiceProvider.GetRequiredService<Custodian.Identity.Services.Notifications.Mappers.IEventToMessageMapper>();
 
             var mapped = mapper.MapToClientSafeMessage(envelope);
-            var tenantId = Guid.TryParse(envelope.TenantId, out var parsedTenant) ? parsedTenant : Guid.Empty;
-
+            var tenantId = StringToGuid(envelope.TenantId);
             var context = new NotificationContext
             {
                 EventId = envelope.EventId,
@@ -127,11 +130,25 @@ public sealed class KafkaNotificationConsumer : BackgroundService
                 Channels = new[] { NotificationChannel.InAppPortal, NotificationChannel.Email }
             };
 
+            _logger.LogInformation("Dispatching: subject={Subject} clientId={ClientId} email={Email}",
+                mapped.Subject, mapped.ClientId, mapped.ClientEmail);
+
             await dispatcher.DispatchAsync(context, ct);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to process Kafka envelope message");
         }
+    }
+
+    private static Guid StringToGuid(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return Guid.Empty;
+        if (Guid.TryParse(value, out var parsed)) return parsed;
+        using var sha256 = System.Security.Cryptography.SHA256.Create();
+        var hash = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(value));
+        var bytes = new byte[16];
+        Array.Copy(hash, bytes, 16);
+        return new Guid(bytes);
     }
 }

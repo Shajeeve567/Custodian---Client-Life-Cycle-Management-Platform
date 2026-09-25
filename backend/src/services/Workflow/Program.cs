@@ -20,6 +20,12 @@ builder.Services.AddTenantContext();
 builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 
+// CSTD-33: SLA thresholds are config driven
+// No runtime editing
+builder.Services.Configure<Custodian.Workflow.Configuration.SlaOptions>(
+    builder.Configuration.GetSection(Custodian.Workflow.Configuration.SlaOptions.SectionName)
+);
+
 // Configure EF Core with MySQL
 var connectionString = builder.Configuration.GetConnectionString("AzureMySqlConnection");
 if (string.IsNullOrWhiteSpace(connectionString) || connectionString.Contains("YOUR_SECRET_STRING"))
@@ -38,6 +44,12 @@ builder.Services.AddScoped<IEngagementRepository, EngagementRepository>();
 builder.Services.AddScoped<IClientActionService, ClientActionService>();
 builder.Services.AddScoped<IClientPortalService, ClientPortalService>();
 builder.Services.AddScoped<IRequirementService, RequirementService>();
+
+// CSTD-33
+builder.Services.AddScoped<IStallDetectionService, StallDetectionService>();
+builder.Services.AddScoped<IStallActionsProvider, StallActionsProvider>();
+builder.Services.AddSingleton<IStallEventDeduplicator, StallEventDeduplicator>();
+
 
 // Audit transport is feature-flagged: "Http" (default) keeps the existing
 // synchronous HTTP call to the Audit service; "Kafka" switches to publishing
@@ -123,3 +135,5 @@ app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Workflow S
 app.MapControllers();
 
 app.Run();
+
+public partial class Program { }
