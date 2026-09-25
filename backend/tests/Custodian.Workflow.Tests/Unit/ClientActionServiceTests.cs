@@ -1811,4 +1811,213 @@ public class ClientActionServiceTests
         Assert.Equal(reqId, dto.LinkedRequirementId);
         Assert.False(dto.IsInternalOnly);
     }
+
+    [Fact]
+    public async Task CompletedActions_AreNeverDeleted_AndAppearInEngagementHistory()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+
+        var actionId = Guid.NewGuid();
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Sign Client Engagement Agreement",
+            StageNumber = 1,
+            Status = ClientActionStatus.Pending,
+            IsInternalOnly = false
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act 1: Complete the action
+        var completeResult = await service.CompleteActionAsync(engagementId, actionId, tenantId, new CompleteClientActionDto
+        {
+            CompletedByActor = "client-signer"
+        });
+        Assert.NotNull(completeResult);
+        Assert.Equal(ClientActionStatus.Completed, completeResult.Status);
+
+        // Act 2: Ensure lifecycle actions for new stages (simulating ongoing engagement advancement)
+        await service.EnsureLifecycleActionsAsync(engagementId, tenantId);
+
+        // Act 3: Query history in staff view and client view
+        var staffView = (await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: false)).ToList();
+        var clientView = (await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: true)).ToList();
+
+        // Assert: Completed action is retained in both history views
+        var staffAction = staffView.FirstOrDefault(a => a.ActionId == actionId);
+        var clientAction = clientView.FirstOrDefault(a => a.ActionId == actionId);
+
+        Assert.NotNull(staffAction);
+        Assert.Equal(ClientActionStatus.Completed, staffAction.Status);
+        Assert.NotNull(staffAction.CompletedAt);
+
+        Assert.NotNull(clientAction);
+        Assert.Equal(ClientActionStatus.Completed, clientAction.Status);
+        Assert.NotNull(clientAction.CompletedAt);
+
+        // Assert: Still in the database
+        var dbRecord = await db.ClientActions.FindAsync(actionId);
+        Assert.NotNull(dbRecord);
+        Assert.Equal(ClientActionStatus.Completed, dbRecord.Status);
+    }
+
+    [Fact]
+    public async Task CancelledAction_IsStrictlyTerminal_RejectsAllSubsequentTransitions()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Waived Physical Meeting",
+            Status = ClientActionStatus.Cancelled,
+            SourceType = ClientActionSourceType.Meeting
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act & Assert 1: CompleteActionAsync rejects
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CompleteActionAsync(engagementId, actionId, tenantId, new CompleteClientActionDto
+            {
+                CompletedByActor = "Staff"
+            }));
+
+        // Act & Assert 2: UploadEvidenceAsync rejects
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UploadEvidenceAsync(engagementId, actionId, tenantId, new UploadActionEvidenceDto
+            {
+                DocumentId = Guid.NewGuid(),
+                ComplianceStatus = "Compliant",
+                UploaderActor = "client-user"
+            }));
+
+        // Act & Assert 3: ReviewActionAsync rejects
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ReviewActionAsync(engagementId, actionId, tenantId, new ReviewActionDto
+            {
+                Status = ClientActionStatus.Completed,
+                ReviewerActor = "Staff"
+            }));
+
+        // Act & Assert 4: ApplyVerificationOutcomeAsync rejects
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ApplyVerificationOutcomeAsync(engagementId, actionId, tenantId, new ApplyActionVerificationDto
+            {
+                VerificationStatus = DocumentVerificationStatus.Verified,
+                VerifiedBy = "Staff"
+            }));
+    }
+
+    [Fact]
+    public async Task AuditPublisher_EmitsClientActionStatusChanged_ExactlyOncePerRealChange_AndNeverOnNoOp()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Submit Audited Accounts",
+            Status = ClientActionStatus.Pending,
+            SourceType = ClientActionSourceType.Document
+        });
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var gateEvaluator = new Mock<IGateEvaluator>();
+        var service = new ClientActionService(db, gateEvaluator.Object, mockAudit.Object);
+
+        // Act 1: Pending -> Uploaded (Real transition 1)
+        await service.UploadEvidenceAsync(engagementId, actionId, tenantId, new UploadActionEvidenceDto
+        {
+            DocumentId = Guid.NewGuid(),
+            ComplianceStatus = "Compliant",
+            UploaderActor = "client-1"
+        });
+
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "client-1",
+            "ClientActionStatusChanged",
+            It.IsAny<object>()),
+            Times.Once);
+
+        // Act 2: Uploaded -> Completed (Real transition 2)
+        await service.ReviewActionAsync(engagementId, actionId, tenantId, new ReviewActionDto
+        {
+            Status = ClientActionStatus.Completed,
+            ReviewerActor = "StaffReviewer",
+            VerificationReason = "Approved by credit team"
+        });
+
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "StaffReviewer",
+            "ClientActionStatusChanged",
+            It.IsAny<object>()),
+            Times.Once);
+
+        // Act 3: Completed -> Completed (Same-to-same no-op)
+        await service.ReviewActionAsync(engagementId, actionId, tenantId, new ReviewActionDto
+        {
+            Status = ClientActionStatus.Completed,
+            ReviewerActor = "StaffReviewer",
+            VerificationReason = "Duplicate approval click"
+        });
+
+        // Assert: No new event was emitted for the no-op
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            It.IsAny<string>(),
+            "ClientActionStatusChanged",
+            It.IsAny<object>()),
+            Times.Exactly(2));
+    }
 }
