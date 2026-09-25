@@ -99,7 +99,22 @@ export interface UpdateEngagementStageRequest {
     stage: EngagementStage;
 }
 
-export type ActionType = 'KycDocument' | 'SignAgreement' | 'ProofOfAddress' | 'CustomTask' | 'DocumentUpload';
+export type ActionType =
+    | 'UploadDocument'
+    | 'ReviewDocument'
+    | 'SignDocument'
+    | 'CompleteForm'
+    | 'VerifyIdentity'
+    | 'ScheduleCall'
+    | 'ProvideInformation'
+    | 'AcknowledgeNotice'
+    | 'CustomTask'
+    | 'KycDocument'
+    | 'SignAgreement'
+    | 'ProofOfAddress'
+    | 'DocumentUpload';
+
+export type ActionStatus = 'Pending' | 'Uploaded' | 'Completed' | 'Rejected' | 'Cancelled';
 
 export interface ClientAction {
     actionId: string;
@@ -108,16 +123,22 @@ export interface ClientAction {
     title: string;
     description: string;
     type: ActionType | string;
-    status?: string;
+    status?: ActionStatus | string;
+    sourceType?: string;
     stageNumber?: number;
     deadlineUtc?: string | null;
     assignedRole?: UserRole;
     isInternalOnly: boolean;
     isCompleted?: boolean;
     createdAt: string;
+    updatedAt?: string;
+    activatedAt?: string | null;
     completedAt?: string | null;
     completedByActor?: string | null;
     linkedRequirementId?: string | null;
+    linkedDocumentId?: string | null;
+    linkedConditionId?: string | null;
+    linkedMeetingId?: string | null;
 }
 
 export interface CreateClientActionRequest {
@@ -134,6 +155,10 @@ export interface CreateClientActionRequest {
     // Backend's CreateClientActionDto.Source is [Required]; omitting it fails ModelState
     // validation (400) before the action is ever persisted.
     source: string;
+    sourceType?: string;
+    linkedDocumentId?: string;
+    linkedConditionId?: string;
+    linkedMeetingId?: string;
 }
 
 export interface ClientSafeAction {
@@ -142,6 +167,7 @@ export interface ClientSafeAction {
     description?: string | null;
     type: string;
     status: string;
+    sourceType?: string;
     stageNumber: number;
     deadlineUtc?: string | null;
     isOverdue: boolean;

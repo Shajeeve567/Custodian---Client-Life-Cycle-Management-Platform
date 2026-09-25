@@ -44,14 +44,23 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
     // calls PUT /requirements/{id}/submit), never the generic complete/upload flow — the
     // presence of linkedRequirementId is the single source of truth for this, not the action's
     // Type string, since the backend enforces the same distinction server-side.
-    const isRequirementAction = (action: ClientSafeAction): boolean => Boolean(action.linkedRequirementId);
+    const isRequirementAction = (action: ClientSafeAction): boolean =>
+        Boolean(action.linkedRequirementId) || action.sourceType === 'Requirement';
 
     const isEvidenceAction = (action: ClientSafeAction): boolean => {
+        if (action.sourceType === 'Document') return true;
         const type = (action.type || '').toLowerCase();
         // Every ActionType that requires an actual uploaded file, matched exactly first —
         // 'signagreement' (Signed Master Services Agreement) was previously missed here,
         // so that task fell through to the generic "Mark Done" bypass with no upload at all.
-        if (type === 'documentupload' || type === 'kycdocument' || type === 'signagreement' || type === 'proofofaddress') {
+        if (
+            type === 'documentupload' ||
+            type === 'uploaddocument' ||
+            type === 'kycdocument' ||
+            type === 'signagreement' ||
+            type === 'signdocument' ||
+            type === 'proofofaddress'
+        ) {
             return true;
         }
         const title = action.title.toLowerCase();
@@ -402,6 +411,11 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                             <span className="text-xs font-semibold px-2 py-0.5 rounded bg-white text-slate-700 border border-slate-200">
                                 {primaryNextAction.type}
                             </span>
+                            {primaryNextAction.sourceType && (
+                                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                    {primaryNextAction.sourceType}
+                                </span>
+                            )}
                             {primaryNextAction.verificationStatus && (
                                 <span
                                     className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${
@@ -572,6 +586,11 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white text-slate-600 border border-slate-200">
                                              Stage {action.stageNumber}
                                         </span>
+                                        {action.sourceType && (
+                                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                                {action.sourceType}
+                                            </span>
+                                        )}
                                         {action.verificationStatus && (
                                             <span
                                                 className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${

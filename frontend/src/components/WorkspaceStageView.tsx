@@ -857,13 +857,16 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                     const linkedDoc = findLinkedDoc(act);
                                     const isActionVerified = (act as any).verificationStatus === 'Verified' || linkedDoc?.verificationStatus?.toUpperCase() === 'VERIFIED';
                                     const isActionRejected = (act as any).verificationStatus === 'Rejected' || linkedDoc?.verificationStatus?.toUpperCase() === 'REJECTED';
+                                    const isActionCancelled = act.status === 'Cancelled';
                                     const isDocAction = act.type === 'DocumentUpload' || act.type === 'KycDocument' || act.type === 'SignAgreement' || act.title.toLowerCase().includes('document') || act.title.toLowerCase().includes('kyc') || act.title.toLowerCase().includes('agreement');
 
                                     return (
                                         <div
                                             key={act.actionId}
                                             className={`p-3.5 rounded-xl border transition space-y-2.5 ${
-                                                isActionVerified
+                                                isActionCancelled
+                                                    ? 'bg-slate-100/60 border-slate-200 opacity-60'
+                                                    : isActionVerified
                                                     ? 'bg-emerald-50/40 border-emerald-200/80'
                                                     : isActionRejected
                                                     ? 'bg-rose-50/40 border-rose-200/80'
@@ -877,18 +880,25 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                         <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-white text-indigo-700 border border-indigo-100 shadow-xs">
                                                             {act.type}
                                                         </span>
+                                                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-50/80 text-indigo-600 border border-indigo-100">
+                                                            {act.sourceType || 'Manual'}
+                                                        </span>
                                                         {isDocAction && (
                                                             <span className="text-[10px] font-medium text-slate-400">• Evidence Action</span>
                                                         )}
                                                     </div>
-                                                    <span className="text-xs font-bold text-slate-900 block leading-tight">
+                                                    <span className={`text-xs font-bold block leading-tight ${isActionCancelled ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
                                                         {act.title}
                                                     </span>
                                                 </div>
 
                                                 {/* Verification or Completion Status Badge */}
                                                 <div>
-                                                    {isActionVerified ? (
+                                                    {isActionCancelled ? (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full border border-slate-300">
+                                                            🚫 No longer required
+                                                        </span>
+                                                    ) : isActionVerified ? (
                                                         <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/90 px-2 py-0.5 rounded-full border border-emerald-300">
                                                             <CheckCircle2 className="w-3 h-3" />
                                                             Verified
@@ -898,7 +908,12 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                             <X className="w-3 h-3" />
                                                             Rejected
                                                         </span>
-                                                    ) : act.isCompleted ? (
+                                                    ) : act.status === 'Uploaded' ? (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-200">
+                                                            <Clock className="w-3 h-3" />
+                                                            Uploaded
+                                                        </span>
+                                                    ) : act.isCompleted || act.status === 'Completed' ? (
                                                         <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
                                                             <Check className="w-3 h-3" />
                                                             Done
@@ -972,7 +987,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                     )}
 
                                                     {/* Staff Verification & Rejection Controls */}
-                                                    {!isActionVerified && (
+                                                    {!isActionVerified && !isActionCancelled && (
                                                         <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
                                                             <button
                                                                 type="button"
@@ -1007,7 +1022,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                         </div>
                                                     )}
                                                 </div>
-                                            ) : isDocAction ? (
+                                            ) : isDocAction && !isActionCancelled ? (
                                                 <div className="p-2 rounded-lg bg-amber-50/60 border border-amber-200/60 text-[11px] text-amber-800 flex items-center gap-1.5">
                                                     <Clock className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
                                                     <span>Awaiting client PDF upload in Client Portal</span>
@@ -1015,7 +1030,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                             ) : null}
 
                                             {/* General Task: Mark Complete button */}
-                                            {!act.isCompleted && act.status !== 'Completed' && !linkedDoc && (
+                                            {!act.isCompleted && act.status !== 'Completed' && !isActionCancelled && !linkedDoc && (
                                                 <button
                                                     onClick={() => handleCompleteAction(act.actionId)}
                                                     disabled={completingActionId === act.actionId}
