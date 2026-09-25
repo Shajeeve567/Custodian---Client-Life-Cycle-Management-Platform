@@ -26,7 +26,11 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
         "RequirementRequested",
         "RequirementSubmitted",
         // CSTD-21 (Client Action Model)
-        "ClientActionStatusChanged"
+        "ClientActionStatusChanged",
+        // CSTD-24 (Engagement Condition Management)
+        "ConditionAttached",
+        "ConditionUpdated",
+        "ConditionDeactivated"
     };
 
     private readonly KafkaOptions _kafkaOptions;

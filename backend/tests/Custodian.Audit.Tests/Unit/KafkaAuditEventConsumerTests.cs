@@ -104,6 +104,37 @@ public class KafkaAuditEventConsumerTests
         Assert.Equal(eventType, stored.Type);
     }
 
+    [Theory]
+    [InlineData("ConditionAttached")]
+    [InlineData("ConditionUpdated")]
+    [InlineData("ConditionDeactivated")]
+    public async Task ProcessMessageAsync_ConditionEvent_RecordsAuditEvent(string eventType)
+    {
+        // Arrange: CSTD-24 (Engagement Condition Management) events
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+
+        var json = BuildEnvelopeJson(eventType, engagementId, "staff-actor", new
+        {
+            conditionId = Guid.NewGuid(),
+            type = "Approval",
+            title = "Scope approval"
+        });
+
+        // Act
+        await consumer.ProcessMessageAsync(json);
+
+        // Assert
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var stored = await db.Events.SingleOrDefaultAsync(e => e.EngagementId == engagementId);
+
+        Assert.NotNull(stored);
+        Assert.Equal(eventType, stored.Type);
+        Assert.Equal("staff-actor", stored.Actor);
+    }
+
     [Fact]
     public async Task ProcessMessageAsync_UnhandledEventType_IsIgnored()
     {
