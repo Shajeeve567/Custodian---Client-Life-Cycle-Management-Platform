@@ -3,6 +3,7 @@ using Custodian.Workflow.Models;
 using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
 using Custodian.Workflow.Services.Gates;
+using Custodian.Workflow.Services.NextAction;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -17,17 +18,20 @@ public class EngagementsController : ControllerBase
     private readonly IAuditPublisher _auditPublisher;
     private readonly IGateEvaluator _gateEvaluator;
     private readonly IClientActionService? _actionService;
+    private readonly INextActionService? _nextActionService;
 
     public EngagementsController(
         IEngagementRepository repository,
         IAuditPublisher auditPublisher,
         IGateEvaluator gateEvaluator,
-        IClientActionService? actionService = null)
+        IClientActionService? actionService = null,
+        INextActionService? nextActionService = null)
     {
         _repository = repository;
         _auditPublisher = auditPublisher;
         _gateEvaluator = gateEvaluator;
         _actionService = actionService;
+        _nextActionService = nextActionService;
     }
 
     [HttpPost]
@@ -103,6 +107,48 @@ public class EngagementsController : ControllerBase
         }
 
         return Ok(MapToResponse(engagement));
+    }
+
+    /// <summary>
+    /// CSTD-19 (19-N2): Deterministically evaluates and returns the highest-priority next action
+    /// and ordered blockers for staff/owner workspace view.
+    /// </summary>
+    [HttpGet("{id}/next-action")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<NextActionResult>> GetNextAction(
+        Guid id,
+        [FromQuery] string? tenantId,
+        CancellationToken ct = default)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest("tenantId parameter or JWT tenant claim is required for tenant isolation.");
+        }
+
+        var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
+        if (engagement == null)
+        {
+            return NotFound(new { message = $"Engagement '{id}' was not found in tenant '{effectiveTenantId}'." });
+        }
+
+        if (_nextActionService == null)
+        {
+            return StatusCode(500, new { message = "Next action evaluation service is not configured." });
+        }
+
+        var result = await _nextActionService.GetNextActionAsync(id, effectiveTenantId, NextActionView.Staff, ct);
+        if (result == null)
+        {
+            return NotFound(new { message = $"Next action could not be evaluated for engagement '{id}'." });
+        }
+
+        return Ok(result);
     }
 
     [HttpGet]
