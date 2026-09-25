@@ -4,6 +4,9 @@ using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
 using Custodian.Workflow.Services.Gates;
 using Custodian.Workflow.Services.Kafka;
+using Custodian.Workflow.Services.NextAction;
+using Custodian.Workflow.Services.Sla;
+using Custodian.Workflow.Services.Stall;
 using Custodian.Shared.Http;
 using Custodian.Shared.Auth;
 using Custodian.Shared.Tenancy;
@@ -39,6 +42,9 @@ builder.Services.AddScoped<IClientActionService, ClientActionService>();
 builder.Services.AddScoped<IClientPortalService, ClientPortalService>();
 builder.Services.AddScoped<IRequirementService, RequirementService>();
 builder.Services.AddScoped<IConditionService, ConditionService>();
+builder.Services.AddSingleton<ISlaCalculator, DefaultSlaCalculator>();
+builder.Services.AddScoped<IStallService, DefaultStallService>();
+builder.Services.AddScoped<INextActionService, NextActionService>();
 
 // Audit transport is feature-flagged: "Http" (default) keeps the existing
 // synchronous HTTP call to the Audit service; "Kafka" switches to publishing
