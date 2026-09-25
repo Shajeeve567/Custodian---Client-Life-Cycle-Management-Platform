@@ -1,8 +1,15 @@
 using Custodian.Shared.Contracts;
 using Custodian.Workflow.Data;
+using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Gates;
+using Custodian.Workflow.Services.NextAction;
+using Custodian.Workflow.Services.Sla;
+using Custodian.Workflow.Services.Stall;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Xunit;
 
 namespace Custodian.Workflow.Tests.Unit;
@@ -16,6 +23,39 @@ public class ClientPortalServiceTests
             .Options;
 
         return new WorkflowDbContext(options);
+    }
+
+    private static IClientPortalService CreatePortalService(
+        WorkflowDbContext db,
+        INextActionService? nextActionService = null)
+    {
+        if (nextActionService == null)
+        {
+            var mockConditionService = new Mock<IConditionService>();
+            mockConditionService.Setup(c => c.GetActiveConditionsAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<EngagementCondition>());
+
+            var mockDocClient = new Mock<IDocumentComplianceClient>();
+            mockDocClient.Setup(d => d.GetDocumentsAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<DocumentSummaryDto>());
+
+            var slaCalc = new DefaultSlaCalculator();
+            var mockGateEvaluator = new Mock<IGateEvaluator>();
+            var mockStallService = new Mock<IStallService>();
+            mockStallService.Setup(s => s.GetStallStatusAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(false);
+
+            nextActionService = new NextActionService(
+                db,
+                mockConditionService.Object,
+                mockDocClient.Object,
+                slaCalc,
+                mockGateEvaluator.Object,
+                mockStallService.Object,
+                NullLogger<NextActionService>.Instance);
+        }
+
+        return new ClientPortalService(db, nextActionService);
     }
 
     [Fact]
@@ -33,7 +73,8 @@ public class ClientPortalServiceTests
             TenantId = tenantId,
             ClientId = clientId,
             StaffId = "staff-1",
-            Status = EngagementStatus.Started
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
         });
 
         // Add 4 client tasks (2 completed, 2 pending) + 1 internal task (which shouldn't count in client progress)
@@ -46,7 +87,7 @@ public class ClientPortalServiceTests
         );
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -73,7 +114,8 @@ public class ClientPortalServiceTests
             TenantId = tenantId,
             ClientId = clientId,
             StaffId = "staff-1",
-            Status = EngagementStatus.Started
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.DocumentCollection
         });
 
         // Stage 1 completed
@@ -130,7 +172,7 @@ public class ClientPortalServiceTests
         );
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -159,7 +201,8 @@ public class ClientPortalServiceTests
             TenantId = tenantId,
             ClientId = clientId,
             StaffId = "staff-1",
-            Status = EngagementStatus.Started
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
         });
 
         // Action was uploaded by client, awaiting staff review
@@ -175,7 +218,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -202,11 +245,12 @@ public class ClientPortalServiceTests
             TenantId = tenantId,
             ClientId = legitimateClient,
             StaffId = "staff-1",
-            Status = EngagementStatus.Started
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act: Attempt to access engagement owned by client-owner-123 using client-attacker-999
         var result = await service.GetDashboardForEngagementAsync(engagementId, tenantId, attackerClient);
@@ -231,6 +275,7 @@ public class ClientPortalServiceTests
             ClientId = clientId,
             StaffId = "staff-1",
             Status = EngagementStatus.Closed,
+            Stage = EngagementStage.Closure,
             CreatedAt = DateTime.UtcNow.AddMonths(-2)
         });
 
@@ -243,11 +288,12 @@ public class ClientPortalServiceTests
             ClientId = clientId,
             StaffId = "staff-1",
             Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding,
             CreatedAt = DateTime.UtcNow.AddDays(-5)
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act: Client doesn't pass any engagement GUID
         var dashboard = await service.GetActiveDashboardForClientAsync(tenantId, clientId);
@@ -273,7 +319,8 @@ public class ClientPortalServiceTests
             TenantId = tenantId,
             ClientId = clientId,
             StaffId = "staff-1",
-            Status = EngagementStatus.Started
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.DocumentCollection
         });
 
         db.ClientActions.Add(new ClientAction
@@ -289,7 +336,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -316,7 +363,8 @@ public class ClientPortalServiceTests
             TenantId = tenantId,
             ClientId = clientId,
             StaffId = "staff-1",
-            Status = EngagementStatus.Started
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.DocumentCollection
         });
 
         // Stage 1 completed
@@ -345,7 +393,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -376,7 +424,8 @@ public class ClientPortalServiceTests
             TenantId = tenantId,
             ClientId = clientId,
             StaffId = "staff-1",
-            Status = EngagementStatus.Started
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Verification
         });
 
         // Stage 1 completed
@@ -417,7 +466,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -446,7 +495,8 @@ public class ClientPortalServiceTests
             TenantId = tenantId,
             ClientId = clientId,
             StaffId = "staff-1",
-            Status = EngagementStatus.Started
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.DocumentCollection
         });
 
         db.ClientActions.Add(new ClientAction
@@ -462,7 +512,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -496,23 +546,21 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
 
-        // Assert
+        // Assert: 19-N3 Pure read-only query — zero actions seeded into DB on read
         Assert.NotNull(dashboard);
         Assert.Equal(1, dashboard.CurrentStageNumber);
-        Assert.NotNull(dashboard.PrimaryNextAction);
-        Assert.Equal("Client Intake & Kickoff Assessment", dashboard.PrimaryNextAction.Title);
+        Assert.Null(dashboard.PrimaryNextAction);
 
-        // Verify actions were persisted to database
+        // Verify zero actions were persisted to database
         var persistedActions = await db.ClientActions
             .Where(a => a.EngagementId == engagementId)
             .ToListAsync();
-        Assert.NotEmpty(persistedActions);
-        Assert.Contains(persistedActions, a => a.StageNumber == 2 && a.Title.Contains("Identity Verification"));
+        Assert.Empty(persistedActions);
     }
 
     [Fact]
@@ -561,7 +609,7 @@ public class ClientPortalServiceTests
         );
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -573,10 +621,10 @@ public class ClientPortalServiceTests
         Assert.Equal("Upload Identity Proof", dashboard.PrimaryNextAction.Title);
         Assert.Equal(2, dashboard.PrimaryNextAction.StageNumber);
 
-        // Previous stage pending action should be marked Completed since staff advanced stage
+        // 19-N3: Pure read-only query — previous stage pending action remains untouched in Pending status
         var stage1Action = await db.ClientActions
             .FirstAsync(a => a.EngagementId == engagementId && a.StageNumber == 1);
-        Assert.Equal(ClientActionStatus.Completed, stage1Action.Status);
+        Assert.Equal(ClientActionStatus.Pending, stage1Action.Status);
     }
 
     [Fact]
@@ -612,26 +660,20 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
 
-        // Assert: Missing stages 2-5 should be automatically seeded!
+        // Assert: 19-N3 Pure read-only query — missing stages are NOT seeded into DB
         Assert.NotNull(dashboard);
-        // Stage 1 was complete, so dashboard should now be at Stage 2 with seeded KYC task!
-        Assert.Equal(2, dashboard.CurrentStageNumber);
-        Assert.NotNull(dashboard.PrimaryNextAction);
-        Assert.Equal("Identity Verification (KYC Passport / ID)", dashboard.PrimaryNextAction.Title);
+        Assert.Equal(1, dashboard.CurrentStageNumber);
 
         var allActions = await db.ClientActions
             .Where(a => a.EngagementId == engagementId)
             .ToListAsync();
-        Assert.True(allActions.Count > 1);
-        Assert.Contains(allActions, a => a.StageNumber == 2);
-        Assert.Contains(allActions, a => a.StageNumber == 3);
-        Assert.Contains(allActions, a => a.StageNumber == 4);
-        Assert.Contains(allActions, a => a.StageNumber == 5);
+        Assert.Single(allActions);
+        Assert.DoesNotContain(allActions, a => a.StageNumber > 1);
     }
 
     [Fact]
@@ -669,7 +711,7 @@ public class ClientPortalServiceTests
         );
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act
         var dashboard = await service.GetActiveDashboardForClientAsync(tenantId, clientId);
@@ -695,7 +737,8 @@ public class ClientPortalServiceTests
             TenantId = tenantId,
             ClientId = clientId,
             StaffId = "staff-1",
-            Status = EngagementStatus.Started
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
         });
 
         db.ClientActions.Add(new ClientAction
@@ -711,7 +754,7 @@ public class ClientPortalServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -771,7 +814,7 @@ public class ClientPortalServiceTests
         db.ClientActions.AddRange(cancelledActionStage1, pendingActionStage2);
         await db.SaveChangesAsync();
 
-        var service = new ClientPortalService(db);
+        var service = CreatePortalService(db);
 
         // Act
         var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
@@ -788,5 +831,125 @@ public class ClientPortalServiceTests
 
         // Cancelled action is not in pending actions either
         Assert.DoesNotContain(dashboard.PendingActions, a => a.ActionId == cancelledActionStage1.ActionId);
+    }
+
+    [Fact]
+    public async Task GetDashboard_MultipleCalls_ProduceZeroSideEffectsAndIdenticalResults()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-idempotent";
+        var clientId = "client-idempotent";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = clientId,
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.DocumentCollection
+        });
+
+        var action1 = new ClientAction
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Proof of Address",
+            Status = ClientActionStatus.Pending,
+            StageNumber = 2,
+            IsInternalOnly = false,
+            AssignedToRole = "Client",
+            DeadlineUtc = DateTime.UtcNow.AddDays(2)
+        };
+        db.ClientActions.Add(action1);
+        await db.SaveChangesAsync();
+
+        var initialActionCount = await db.ClientActions.CountAsync();
+        var initialEngagement = await db.Engagements.AsNoTracking().FirstAsync(e => e.EngagementId == engagementId);
+
+        var service = CreatePortalService(db);
+
+        // Act: Execute 10 consecutive GET calls
+        ClientPortalDashboardDto? firstResult = null;
+        for (int i = 0; i < 10; i++)
+        {
+            var result = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+            Assert.NotNull(result);
+
+            if (firstResult == null)
+            {
+                firstResult = result;
+            }
+            else
+            {
+                Assert.Equal(firstResult.EngagementId, result.EngagementId);
+                Assert.Equal(firstResult.CurrentStageNumber, result.CurrentStageNumber);
+                Assert.Equal(firstResult.ConditionStatus, result.ConditionStatus);
+                Assert.Equal(firstResult.ProgressPercentage, result.ProgressPercentage);
+                Assert.Equal(firstResult.PrimaryNextAction?.ActionId, result.PrimaryNextAction?.ActionId);
+                Assert.Equal(firstResult.PendingActions.Count, result.PendingActions.Count);
+            }
+        }
+
+        // Assert: Database state must be completely untouched (zero writes, zero mutations)
+        var finalActionCount = await db.ClientActions.CountAsync();
+        Assert.Equal(initialActionCount, finalActionCount);
+
+        var finalAction = await db.ClientActions.FirstAsync(a => a.ActionId == action1.ActionId);
+        Assert.Equal(ClientActionStatus.Pending, finalAction.Status);
+        Assert.Null(finalAction.CompletedAt);
+        Assert.Null(finalAction.CompletedByActor);
+
+        var finalEngagement = await db.Engagements.AsNoTracking().FirstAsync(e => e.EngagementId == engagementId);
+        Assert.Equal(initialEngagement.Status, finalEngagement.Status);
+        Assert.Equal(initialEngagement.Stage, finalEngagement.Stage);
+        Assert.Equal(initialEngagement.ClosedAt, finalEngagement.ClosedAt);
+    }
+
+    [Fact]
+    public async Task GetDashboard_PopulatesNextActionResultProperty()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+        var clientId = "client-alpha";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = clientId,
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
+        });
+
+        db.ClientActions.Add(new ClientAction
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "KYC Upload",
+            Status = ClientActionStatus.Pending,
+            StageNumber = 1,
+            IsInternalOnly = false,
+            AssignedToRole = "Client"
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreatePortalService(db);
+
+        // Act
+        var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+
+        // Assert
+        Assert.NotNull(dashboard);
+        Assert.NotNull(dashboard.NextAction);
+        Assert.Equal(engagementId, dashboard.NextAction.EngagementId);
+        Assert.Equal(OverallState.ClientActionRequired, dashboard.NextAction.OverallState);
+        Assert.NotNull(dashboard.NextAction.PrimaryAction);
+        Assert.Equal("KYC Upload", dashboard.NextAction.PrimaryAction.Title);
     }
 }

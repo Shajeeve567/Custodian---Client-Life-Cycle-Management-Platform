@@ -1,6 +1,7 @@
 using Custodian.Workflow.Data;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
+using Custodian.Workflow.Services.NextAction;
 using Microsoft.EntityFrameworkCore;
 
 namespace Custodian.Workflow.Services;
@@ -8,12 +9,12 @@ namespace Custodian.Workflow.Services;
 public class ClientPortalService : IClientPortalService
 {
     private readonly WorkflowDbContext _dbContext;
+    private readonly INextActionService _nextActionService;
     private readonly IAuditPublisher? _auditPublisher;
 
     // Canonical stage names/taglines (CSTD-17) — must match frontend/src/constants/engagementStages.ts
     // exactly, so the client portal and the staff/owner dashboard show identical stage names for
-    // the same engagement. Previously these were stale pre-CSTD-17 names, out of sync with the rest
-    // of the product.
+    // the same engagement.
     private static readonly (int StageNumber, string Name, string Tagline)[] StageDefinitions = new[]
     {
         (1, "Onboarding", "Client baseline & kickoff criteria"),
@@ -23,9 +24,13 @@ public class ClientPortalService : IClientPortalService
         (5, "Closure", "Final delivery & handoff")
     };
 
-    public ClientPortalService(WorkflowDbContext dbContext, IAuditPublisher? auditPublisher = null)
+    public ClientPortalService(
+        WorkflowDbContext dbContext,
+        INextActionService nextActionService,
+        IAuditPublisher? auditPublisher = null)
     {
         _dbContext = dbContext;
+        _nextActionService = nextActionService;
         _auditPublisher = auditPublisher;
     }
 
@@ -102,54 +107,18 @@ public class ClientPortalService : IClientPortalService
         return await BuildDashboardDtoAsync(engagement);
     }
 
-
     private async Task<ClientPortalDashboardDto> BuildDashboardDtoAsync(Engagement engagement)
     {
+        // 19-N3: Pure read-only query — AsNoTracking, zero side-effect seeding, zero auto-completing
         var allActions = await _dbContext.ClientActions
+            .AsNoTracking()
             .Where(a => a.EngagementId == engagement.EngagementId && a.TenantId == engagement.TenantId)
             .OrderBy(a => a.StageNumber)
             .ThenBy(a => a.CreatedAt)
             .ToListAsync();
 
-        if (allActions.Count == 0)
-        {
-            var seeded = ClientActionService.GenerateDefaultLifecycleActions(engagement.EngagementId, engagement.TenantId);
-            await _dbContext.ClientActions.AddRangeAsync(seeded);
-            await _dbContext.SaveChangesAsync();
-            allActions = seeded;
-        }
-        else if (allActions.Any(a => a.Source == "LifecycleDefault") || allActions.All(a => a.StageNumber == 1))
-        {
-            var existingStageNumbers = allActions.Select(a => a.StageNumber).ToHashSet();
-            var missingDefaultActions = ClientActionService.GenerateDefaultLifecycleActions(engagement.EngagementId, engagement.TenantId)
-                .Where(defaultAct => !existingStageNumbers.Contains(defaultAct.StageNumber))
-                .ToList();
-
-            if (missingDefaultActions.Count > 0)
-            {
-                await _dbContext.ClientActions.AddRangeAsync(missingDefaultActions);
-                await _dbContext.SaveChangesAsync();
-                allActions.AddRange(missingDefaultActions);
-                allActions = allActions.OrderBy(a => a.StageNumber).ThenBy(a => a.CreatedAt).ToList();
-            }
-        }
-
-        // Determine Current Onboarding Stage (1 to 5)
-        var currentStageNumber = DetermineCurrentStage(engagement, allActions);
-
-        // If staff advanced past earlier stages, mark any earlier pending client actions as completed
-        var earlierPending = allActions
-            .Where(a => a.StageNumber < currentStageNumber && a.Status == ClientActionStatus.Pending)
-            .ToList();
-
-        if (earlierPending.Count > 0)
-        {
-            foreach (var act in earlierPending)
-            {
-                await ApplyActionStatusAsync(act, ClientActionStatus.Completed, "Staff", "Stage auto-advanced");
-            }
-            await _dbContext.SaveChangesAsync();
-        }
+        // Determine Current Onboarding Stage (1 to 5) strictly based on persisted engagement stage
+        var currentStageNumber = DetermineCurrentStage(engagement);
 
         // Client-facing actions: strictly exclude internal-only tasks and cancelled actions from active progress
         var clientVisibleActions = allActions.Where(a => !a.IsInternalOnly && a.Status != ClientActionStatus.Cancelled).ToList();
@@ -176,14 +145,99 @@ public class ClientPortalService : IClientPortalService
         var currentStageName = currentStageDef.Name ?? $"Stage {currentStageNumber}";
         var currentStageTagline = currentStageDef.Tagline ?? string.Empty;
 
-        // 2. Determine Primary Next Action based on Onboarding Stage
-        var (primaryAction, otherPendingActions) = SelectStageBasedActions(clientVisibleActions, currentStageNumber);
+        // 2. Invoke NextActionService with NextActionView.Client
+        var nextActionResult = await _nextActionService.GetNextActionAsync(
+            engagement.EngagementId,
+            engagement.TenantId,
+            NextActionView.Client);
+
+        // Map primary next action
+        ClientSafeActionDto? primaryActionDto = null;
+        if (nextActionResult?.PrimaryAction != null)
+        {
+            ClientAction? primaryActionEntity = null;
+            if (nextActionResult.PrimaryAction.ActionId.HasValue)
+            {
+                primaryActionEntity = allActions.FirstOrDefault(a => a.ActionId == nextActionResult.PrimaryAction.ActionId.Value);
+            }
+            else if (string.Equals(nextActionResult.PrimaryAction.SourceType, "Requirement", StringComparison.OrdinalIgnoreCase) &&
+                     nextActionResult.PrimaryAction.SourceId.HasValue)
+            {
+                primaryActionEntity = allActions.FirstOrDefault(a => a.LinkedRequirementId == nextActionResult.PrimaryAction.SourceId.Value);
+            }
+
+            primaryActionDto = primaryActionEntity != null
+                ? MapToSafeActionDto(primaryActionEntity)
+                : MapFromNextActionItem(nextActionResult.PrimaryAction, currentStageNumber);
+        }
+        else if (nextActionResult == null)
+        {
+            var (fallbackPrimary, _) = SelectStageBasedActions(clientVisibleActions, currentStageNumber);
+            primaryActionDto = fallbackPrimary != null ? MapToSafeActionDto(fallbackPrimary) : null;
+        }
+
+        // Map pending client-safe actions
+        var pendingSafeActions = new List<ClientSafeActionDto>();
+        var addedActionIds = new HashSet<Guid>();
+        if (primaryActionDto != null)
+        {
+            addedActionIds.Add(primaryActionDto.ActionId);
+        }
+
+        if (nextActionResult?.Blockers != null)
+        {
+            foreach (var blocker in nextActionResult.Blockers)
+            {
+                if (blocker.ResponsibleParty != ResponsibleParty.Client)
+                {
+                    continue;
+                }
+
+                ClientAction? matchingEntity = null;
+                if (blocker.ActionId.HasValue)
+                {
+                    matchingEntity = allActions.FirstOrDefault(a => a.ActionId == blocker.ActionId.Value);
+                }
+                else if (string.Equals(blocker.SourceType, "Requirement", StringComparison.OrdinalIgnoreCase) && blocker.SourceId.HasValue)
+                {
+                    matchingEntity = allActions.FirstOrDefault(a => a.LinkedRequirementId == blocker.SourceId.Value);
+                }
+
+                var dto = matchingEntity != null
+                    ? MapToSafeActionDto(matchingEntity)
+                    : MapFromNextActionItem(blocker, currentStageNumber);
+
+                if (addedActionIds.Add(dto.ActionId))
+                {
+                    pendingSafeActions.Add(dto);
+                }
+            }
+        }
+
+        // Also include any other pending client-facing actions from clientVisibleActions (e.g., across future stages)
+        var otherClientPending = clientVisibleActions
+            .Where(a => a.AssignedToRole == "Client" &&
+                        (a.Status == ClientActionStatus.Pending || a.Status == ClientActionStatus.Rejected) &&
+                        !addedActionIds.Contains(a.ActionId))
+            .OrderBy(a => a.StageNumber)
+            .ThenBy(a => a.DeadlineUtc.HasValue ? 0 : 1)
+            .ThenBy(a => a.DeadlineUtc)
+            .ThenBy(a => a.CreatedAt);
+
+        foreach (var act in otherClientPending)
+        {
+            if (addedActionIds.Add(act.ActionId))
+            {
+                pendingSafeActions.Add(MapToSafeActionDto(act));
+            }
+        }
 
         // 3. Determine Condition Status & Description
         var (conditionStatus, conditionDescription) = EvaluateConditionStatus(
             engagement,
             currentStageNumber,
-            primaryAction,
+            nextActionResult,
+            primaryActionDto,
             clientVisibleActions);
 
         // 4. Build 5-stage stepper overview
@@ -225,13 +279,14 @@ public class ClientPortalService : IClientPortalService
             ProgressPercentage = progressPercentage,
             CompletedTasksCount = completedTasksCount,
             TotalTasksCount = totalTasksCount,
-            PrimaryNextAction = primaryAction != null ? MapToSafeActionDto(primaryAction) : null,
-            PendingActions = otherPendingActions.Select(MapToSafeActionDto).ToList(),
+            PrimaryNextAction = primaryActionDto,
+            PendingActions = pendingSafeActions,
+            NextAction = nextActionResult,
             Stages = stages
         };
     }
 
-    private static int DetermineCurrentStage(Engagement engagement, List<ClientAction> actions)
+    private static int DetermineCurrentStage(Engagement engagement)
     {
         if (engagement.Status == EngagementStatus.Closed || engagement.Stage == EngagementStage.Closure)
         {
@@ -239,48 +294,22 @@ public class ClientPortalService : IClientPortalService
         }
 
         // Canonical persisted stage on the engagement model (0-indexed: Onboarding=0 -> Stage 1, DocumentCollection=1 -> Stage 2, etc.)
-        var canonicalStage = Math.Clamp((int)engagement.Stage + 1, 1, 5);
-
-        // Find the earliest stage that has unfinished actions (Pending, Uploaded, or Rejected; exclude Cancelled)
-        var unfinishedStages = actions
-            .Where(a => a.Status != ClientActionStatus.Completed && a.Status != ClientActionStatus.Cancelled)
-            .Select(a => a.StageNumber)
-            .ToList();
-
-        if (unfinishedStages.Count > 0)
-        {
-            var earliestUnfinishedStage = unfinishedStages.Min();
-            if (earliestUnfinishedStage >= 1 && earliestUnfinishedStage <= 5)
-            {
-                // If staff advanced engagement beyond earliest unfinished action, canonical stage takes precedence.
-                // If all earlier stage actions are completed and next stage has unfinished actions, advance to that stage.
-                return Math.Max(canonicalStage, earliestUnfinishedStage);
-            }
-        }
-
-        return canonicalStage;
-    }
-
-    private static List<ClientAction> SeedDefaultLifecycleActions(Engagement engagement)
-    {
-        return ClientActionService.GenerateDefaultLifecycleActions(engagement.EngagementId, engagement.TenantId);
+        return Math.Clamp((int)engagement.Stage + 1, 1, 5);
     }
 
     private static (ClientAction? Primary, List<ClientAction> Others) SelectStageBasedActions(
         List<ClientAction> clientActions,
         int currentStageNumber)
     {
-        // Eligible pending actions for client: Assigned to Client, Pending or Rejected (needs revision)
         var clientPending = clientActions
             .Where(a => a.AssignedToRole == "Client" &&
                         (a.Status == ClientActionStatus.Pending || a.Status == ClientActionStatus.Rejected))
             .ToList();
 
-        // 1. Look in current stage first
         var currentStagePending = clientPending
             .Where(a => a.StageNumber == currentStageNumber)
-            .OrderBy(a => a.DeadlineUtc.HasValue ? 0 : 1) // Actions with deadlines first
-            .ThenBy(a => a.DeadlineUtc)                   // Earliest deadline first
+            .OrderBy(a => a.DeadlineUtc.HasValue ? 0 : 1)
+            .ThenBy(a => a.DeadlineUtc)
             .ThenBy(a => a.CreatedAt)
             .ToList();
 
@@ -291,14 +320,12 @@ public class ClientPortalService : IClientPortalService
         }
         else
         {
-            // If current stage has actions waiting for review, client cannot skip to future stages
             var hasUnderReviewInCurrentStage = clientActions.Any(a =>
                 a.StageNumber == currentStageNumber &&
                 a.Status == ClientActionStatus.Uploaded);
 
             if (!hasUnderReviewInCurrentStage)
             {
-                // 2. Look in subsequent stages if current stage has no pending or under-review actions
                 var nextStagesPending = clientPending
                     .Where(a => a.StageNumber > currentStageNumber)
                     .OrderBy(a => a.StageNumber)
@@ -314,7 +341,6 @@ public class ClientPortalService : IClientPortalService
             }
         }
 
-        // All remaining pending client actions excluding the primary
         var others = clientPending
             .Where(a => primary == null || a.ActionId != primary.ActionId)
             .OrderBy(a => a.StageNumber)
@@ -327,19 +353,22 @@ public class ClientPortalService : IClientPortalService
     private static (string Status, string Description) EvaluateConditionStatus(
         Engagement engagement,
         int currentStageNumber,
-        ClientAction? primaryAction,
-        List<ClientAction> actions)
+        NextActionResult? nextActionResult,
+        ClientSafeActionDto? primaryAction,
+        List<ClientAction> clientVisibleActions)
     {
-        if (engagement.Status == EngagementStatus.Closed)
+        if (engagement.Status == EngagementStatus.Closed ||
+            string.Equals(nextActionResult?.OverallState, OverallState.Closed, StringComparison.OrdinalIgnoreCase))
         {
             return ("Closed", "Engagement successfully completed and sealed into the immutable audit ledger.");
         }
 
         if (primaryAction != null)
         {
-            var isOverdue = primaryAction.DeadlineUtc.HasValue && primaryAction.DeadlineUtc.Value < DateTime.UtcNow;
+            var isOverdue = primaryAction.IsOverdue ||
+                            (primaryAction.DeadlineUtc.HasValue && primaryAction.DeadlineUtc.Value < DateTime.UtcNow);
 
-            if (primaryAction.Status == ClientActionStatus.Rejected)
+            if (string.Equals(primaryAction.Status, ClientActionStatus.Rejected, StringComparison.OrdinalIgnoreCase))
             {
                 return ("RevisionRequired", $"Action requires revision: {primaryAction.Title}. Please re-submit the required evidence.");
             }
@@ -352,14 +381,47 @@ public class ClientPortalService : IClientPortalService
             return ("ActionRequired", $"Action required: {primaryAction.Title}. Complete this task to advance your onboarding.");
         }
 
-        // Check if client submitted an action in this stage that is waiting for staff review
-        var hasUploadedInCurrentStage = actions.Any(a => a.StageNumber == currentStageNumber && a.Status == ClientActionStatus.Uploaded);
-        if (hasUploadedInCurrentStage)
+        // Check if client submitted an action in this stage waiting for staff review, or engine reports AwaitingStaff/BlockedExternal
+        var hasUploadedInCurrentStage = clientVisibleActions.Any(a => a.StageNumber == currentStageNumber && a.Status == ClientActionStatus.Uploaded);
+        var isAwaitingStaff = string.Equals(nextActionResult?.OverallState, OverallState.AwaitingStaff, StringComparison.OrdinalIgnoreCase) ||
+                              string.Equals(nextActionResult?.OverallState, OverallState.BlockedExternal, StringComparison.OrdinalIgnoreCase);
+
+        if (hasUploadedInCurrentStage || isAwaitingStaff)
         {
             return ("UnderReview", "Your submitted evidence is currently being verified by the custodian team.");
         }
 
         return ("AllCaughtUp", $"All client tasks in Stage {currentStageNumber} are satisfied. Awaiting custodian milestone gate advance.");
+    }
+
+    private static ClientSafeActionDto MapFromNextActionItem(NextActionItem item, int fallbackStage)
+    {
+        var now = DateTime.UtcNow;
+        var isOverdue = item.IsOverdue || (item.DueAtUtc.HasValue && item.DueAtUtc.Value < now);
+        int? daysRemaining = item.DueAtUtc.HasValue
+            ? (int)Math.Ceiling((item.DueAtUtc.Value - now).TotalDays)
+            : null;
+
+        var status = item.PriorityRank == 2 ? ClientActionStatus.Rejected : ClientActionStatus.Pending;
+
+        return new ClientSafeActionDto
+        {
+            ActionId = item.ActionId ?? item.SourceId ?? Guid.NewGuid(),
+            Title = item.Title,
+            Description = item.Reason,
+            Type = item.Kind,
+            Status = status,
+            StageNumber = item.StageNumber ?? fallbackStage,
+            DeadlineUtc = item.DueAtUtc,
+            IsOverdue = isOverdue,
+            DaysRemaining = daysRemaining,
+            RejectionReason = item.PriorityRank == 2 ? item.Reason : null,
+            VerificationStatus = null,
+            LinkedRequirementId = string.Equals(item.SourceType, "Requirement", StringComparison.OrdinalIgnoreCase)
+                ? item.SourceId
+                : null,
+            SourceType = item.SourceType ?? string.Empty
+        };
     }
 
     private static ClientSafeActionDto MapToSafeActionDto(ClientAction action)
@@ -445,56 +507,5 @@ public class ClientPortalService : IClientPortalService
         }
 
         return null;
-    }
-
-    private async Task<bool> ApplyActionStatusAsync(ClientAction action, string newStatus, string? actor, string? reason)
-    {
-        if (string.Equals(action.Status, newStatus, StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        ClientActionStateMachine.EnsureCanTransition(action.Status, newStatus);
-
-        var fromStatus = action.Status;
-        action.Status = newStatus;
-        var now = DateTime.UtcNow;
-        action.UpdatedAt = now;
-
-        action.CompletedByActor = actor ?? action.CompletedByActor;
-        if (string.Equals(newStatus, ClientActionStatus.Completed, StringComparison.OrdinalIgnoreCase))
-        {
-            action.CompletedAt = now;
-        }
-        else
-        {
-            action.CompletedAt = null;
-            if (string.Equals(newStatus, ClientActionStatus.Pending, StringComparison.OrdinalIgnoreCase))
-            {
-                action.CompletedByActor = null;
-            }
-        }
-
-        if (_auditPublisher != null)
-        {
-            Guid? sourceId = action.LinkedRequirementId ?? action.LinkedDocumentId ?? action.LinkedConditionId ?? action.LinkedMeetingId;
-
-            await _auditPublisher.PublishEventAsync(
-                action.EngagementId,
-                action.TenantId,
-                actor ?? "System",
-                "ClientActionStatusChanged",
-                new
-                {
-                    actionId = action.ActionId,
-                    fromStatus,
-                    toStatus = newStatus,
-                    sourceType = action.SourceType,
-                    sourceId,
-                    reason
-                });
-        }
-
-        return true;
     }
 }
