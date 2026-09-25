@@ -9,45 +9,81 @@ public class GateEvaluator : IGateEvaluator
     private const string Verified = "Verified";
 
     private readonly IDocumentComplianceClient _documentClient;
+    private readonly IConditionService _conditionService;
     private readonly ILogger<GateEvaluator> _logger;
 
-    public GateEvaluator(IDocumentComplianceClient documentClient, ILogger<GateEvaluator> logger)
+    public GateEvaluator(
+        IDocumentComplianceClient documentClient,
+        IConditionService conditionService,
+        ILogger<GateEvaluator> logger)
     {
         _documentClient = documentClient;
+        _conditionService = conditionService;
         _logger = logger;
     }
 
     public async Task<GateEvaluationResult> EvaluateAsync(Guid engagementId, string tenantId, EngagementStage targetStage, CancellationToken ct = default)
     {
-        var requirements = GateRequirements.GetRequirementsFor(targetStage);
-        if (requirements.Count == 0)
-        {
-            // No document gate defined for this transition. Approval/Payment conditions
-            // don't exist anywhere in the system yet (a CSTD-18 dependency) — per the
-            // story's own business rule, an absent/disabled condition never blocks
-            // progression, so there is nothing further to check for this stage.
-            return GateEvaluationResult.Satisfied();
-        }
-
-        IReadOnlyList<DocumentSummaryDto> documents;
+        // 1. Condition evaluation (CSTD-24: active pending conditions block; inactive and satisfied do not)
+        IReadOnlyList<EngagementCondition> activeConditions;
         try
         {
-            documents = await _documentClient.GetDocumentsAsync(engagementId, tenantId, ct);
+            activeConditions = await _conditionService.GetActiveConditionsAsync(engagementId, tenantId, ct);
         }
-        catch (DocumentComplianceUnavailableException ex)
+        catch (Exception ex)
         {
-            // Fail closed: an unreachable Documents service must not silently let a
-            // mandatory compliance gate be bypassed.
-            _logger.LogError(ex, "Gate evaluation blocked: Documents service unavailable for engagement {EngagementId}", engagementId);
+            // Fail closed: condition service failure must block stage progression
+            _logger.LogError(ex, "Gate evaluation blocked: Condition service unavailable for engagement {EngagementId}", engagementId);
             return GateEvaluationResult.Blocked(
-                "Unable to verify required documents right now because the Documents service is unavailable. Please try again shortly.",
+                "Unable to verify engagement conditions right now because the condition service is unavailable. Please try again shortly.",
                 Array.Empty<GateRequirementResult>());
         }
 
         var results = new List<GateRequirementResult>();
-        foreach (var requirement in requirements)
+
+        // Conditions gating entering the targetStage
+        var targetStageConditions = activeConditions
+            .Where(c => c.IsActive && c.RequiredBeforeStage == targetStage)
+            .ToList();
+
+        foreach (var condition in targetStageConditions)
         {
-            results.Add(EvaluateRequirement(requirement, documents));
+            if (string.Equals(condition.Status, ConditionStatus.Satisfied, StringComparison.OrdinalIgnoreCase))
+            {
+                results.Add(new GateRequirementResult(condition.Title, true, null));
+            }
+            else
+            {
+                results.Add(new GateRequirementResult(
+                    condition.Title,
+                    false,
+                    $"{condition.Type} condition '{condition.Title}' is not yet satisfied (status: {condition.Status})."));
+            }
+        }
+
+        // 2. Document evaluation (CSTD-18)
+        var documentRequirements = GateRequirements.GetRequirementsFor(targetStage);
+        if (documentRequirements.Count > 0)
+        {
+            IReadOnlyList<DocumentSummaryDto> documents;
+            try
+            {
+                documents = await _documentClient.GetDocumentsAsync(engagementId, tenantId, ct);
+            }
+            catch (DocumentComplianceUnavailableException ex)
+            {
+                // Fail closed: an unreachable Documents service must not silently let a
+                // mandatory compliance gate be bypassed.
+                _logger.LogError(ex, "Gate evaluation blocked: Documents service unavailable for engagement {EngagementId}", engagementId);
+                return GateEvaluationResult.Blocked(
+                    "Unable to verify required documents right now because the Documents service is unavailable. Please try again shortly.",
+                    results);
+            }
+
+            foreach (var requirement in documentRequirements)
+            {
+                results.Add(EvaluateRequirement(requirement, documents));
+            }
         }
 
         var unsatisfied = results.Where(r => !r.IsSatisfied).ToList();
