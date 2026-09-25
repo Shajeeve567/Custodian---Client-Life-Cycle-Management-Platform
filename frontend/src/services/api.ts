@@ -26,6 +26,11 @@ import {
     UpdateDocumentMetadataRequest,
     SubmitRequirementRequest,
     RequirementResponse,
+    EngagementCondition,
+    ClientSafeCondition,
+    AttachConditionRequest,
+    UpdateConditionRequest,
+    DeactivateConditionRequest,
 } from '../types';
 
 export const API_BASE = {
@@ -356,6 +361,63 @@ export const WorkflowApi = {
                 body: JSON.stringify(data),
             }
         );
+    },
+
+    // CSTD-24: Engagement Conditions Management
+    async getConditions(engagementId: string, tenantId?: string, includeInactive: boolean = true): Promise<EngagementCondition[]> {
+        const params = new URLSearchParams();
+        if (tenantId) params.set('tenantId', tenantId);
+        params.set('includeInactive', String(includeInactive));
+        const qs = params.toString();
+        const url = `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions${qs ? `?${qs}` : ''}`;
+        return request<EngagementCondition[]>(url, {
+            method: 'GET',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+        });
+    },
+
+    async getClientConditions(engagementId: string, tenantId?: string): Promise<ClientSafeCondition[]> {
+        const params = new URLSearchParams();
+        if (tenantId) params.set('tenantId', tenantId);
+        const qs = params.toString();
+        const url = `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions${qs ? `?${qs}` : ''}`;
+        return request<ClientSafeCondition[]>(url, {
+            method: 'GET',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+        });
+    },
+
+    async attachCondition(engagementId: string, req: AttachConditionRequest, tenantId?: string): Promise<EngagementCondition> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions`;
+        return request<EngagementCondition>(url, {
+            method: 'POST',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify(req),
+        });
+    },
+
+    async updateCondition(engagementId: string, conditionId: string, req: UpdateConditionRequest, tenantId?: string): Promise<EngagementCondition> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}`;
+        return request<EngagementCondition>(url, {
+            method: 'PATCH',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify(req),
+        });
+    },
+
+    async deactivateCondition(engagementId: string, conditionId: string, reason: string, tenantId?: string): Promise<EngagementCondition> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/deactivate?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/deactivate`;
+        return request<EngagementCondition>(url, {
+            method: 'PUT',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify({ reason }),
+        });
     },
 };
 

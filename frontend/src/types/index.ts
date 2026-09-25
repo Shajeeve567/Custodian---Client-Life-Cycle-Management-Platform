@@ -313,3 +313,75 @@ export interface DocumentMetadata {
     deletedAt?: string | null;
     deletedBy?: string | null;
 }
+
+export type ConditionType = 'Approval' | 'Payment';
+export type ConditionStatus = 'Pending' | 'Satisfied' | 'Rejected';
+export type ConditionPaymentType = 'Upfront' | 'Milestone' | 'Final';
+
+export interface EngagementCondition {
+    conditionId: string;
+    engagementId: string;
+    tenantId: string;
+    type: ConditionType;
+    isActive: boolean;
+    status: ConditionStatus;
+    requiredBeforeStage: EngagementStage | string;
+    title: string;
+    description?: string;
+    dueDateUtc?: string;
+    amount?: number;
+    currency?: string;
+    paymentType?: string;
+    internalNote?: string;
+    createdBy: string;
+    createdAt: string;
+    updatedBy?: string;
+    updatedAt?: string;
+    deactivatedBy?: string;
+    deactivatedAt?: string;
+    deactivationReason?: string;
+    satisfiedAt?: string;
+    satisfiedBy?: string;
+    isOverdue?: boolean;
+}
+
+export interface ClientSafeCondition {
+    conditionId: string;
+    title: string;
+    description?: string;
+    type: ConditionType;
+    status: ConditionStatus;
+    requiredBeforeStage: string;
+    dueDateUtc?: string;
+    amount?: number;
+    currency?: string;
+    paymentType?: string;
+    isOverdue: boolean;
+}
+
+export interface AttachConditionRequest {
+    type: ConditionType;
+    requiredBeforeStage?: EngagementStage | string;
+    title: string;
+    description?: string;
+    dueDateUtc?: string;
+    amount?: number;
+    currency?: string;
+    paymentType?: string;
+    internalNote?: string;
+}
+
+export interface UpdateConditionRequest {
+    title?: string;
+    description?: string;
+    dueDateUtc?: string;
+    amount?: number;
+    currency?: string;
+    paymentType?: string;
+    internalNote?: string;
+}
+
+export interface DeactivateConditionRequest {
+    reason: string;
+}
+

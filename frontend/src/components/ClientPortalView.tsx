@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { ClientPortalDashboard, ClientSafeAction, DocumentMetadata } from '../types';
+import { ClientPortalDashboard, ClientSafeAction, DocumentMetadata, ClientSafeCondition } from '../types';
 import { PortalApi, WorkflowApi, DocumentsApi } from '../services/api';
 import { UploadEvidenceModal } from './UploadEvidenceModal';
 import { SubmitRequirementModal } from './SubmitRequirementModal';
@@ -21,7 +21,12 @@ import {
     Check,
     UploadCloud,
     Plus,
-    FolderOpen
+    FolderOpen,
+    CreditCard,
+    CheckSquare,
+    DollarSign,
+    XCircle,
+    ShieldCheck
 } from 'lucide-react';
 
 interface ClientPortalViewProps {
@@ -31,7 +36,9 @@ interface ClientPortalViewProps {
 export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId: initialEngagementId }) => {
     const { tenantId, userId, tenantName, role } = useAuth();
     const [dashboard, setDashboard] = useState<ClientPortalDashboard | null>(null);
+    const [conditions, setConditions] = useState<ClientSafeCondition[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
+    const [loadingConditions, setLoadingConditions] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [actionInProgress, setActionInProgress] = useState<string | null>(null);
     const [selectedActionForUpload, setSelectedActionForUpload] = useState<ClientSafeAction | null>(null);
@@ -113,6 +120,12 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
             setDashboard(data);
             if (data?.engagementId) {
                 await fetchDocuments(data.engagementId);
+                try {
+                    const conds = await WorkflowApi.getClientConditions(data.engagementId, tenantId);
+                    setConditions(conds || []);
+                } catch (cErr) {
+                    console.warn('Failed to load client conditions:', cErr);
+                }
             }
         } catch (err: any) {
             setError(err.message || 'Failed to load client onboarding portal');
@@ -398,6 +411,139 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                     />
                 </div>
             </div>
+
+            {/* CSTD-24: Active Engagement Conditions (Approval & Payment Gates) */}
+            {conditions.length > 0 && (
+                <div className="bg-white/90 backdrop-blur-md p-6 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2.5 rounded-xl bg-violet-50 text-violet-700 border border-violet-100">
+                                <ShieldCheck className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <h2 className="text-base font-bold text-slate-900">Milestone Conditions & Gate Requirements</h2>
+                                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-violet-100 text-violet-700">
+                                        {conditions.length} Active Gate{conditions.length === 1 ? '' : 's'}
+                                    </span>
+                                </div>
+                                <p className="text-xs text-slate-500">
+                                    Prerequisite approval and payment conditions required before this engagement can advance to subsequent pipeline stages.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                        {conditions.map((cond) => {
+                            const isPayment = cond.type === 'Payment';
+                            const isSatisfied = cond.status === 'Satisfied';
+                            const isRejected = cond.status === 'Rejected';
+
+                            return (
+                                <div
+                                    key={cond.conditionId}
+                                    className={`p-4 rounded-xl border transition space-y-2.5 ${
+                                        isSatisfied
+                                            ? 'bg-emerald-50/40 border-emerald-200'
+                                            : isRejected
+                                            ? 'bg-rose-50/40 border-rose-200'
+                                            : 'bg-slate-50/60 border-slate-200/80 shadow-xs'
+                                    }`}
+                                >
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2">
+                                            <span
+                                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                                    isPayment
+                                                        ? 'bg-emerald-100 text-emerald-800'
+                                                        : 'bg-indigo-100 text-indigo-800'
+                                                }`}
+                                            >
+                                                {isPayment ? (
+                                                    <CreditCard className="w-3 h-3" />
+                                                ) : (
+                                                    <CheckSquare className="w-3 h-3" />
+                                                )}
+                                                {cond.type} Gate
+                                            </span>
+
+                                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white text-slate-700 border border-slate-200">
+                                                Required before: {cond.requiredBeforeStage}
+                                            </span>
+                                        </div>
+
+                                        <span
+                                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                                isSatisfied
+                                                    ? 'bg-emerald-100 text-emerald-800'
+                                                    : isRejected
+                                                    ? 'bg-rose-100 text-rose-800'
+                                                    : 'bg-amber-100 text-amber-800'
+                                            }`}
+                                        >
+                                            {isSatisfied ? (
+                                                <CheckCircle2 className="w-3 h-3" />
+                                            ) : isRejected ? (
+                                                <XCircle className="w-3 h-3" />
+                                            ) : (
+                                                <Clock className="w-3 h-3" />
+                                            )}
+                                            {cond.status}
+                                        </span>
+                                    </div>
+
+                                    <div>
+                                        <h3 className="text-sm font-bold text-slate-900">{cond.title}</h3>
+                                        {cond.description && (
+                                            <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                                                {cond.description}
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    {/* Payment Details */}
+                                    {isPayment && (
+                                        <div className="flex flex-wrap items-center gap-2.5 pt-1 text-xs">
+                                            <span className="font-bold text-emerald-700 flex items-center gap-1">
+                                                <DollarSign className="w-3.5 h-3.5" />
+                                                {cond.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {cond.currency}
+                                            </span>
+                                            {cond.paymentType && (
+                                                <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold text-[10px]">
+                                                    {cond.paymentType} Payment
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* Due Date & Overdue Tag */}
+                                    <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 text-[11px] text-slate-500">
+                                        <div className="flex items-center gap-1.5">
+                                            <Calendar className="w-3 h-3 text-slate-400" />
+                                            <span>
+                                                {cond.dueDateUtc
+                                                    ? `Due: ${new Date(cond.dueDateUtc).toLocaleDateString()}`
+                                                    : 'No strict due date'}
+                                            </span>
+                                        </div>
+
+                                        {cond.isOverdue && cond.status === 'Pending' && (
+                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200 animate-pulse">
+                                                Action Overdue
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    <div className="pt-1 text-[10px] text-slate-400 italic">
+                                        Read-only milestone requirement. Processed in coordination with your Custodian representative.
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
 
             {/* HERO SECTION: Primary Next Action */}
             {primaryNextAction ? (
