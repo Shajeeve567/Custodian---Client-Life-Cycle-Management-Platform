@@ -44,9 +44,14 @@ public sealed class StallDetectionService : IStallDetectionService
 
     public StallStatusDto EvaluateForEngagement(Guid engagementId, IEnumerable<ClientAction> actions, DateTime nowUtc)
     {
-        // Only client-facing, non-internal pending actions are candidates for a stall
-        // Meaning: Internal-only task like staff review are not the client's blocker
+        // Only client-facing, non-internal pending actions are candidates for a stall.
+        // Internal-only tasks (e.g. staff review) are not the client's blocker, and
+        // Staff/Owner-assigned work is not something the client can act on — firing
+        // action.overdue for it would produce a "Reminder: Action awaiting your input"
+        // notification for work the client cannot do. Matches the portal's action
+        // selection in ClientPortalService.cs so the two views never disagree.
         var candidate = actions
+            .Where(a => a.AssignedToRole == "Client")
             .Where(a => !a.IsInternalOnly)
             .Where(a => a.Status == ClientActionStatus.Pending || a.Status == ClientActionStatus.Rejected)
             .OrderBy(a => a.StageNumber)
@@ -55,8 +60,6 @@ public sealed class StallDetectionService : IStallDetectionService
 
         if (candidate is null)
         {
-            // Nothing is pending
-            // Engagement is not stalled, regardless of current time
             return new StallStatusDto
             {
                 EngagementId = engagementId,

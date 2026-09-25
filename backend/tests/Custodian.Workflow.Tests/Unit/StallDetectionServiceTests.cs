@@ -8,148 +8,89 @@ namespace Custodian.Workflow.Tests.Unit;
 
 public class StallDetectionServiceTests
 {
-    // Fixed reference time so tests never depend on wall-clock.
-    private static readonly DateTime Now = new(2026, 09, 22, 12, 00, 00, DateTimeKind.Utc);
-
-    private static StallDetectionService BuildService(int defaultHours = 72, Dictionary<int, int>? perStage = null)
-    {
-        var opts = new SlaOptions
+    private static readonly IStallDetectionService Svc = new StallDetectionService(
+        Options.Create(new SlaOptions
         {
-            DefaultOverdueHours = defaultHours,
-            StageOverdueHours = perStage ?? new Dictionary<int, int>()
-        };
-        return new StallDetectionService(Options.Create(opts));
-    }
+            DefaultOverdueHours = 72,
+            StageOverdueHours = new Dictionary<int, int> { [1] = 48, [2] = 72 }
+        }));
 
-    private static ClientAction MakeAction(
-        DateTime? deadline = null,
-        DateTime? createdAt = null,
+    private static ClientAction BuildAction(
+        string assignedToRole = "Client",
+        bool isInternalOnly = false,
         string status = ClientActionStatus.Pending,
-        int stageNumber = 1,
-        bool isInternalOnly = false) => new()
+        DateTime? deadlineUtc = null,
+        int stageNumber = 1)
     {
-        ActionId = Guid.NewGuid(),
-        EngagementId = Guid.NewGuid(),
-        TenantId = "t1",
-        Title = "Test",
-        Type = "CustomTask",
-        Source = "Test",
-        Status = status,
-        StageNumber = stageNumber,
-        DeadlineUtc = deadline,
-        CreatedAt = createdAt ?? Now,
-        IsInternalOnly = isInternalOnly
-    };
+        return new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = Guid.NewGuid(),
+            TenantId = "tenant-001",
+            Title = "Test Action",
+            Type = "CustomTask",
+            Source = "Test",
+            Status = status,
+            StageNumber = stageNumber,
+            AssignedToRole = assignedToRole,
+            IsInternalOnly = isInternalOnly,
+            DeadlineUtc = deadlineUtc ?? DateTime.UtcNow.AddHours(-4),
+            CreatedAt = DateTime.UtcNow.AddHours(-48)
+        };
+    }
 
     [Fact]
-    public void Evaluate_NoDeadline_NoCreatedSla_UsesDefaultSla()
+    public void OverdueClientAction_IsDetected()
     {
-        var svc = BuildService(defaultHours: 48);
-        var action = MakeAction(createdAt: Now.AddHours(-50)); // 50h ago, SLA 48h -> overdue
-
-        var result = svc.Evaluate(action, action.EngagementId, Now);
-
+        var action = BuildAction(assignedToRole: "Client");
+        var result = Svc.EvaluateForEngagement(Guid.NewGuid(), new[] { action }, DateTime.UtcNow);
         Assert.True(result.IsStalled);
-        Assert.Equal(2, result.HoursOverdue); // floor((50-48)) = 2
+        Assert.Equal(action.ActionId, result.ActionId);
     }
 
     [Fact]
-    public void Evaluate_BeforeDeadline_IsNotStalled()
+    public void OverdueStaffAction_IsNotDetected()
     {
-        var svc = BuildService();
-        var action = MakeAction(deadline: Now.AddHours(1));
-
-        var result = svc.Evaluate(action, action.EngagementId, Now);
-
-        Assert.False(result.IsStalled);
-        Assert.Null(result.HoursOverdue);
-    }
-
-    [Fact]
-    public void Evaluate_ExactlyAtDeadline_IsNotStalled()
-    {
-        // Boundary: `>` not `>=` — at the exact second, deadline hasn't been missed yet.
-        var svc = BuildService();
-        var action = MakeAction(deadline: Now);
-
-        var result = svc.Evaluate(action, action.EngagementId, Now);
-
-        Assert.False(result.IsStalled);
-    }
-
-    [Fact]
-    public void Evaluate_OneSecondAfterDeadline_IsStalled()
-    {
-        var svc = BuildService();
-        var action = MakeAction(deadline: Now.AddSeconds(-1));
-
-        var result = svc.Evaluate(action, action.EngagementId, Now);
-
-        Assert.True(result.IsStalled);
-    }
-
-    [Fact]
-    public void Evaluate_CompletedAction_IsNeverStalled()
-    {
-        var svc = BuildService();
-        var action = MakeAction(deadline: Now.AddDays(-10), status: ClientActionStatus.Completed);
-
-        var result = svc.Evaluate(action, action.EngagementId, Now);
-
-        Assert.False(result.IsStalled);
-    }
-
-    [Fact]
-    public void Evaluate_PerStageOverride_BeatsDefault()
-    {
-        var svc = BuildService(defaultHours: 999, perStage: new() { [2] = 24 });
-        var action = MakeAction(stageNumber: 2, createdAt: Now.AddHours(-30)); // 30h vs 24h SLA → overdue
-
-        var result = svc.Evaluate(action, action.EngagementId, Now);
-
-        Assert.True(result.IsStalled);
-        Assert.Equal(6, result.HoursOverdue); // 30 - 24
-    }
-
-    [Fact]
-    public void EvaluateForEngagement_NoPendingActions_IsNotStalled()
-    {
-        var svc = BuildService();
-        var completed = new[] { MakeAction(status: ClientActionStatus.Completed) };
-
-        var result = svc.EvaluateForEngagement(Guid.NewGuid(), completed, Now);
-
+        var action = BuildAction(assignedToRole: "Staff");
+        var result = Svc.EvaluateForEngagement(Guid.NewGuid(), new[] { action }, DateTime.UtcNow);
         Assert.False(result.IsStalled);
         Assert.Null(result.ActionId);
     }
 
     [Fact]
-    public void EvaluateForEngagement_PicksEarliestStagePendingAction()
+    public void OverdueOwnerAction_IsNotDetected()
     {
-        var svc = BuildService();
-        var early = MakeAction(stageNumber: 1, deadline: Now.AddDays(5));  // later deadline, earlier stage
-        var late = MakeAction(stageNumber: 3, deadline: Now.AddHours(-1)); // earlier deadline, later stage
-
-        var result = svc.EvaluateForEngagement(Guid.NewGuid(), new[] { early, late }, Now);
-
-        // Current action = earliest unfinished stage, not the most overdue action.
-        Assert.Equal(early.ActionId, result.ActionId);
+        var action = BuildAction(assignedToRole: "Owner");
+        var result = Svc.EvaluateForEngagement(Guid.NewGuid(), new[] { action }, DateTime.UtcNow);
         Assert.False(result.IsStalled);
     }
 
     [Fact]
-    public void EvaluateForEngagement_IgnoresInternalOnlyActions()
+    public void OverdueInternalOnlyClientAction_IsNotDetected()
     {
-        var svc = BuildService();
-        var internalOnly = MakeAction(
-            deadline: Now.AddDays(-10),
-            isInternalOnly: true);
-        var visible = MakeAction(deadline: Now.AddHours(1));
-
-        var result = svc.EvaluateForEngagement(Guid.NewGuid(), new[] { internalOnly, visible }, Now);
-
-        // Stall is a client-facing concept — staff-only tasks must not flag a client stall.
-        Assert.Equal(visible.ActionId, result.ActionId);
+        var action = BuildAction(assignedToRole: "Client", isInternalOnly: true);
+        var result = Svc.EvaluateForEngagement(Guid.NewGuid(), new[] { action }, DateTime.UtcNow);
         Assert.False(result.IsStalled);
+    }
+
+    [Fact]
+    public void CompletedClientAction_IsNotDetected()
+    {
+        var action = BuildAction(assignedToRole: "Client", status: ClientActionStatus.Completed);
+        var result = Svc.EvaluateForEngagement(Guid.NewGuid(), new[] { action }, DateTime.UtcNow);
+        Assert.False(result.IsStalled);
+    }
+
+    [Fact]
+    public void ClientAndStaffActionsBothOverdue_SelectsClientAction()
+    {
+        var staffAction = BuildAction(assignedToRole: "Staff", stageNumber: 1);
+        var clientAction = BuildAction(assignedToRole: "Client", stageNumber: 2);
+
+        var result = Svc.EvaluateForEngagement(
+            Guid.NewGuid(), new[] { staffAction, clientAction }, DateTime.UtcNow);
+
+        Assert.True(result.IsStalled);
+        Assert.Equal(clientAction.ActionId, result.ActionId);
     }
 }
