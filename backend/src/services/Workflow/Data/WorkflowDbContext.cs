@@ -12,6 +12,7 @@ public class WorkflowDbContext : DbContext
     public DbSet<Engagement> Engagements => Set<Engagement>();
     public DbSet<ClientAction> ClientActions => Set<ClientAction>();
     public DbSet<Requirement> Requirements => Set<Requirement>();
+    public DbSet<EngagementCondition> EngagementConditions => Set<EngagementCondition>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -130,6 +131,47 @@ public class WorkflowDbContext : DbContext
             entity.HasIndex(r => r.TenantId).HasDatabaseName("idx_requirement_tenant_id");
             entity.HasIndex(r => r.EngagementId).HasDatabaseName("idx_requirement_engagement_id");
             entity.HasIndex(r => new { r.TenantId, r.EngagementId }).HasDatabaseName("idx_requirement_tenant_engagement");
+        });
+
+        modelBuilder.Entity<EngagementCondition>(entity =>
+        {
+            entity.ToTable("engagement_conditions");
+
+            entity.HasKey(c => c.ConditionId);
+
+            entity.Property(c => c.ConditionId).HasColumnName("condition_id");
+            entity.Property(c => c.EngagementId).HasColumnName("engagement_id").IsRequired();
+            entity.Property(c => c.TenantId).HasColumnName("tenant_id").HasMaxLength(36).IsRequired();
+            entity.Property(c => c.Type).HasColumnName("type").HasMaxLength(20).IsRequired();
+            entity.Property(c => c.IsActive).HasColumnName("is_active").HasDefaultValue(true).IsRequired();
+            entity.Property(c => c.Status).HasColumnName("status").HasMaxLength(20).HasDefaultValue(ConditionStatus.Pending).IsRequired();
+            entity.Property(c => c.RequiredBeforeStage)
+                .HasColumnName("required_before_stage")
+                .HasConversion<string>()
+                .HasMaxLength(40)
+                .HasDefaultValue(EngagementStage.Execution)
+                .IsRequired();
+            entity.Property(c => c.Title).HasColumnName("title").HasMaxLength(200).IsRequired();
+            entity.Property(c => c.Description).HasColumnName("description");
+            entity.Property(c => c.DueDateUtc).HasColumnName("due_date_utc");
+            entity.Property(c => c.Amount).HasColumnName("amount").HasPrecision(18, 2);
+            entity.Property(c => c.Currency).HasColumnName("currency").HasMaxLength(3);
+            entity.Property(c => c.PaymentType).HasColumnName("payment_type").HasMaxLength(30);
+            entity.Property(c => c.InternalNote).HasColumnName("internal_note");
+            entity.Property(c => c.CreatedBy).HasColumnName("created_by").HasMaxLength(100).IsRequired();
+            entity.Property(c => c.CreatedAt).HasColumnName("created_at").IsRequired();
+            entity.Property(c => c.UpdatedBy).HasColumnName("updated_by").HasMaxLength(100);
+            entity.Property(c => c.UpdatedAt).HasColumnName("updated_at");
+            entity.Property(c => c.DeactivatedBy).HasColumnName("deactivated_by").HasMaxLength(100);
+            entity.Property(c => c.DeactivatedAt).HasColumnName("deactivated_at");
+            entity.Property(c => c.DeactivationReason).HasColumnName("deactivation_reason");
+            entity.Property(c => c.SatisfiedAt).HasColumnName("satisfied_at");
+            entity.Property(c => c.SatisfiedBy).HasColumnName("satisfied_by").HasMaxLength(100);
+
+            entity.HasIndex(c => c.TenantId).HasDatabaseName("idx_condition_tenant_id");
+            entity.HasIndex(c => c.EngagementId).HasDatabaseName("idx_condition_engagement_id");
+            entity.HasIndex(c => new { c.TenantId, c.EngagementId }).HasDatabaseName("idx_condition_tenant_engagement");
+            entity.HasIndex(c => new { c.TenantId, c.EngagementId, c.Type, c.IsActive }).HasDatabaseName("idx_condition_tenant_eng_type_active");
         });
     }
 }
