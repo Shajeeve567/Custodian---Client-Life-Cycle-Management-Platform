@@ -1,5 +1,7 @@
+using Custodian.Workflow.Data;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
+using Microsoft.EntityFrameworkCore;
 
 namespace Custodian.Workflow.Services.Gates;
 
@@ -10,16 +12,19 @@ public class GateEvaluator : IGateEvaluator
 
     private readonly IDocumentComplianceClient _documentClient;
     private readonly IConditionService _conditionService;
+    private readonly WorkflowDbContext? _dbContext;
     private readonly ILogger<GateEvaluator> _logger;
 
     public GateEvaluator(
         IDocumentComplianceClient documentClient,
         IConditionService conditionService,
-        ILogger<GateEvaluator> logger)
+        ILogger<GateEvaluator> logger,
+        WorkflowDbContext? dbContext = null)
     {
         _documentClient = documentClient;
         _conditionService = conditionService;
         _logger = logger;
+        _dbContext = dbContext;
     }
 
     public async Task<GateEvaluationResult> EvaluateAsync(Guid engagementId, string tenantId, EngagementStage targetStage, CancellationToken ct = default)
@@ -58,6 +63,50 @@ public class GateEvaluator : IGateEvaluator
                     condition.Title,
                     false,
                     $"{condition.Type} condition '{condition.Title}' is not yet satisfied (status: {condition.Status})."));
+            }
+        }
+
+        // 2. Requirement evaluation (19-N4: any requested/rejected/submitted requirement for current or earlier stages blocks)
+        if (_dbContext != null)
+        {
+            try
+            {
+                var engagement = await _dbContext.Engagements
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId, ct);
+
+                var currentStageNumber = engagement != null ? (int)engagement.Stage + 1 : (int)targetStage;
+
+                var requirements = await _dbContext.Requirements
+                    .AsNoTracking()
+                    .Where(r => r.EngagementId == engagementId && r.TenantId == tenantId)
+                    .ToListAsync(ct);
+
+                var activeRequirements = requirements
+                    .Where(r => !r.StageNumber.HasValue || r.StageNumber.Value <= currentStageNumber)
+                    .ToList();
+
+                foreach (var req in activeRequirements)
+                {
+                    if (string.Equals(req.Status, RequirementStatus.Approved, StringComparison.OrdinalIgnoreCase))
+                    {
+                        results.Add(new GateRequirementResult(req.Type, true, null));
+                    }
+                    else
+                    {
+                        results.Add(new GateRequirementResult(
+                            req.Type,
+                            false,
+                            $"Required information '{req.Type}' has not been provided/approved."));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gate evaluation blocked: Failed to check requirements for engagement {EngagementId}", engagementId);
+                return GateEvaluationResult.Blocked(
+                    "Unable to verify engagement requirements right now. Please try again shortly.",
+                    results);
             }
         }
 

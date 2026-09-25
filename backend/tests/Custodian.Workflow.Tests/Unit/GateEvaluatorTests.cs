@@ -1,7 +1,9 @@
+using Custodian.Workflow.Data;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Services;
 using Custodian.Workflow.Services.Gates;
+using Microsoft.EntityFrameworkCore;
 using Moq;
 using Xunit;
 
@@ -431,5 +433,148 @@ public class GateEvaluatorTests
         // Assert: fails closed
         Assert.False(result.IsSatisfied);
         Assert.Contains("Unable to verify engagement conditions right now", result.Reason);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_UnapprovedRequirement_BlocksGateWithSpecificReason()
+    {
+        // Arrange
+        var dbName = Guid.NewGuid().ToString();
+        var options = new DbContextOptionsBuilder<WorkflowDbContext>()
+            .UseInMemoryDatabase(databaseName: dbName)
+            .Options;
+        using var db = new WorkflowDbContext(options);
+
+        var engagement = new Engagement
+        {
+            EngagementId = _engagementId,
+            TenantId = TenantId,
+            ClientId = "client-001",
+            StaffId = "staff-001",
+            Stage = EngagementStage.Onboarding,
+            Status = EngagementStatus.Started
+        };
+        var requirement = new Requirement
+        {
+            RequirementId = Guid.NewGuid(),
+            EngagementId = _engagementId,
+            TenantId = TenantId,
+            Type = "CompanyRegistrationNumber",
+            Status = RequirementStatus.Requested, // NOT Approved
+            StageNumber = 1
+        };
+
+        await db.Engagements.AddAsync(engagement);
+        await db.Requirements.AddAsync(requirement);
+        await db.SaveChangesAsync();
+
+        var evaluatorWithDb = new GateEvaluator(
+            _mockDocumentClient.Object,
+            _mockConditionService.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GateEvaluator>.Instance,
+            db);
+
+        // Act: attempt to advance to DocumentCollection
+        var result = await evaluatorWithDb.EvaluateAsync(_engagementId, TenantId, EngagementStage.DocumentCollection);
+
+        // Assert
+        Assert.False(result.IsSatisfied);
+        Assert.Contains("Required information 'CompanyRegistrationNumber' has not been provided/approved.", result.Reason);
+        Assert.Contains(result.Requirements, r => !r.IsSatisfied && r.RequirementName == "CompanyRegistrationNumber");
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_ApprovedRequirement_SatisfiesRequirementGate()
+    {
+        // Arrange
+        var dbName = Guid.NewGuid().ToString();
+        var options = new DbContextOptionsBuilder<WorkflowDbContext>()
+            .UseInMemoryDatabase(databaseName: dbName)
+            .Options;
+        using var db = new WorkflowDbContext(options);
+
+        var engagement = new Engagement
+        {
+            EngagementId = _engagementId,
+            TenantId = TenantId,
+            ClientId = "client-001",
+            StaffId = "staff-001",
+            Stage = EngagementStage.Onboarding,
+            Status = EngagementStatus.Started
+        };
+        var requirement = new Requirement
+        {
+            RequirementId = Guid.NewGuid(),
+            EngagementId = _engagementId,
+            TenantId = TenantId,
+            Type = "CompanyRegistrationNumber",
+            Status = RequirementStatus.Approved, // APPROVED
+            StageNumber = 1
+        };
+
+        await db.Engagements.AddAsync(engagement);
+        await db.Requirements.AddAsync(requirement);
+        await db.SaveChangesAsync();
+
+        var evaluatorWithDb = new GateEvaluator(
+            _mockDocumentClient.Object,
+            _mockConditionService.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GateEvaluator>.Instance,
+            db);
+
+        // Act
+        var result = await evaluatorWithDb.EvaluateAsync(_engagementId, TenantId, EngagementStage.DocumentCollection);
+
+        // Assert
+        Assert.True(result.IsSatisfied);
+        Assert.Null(result.Reason);
+        Assert.Contains(result.Requirements, r => r.IsSatisfied && r.RequirementName == "CompanyRegistrationNumber");
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_LaterStageRequirement_DoesNotBlockCurrentStageGate()
+    {
+        // Arrange
+        var dbName = Guid.NewGuid().ToString();
+        var options = new DbContextOptionsBuilder<WorkflowDbContext>()
+            .UseInMemoryDatabase(databaseName: dbName)
+            .Options;
+        using var db = new WorkflowDbContext(options);
+
+        var engagement = new Engagement
+        {
+            EngagementId = _engagementId,
+            TenantId = TenantId,
+            ClientId = "client-001",
+            StaffId = "staff-001",
+            Stage = EngagementStage.Onboarding, // Stage 1
+            Status = EngagementStatus.Started
+        };
+        var futureRequirement = new Requirement
+        {
+            RequirementId = Guid.NewGuid(),
+            EngagementId = _engagementId,
+            TenantId = TenantId,
+            Type = "ExecutionMilestoneSignoff",
+            Status = RequirementStatus.Requested, // Unapproved, but belongs to Stage 4
+            StageNumber = 4
+        };
+
+        await db.Engagements.AddAsync(engagement);
+        await db.Requirements.AddAsync(futureRequirement);
+        await db.SaveChangesAsync();
+
+        var evaluatorWithDb = new GateEvaluator(
+            _mockDocumentClient.Object,
+            _mockConditionService.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GateEvaluator>.Instance,
+            db);
+
+        // Act: advancing to DocumentCollection (Stage 2)
+        var result = await evaluatorWithDb.EvaluateAsync(_engagementId, TenantId, EngagementStage.DocumentCollection);
+
+        // Assert: future stage requirement does not block Stage 1 -> Stage 2 advance
+        Assert.True(result.IsSatisfied);
+        Assert.Null(result.Reason);
     }
 }
