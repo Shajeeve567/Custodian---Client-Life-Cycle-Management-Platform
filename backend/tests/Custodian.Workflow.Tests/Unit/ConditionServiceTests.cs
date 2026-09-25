@@ -213,7 +213,7 @@ public class ConditionServiceTests
     [InlineData(null)]
     [InlineData(0)]
     [InlineData(-150)]
-    public async Task AttachConditionAsync_PaymentWithoutPositiveAmount_ThrowsArgumentException(double? amountVal)
+    public async Task AttachConditionAsync_PaymentWithoutPositiveAmount_ThrowsArgumentException(int? amountVal)
     {
         // Arrange
         using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
