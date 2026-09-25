@@ -36,6 +36,6 @@ jobs:
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
-          app-name: ${{ secrets.AZURE_WORKFLOW_APP_NAME }}
-          publish-profile: ${{ secrets.AZURE_WORKFLOW_PUBLISH_PROFILE }}
+          app-name: ${{ secrets.AZURE_WORKFLOW_STAGING_APP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WORKFLOW_STAGING_PUBLISH_PROFILE }}
           package: ./publish/workflow
