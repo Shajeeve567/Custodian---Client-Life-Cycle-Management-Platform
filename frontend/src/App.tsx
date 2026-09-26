@@ -10,6 +10,7 @@ import { DocumentsPage } from './pages/DocumentsPage';
 import { AuditPage } from './pages/AuditPage';
 import { PortalPage } from './pages/PortalPage';
 import { WorkspacePage } from './pages/WorkspacePage';
+import { StallQueuePage } from './pages/StallQueuePage';
 import './App.css';
 
 export const App: React.FC = () => {
@@ -35,6 +36,7 @@ export const App: React.FC = () => {
                             <Route path="/workspace/:engagementId" element={<WorkspacePage />} />
                             <Route path="/actions" element={<WorkflowsPage />} />
                             <Route path="/workflows" element={<Navigate to="/actions" replace />} />
+                            <Route path="/stall-queue" element={<StallQueuePage />} />
                             <Route path="/documents" element={<DocumentsPage />} />
                             <Route path="/audit" element={<AuditPage />} />
                         </Route>

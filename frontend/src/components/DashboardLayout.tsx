@@ -59,8 +59,20 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                         {/* Right Area: Workspace Badge & User Profile */}
                         <div className="flex items-center gap-3">
                             {/* For staff/admin, provide quick toggle between Engagements and Portal */}
+                            {/* For staff/admin, provide quick nav between primary operational views */}
                             {role !== 'Client' && (
                                 <div className="hidden md:flex items-center gap-2 mr-1">
+                                    <Link
+                                        to="/stall-queue"
+                                        className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition ${
+                                            location.pathname === '/stall-queue'
+                                                ? 'border-amber-300 bg-amber-50 text-amber-800'
+                                                : 'border-slate-200 hover:bg-slate-50 text-slate-600'
+                                        }`}
+                                    >
+                                        Stall Queue
+                                    </Link>
+
                                     {location.pathname === '/portal' ? (
                                         <Link
                                             to="/engagements"
@@ -133,6 +145,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                     <div className="flex items-center gap-6">
                         {role !== 'Client' && (
                             <>
+                                <Link to="/stall-queue" className="hover:text-indigo-600 font-medium transition">Stall Queue</Link>
                                 <Link to="/documents" className="hover:text-indigo-600 font-medium transition">Document Vault</Link>
                                 <Link to="/audit" className="hover:text-indigo-600 font-medium transition">Audit Log</Link>
                             </>

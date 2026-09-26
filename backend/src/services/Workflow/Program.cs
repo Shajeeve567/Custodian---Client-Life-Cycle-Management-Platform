@@ -50,6 +50,9 @@ builder.Services.AddScoped<IStallDetectionService, StallDetectionService>();
 builder.Services.AddScoped<IStallActionsProvider, StallActionsProvider>();
 builder.Services.AddSingleton<IStallEventDeduplicator, StallEventDeduplicator>();
 
+// CSTD-34
+builder.Services.AddScoped<IStallQueueProvider, StallQueueProvider>();
+builder.Services.AddScoped<IStallQueueService, StallQueueService>();
 
 // Audit transport is feature-flagged: "Http" (default) keeps the existing
 // synchronous HTTP call to the Audit service; "Kafka" switches to publishing

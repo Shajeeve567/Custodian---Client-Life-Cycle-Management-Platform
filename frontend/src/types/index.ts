@@ -287,3 +287,18 @@ export interface DocumentMetadata {
     deletedAt?: string | null;
     deletedBy?: string | null;
 }
+
+export interface StallQueueItem {
+    engagementId: string;
+    tenantId: string;
+    clientId: string;
+    staffId: string;
+    engagementStage: string;
+    blockerActionId: string;
+    blockerActionTitle: string;
+    blockerStageNumber: number;
+    nextAction: string;
+    deadlineUtc: string;
+    hoursOverdue: number;
+    evaluatedAtUtc: string;
+}
