@@ -414,7 +414,8 @@ public class NextActionRulesTests
             Title = "Proof of Address",
             Type = "DocumentUpload",
             Status = ClientActionStatus.Uploaded,
-            AssignedToRole = "Staff",
+            // Evidence is client-assigned; the Uploaded state hands it to staff for verification.
+            AssignedToRole = "Client",
             StageNumber = 1
         };
 
@@ -1021,5 +1022,301 @@ public class NextActionRulesTests
             Assert.Equal(run1.Blockers[i].Title, run2.Blockers[i].Title);
             Assert.Equal(run1.Blockers[i].PriorityRank, run2.Blockers[i].PriorityRank);
         }
+    }
+
+    // =========================================================================
+    // Correctness fixes (review A1–A8)
+    // =========================================================================
+
+    [Fact]
+    public void A1_ClientAssignedUploadedEvidence_IsStaffVerificationAtRank9_AndNotClientPrimary()
+    {
+        var engagement = CreateEngagement(EngagementStage: EngagementStage.DocumentCollection);
+        var action = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            Title = "Passport",
+            Type = ClientActionType.KycDocument,
+            Status = ClientActionStatus.Uploaded,
+            AssignedToRole = "Client",
+            StageNumber = 2
+        };
+        var inputs = new NextActionInputs { Engagement = engagement, Actions = new[] { action } };
+
+        var staff = NextActionRules.Decide(inputs, NextActionView.Staff, _now);
+        var client = NextActionRules.Decide(inputs, NextActionView.Client, _now);
+
+        Assert.Equal(9, staff.PrimaryAction!.PriorityRank);
+        Assert.Equal(ResponsibleParty.Staff, staff.PrimaryAction.ResponsibleParty);
+        Assert.Equal(action.ActionId, staff.PrimaryAction.ActionId);
+        Assert.Equal(OverallState.AwaitingStaff, staff.OverallState);
+
+        Assert.Null(client.PrimaryAction);
+        Assert.Equal(OverallState.AwaitingStaff, client.OverallState);
+        Assert.Contains(client.Blockers, b => b.Reason == "Your submission is being reviewed by the Custodian team.");
+    }
+
+    [Fact]
+    public void A1_PendingActionWithCompliantUnverifiedLinkedDocument_IsStaffRank9()
+    {
+        var engagement = CreateEngagement(EngagementStage: EngagementStage.DocumentCollection);
+        var docId = Guid.NewGuid();
+        var action = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            Title = "Passport",
+            Type = ClientActionType.KycDocument,
+            Status = ClientActionStatus.Pending,
+            AssignedToRole = "Client",
+            StageNumber = 2,
+            LinkedDocumentId = docId
+        };
+        var inputs = new NextActionInputs
+        {
+            Engagement = engagement,
+            Actions = new[] { action },
+            Documents = new[] { new DocumentSummaryDto { DocumentId = docId, ComplianceStatus = "Compliant", VerificationStatus = "Unverified" } }
+        };
+
+        var result = NextActionRules.Decide(inputs, NextActionView.Staff, _now);
+
+        Assert.Equal(9, result.PrimaryAction!.PriorityRank);
+        Assert.Equal(docId, result.PrimaryAction.SourceId);
+    }
+
+    [Fact]
+    public void A4_OverdueClientUploadedEvidence_IsStaffRank8_NotClientRank1()
+    {
+        var engagement = CreateEngagement(EngagementStage: EngagementStage.DocumentCollection);
+        var action = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            Title = "Passport",
+            Type = ClientActionType.KycDocument,
+            Status = ClientActionStatus.Uploaded,
+            AssignedToRole = "Client",
+            StageNumber = 2,
+            DeadlineUtc = _now.UtcDateTime.AddDays(-2)
+        };
+        var inputs = new NextActionInputs { Engagement = engagement, Actions = new[] { action } };
+
+        var result = NextActionRules.Decide(inputs, NextActionView.Staff, _now);
+
+        Assert.Equal(8, result.PrimaryAction!.PriorityRank);
+        Assert.Equal(ResponsibleParty.Staff, result.PrimaryAction.ResponsibleParty);
+        Assert.Equal(NextActionKind.DocumentVerification, result.PrimaryAction.Kind);
+        Assert.True(result.PrimaryAction.IsOverdue);
+    }
+
+    [Theory]
+    [InlineData(ClientActionType.KycDocument)]
+    [InlineData(ClientActionType.SignAgreement)]
+    [InlineData(ClientActionType.ProofOfAddress)]
+    [InlineData(ClientActionType.DocumentUpload)]
+    public void A7_PendingEvidenceTypes_AreRank4DocumentUpload(string type)
+    {
+        var engagement = CreateEngagement(EngagementStage: EngagementStage.DocumentCollection);
+        var action = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            Title = "Evidence",
+            Type = type,
+            Status = ClientActionStatus.Pending,
+            AssignedToRole = "Client",
+            StageNumber = 2
+        };
+        var inputs = new NextActionInputs { Engagement = engagement, Actions = new[] { action } };
+
+        var result = NextActionRules.Decide(inputs, NextActionView.Staff, _now);
+
+        Assert.Equal(4, result.PrimaryAction!.PriorityRank);
+        Assert.Equal(NextActionKind.DocumentUpload, result.PrimaryAction.Kind);
+    }
+
+    [Fact]
+    public void A2_ConditionWithLinkedAction_ProducesSingleItemCarryingActionId()
+    {
+        var engagement = CreateEngagement(EngagementStage: EngagementStage.Verification);
+        var conditionId = Guid.NewGuid();
+        var linkedAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            Title = "Scope approval",
+            Type = ClientActionType.Approval,
+            Status = ClientActionStatus.Pending,
+            AssignedToRole = "Client",
+            StageNumber = 3,
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = conditionId
+        };
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            RequiredBeforeStage = EngagementStage.Execution,
+            Title = "Scope approval"
+        };
+        var inputs = new NextActionInputs
+        {
+            Engagement = engagement,
+            Actions = new[] { linkedAction },
+            ActiveConditions = new[] { condition }
+        };
+
+        var staff = NextActionRules.Decide(inputs, NextActionView.Staff, _now);
+        var client = NextActionRules.Decide(inputs, NextActionView.Client, _now);
+
+        Assert.Equal(5, staff.PrimaryAction!.PriorityRank);
+        Assert.Equal(linkedAction.ActionId, staff.PrimaryAction.ActionId);
+        Assert.Equal(conditionId, staff.PrimaryAction.SourceId);
+        Assert.Empty(staff.Blockers);
+        Assert.DoesNotContain(staff.Blockers, b => b.PriorityRank == 7);
+
+        Assert.Equal(linkedAction.ActionId, client.PrimaryAction!.ActionId);
+        Assert.Empty(client.Blockers);
+    }
+
+    [Fact]
+    public void A2_AC4_SatisfiedConditionWithStillPendingLinkedAction_IsNotABlocker()
+    {
+        var engagement = CreateEngagement(EngagementStage: EngagementStage.Verification);
+        var conditionId = Guid.NewGuid();
+        var linkedAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            Title = "Scope approval",
+            Type = ClientActionType.Approval,
+            Status = ClientActionStatus.Pending,
+            AssignedToRole = "Client",
+            StageNumber = 3,
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = conditionId
+        };
+        var satisfied = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Satisfied,
+            IsActive = true,
+            RequiredBeforeStage = EngagementStage.Execution,
+            Title = "Scope approval"
+        };
+        var inputs = new NextActionInputs
+        {
+            Engagement = engagement,
+            Actions = new[] { linkedAction },
+            ActiveConditions = new[] { satisfied },
+            NextStageGate = GateEvaluationResult.Satisfied()
+        };
+
+        var result = NextActionRules.Decide(inputs, NextActionView.Staff, _now);
+
+        Assert.Equal(NextActionKind.AdvanceStage, result.PrimaryAction!.Kind);
+        Assert.Equal(OverallState.ReadyToAdvance, result.OverallState);
+        Assert.Empty(result.Blockers);
+    }
+
+    [Fact]
+    public void A3_RejectedApproval_NeverExposesInternalNote()
+    {
+        const string internalNote = "Staff only: client disputed the fee";
+        var engagement = CreateEngagement(EngagementStage: EngagementStage.Verification);
+        var condition = new EngagementCondition
+        {
+            ConditionId = Guid.NewGuid(),
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Rejected,
+            IsActive = true,
+            RequiredBeforeStage = EngagementStage.Execution,
+            Title = "Scope approval",
+            InternalNote = internalNote
+        };
+        var inputs = new NextActionInputs { Engagement = engagement, ActiveConditions = new[] { condition } };
+
+        foreach (var view in new[] { NextActionView.Staff, NextActionView.Client })
+        {
+            var result = NextActionRules.Decide(inputs, view, _now);
+            var items = new[] { result.PrimaryAction! }.Concat(result.Blockers);
+
+            Assert.Equal("Approval was declined.", result.PrimaryAction!.Reason);
+            Assert.DoesNotContain(items, i => i.Reason.Contains(internalNote) || i.Title.Contains(internalNote));
+        }
+    }
+
+    [Fact]
+    public void A5_RequirementWhoseMirroredActionIsOverdue_IsPromotedToRank1()
+    {
+        var engagement = CreateEngagement(EngagementStage: EngagementStage.Onboarding);
+        var requirementId = Guid.NewGuid();
+        var requirement = new Requirement
+        {
+            RequirementId = requirementId,
+            Type = "TaxId",
+            Status = RequirementStatus.Requested,
+            StageNumber = 1
+        };
+        var mirrored = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            Title = "Provide Tax ID",
+            Type = ClientActionType.Requirement,
+            Status = ClientActionStatus.Pending,
+            AssignedToRole = "Client",
+            StageNumber = 1,
+            LinkedRequirementId = requirementId,
+            DeadlineUtc = _now.UtcDateTime.AddDays(-1)
+        };
+        var inputs = new NextActionInputs
+        {
+            Engagement = engagement,
+            Requirements = new[] { requirement },
+            Actions = new[] { mirrored }
+        };
+
+        var result = NextActionRules.Decide(inputs, NextActionView.Staff, _now);
+
+        Assert.Equal(1, result.PrimaryAction!.PriorityRank);
+        Assert.Equal(NextActionKind.RequirementSubmission, result.PrimaryAction.Kind);
+        Assert.True(result.PrimaryAction.IsOverdue);
+        Assert.Equal(mirrored.ActionId, result.PrimaryAction.ActionId);
+        Assert.Empty(result.Blockers);
+    }
+
+    [Fact]
+    public void A8_ConditionsUnavailable_SetsBlockedExternal_KeepsClientItems_NeverReadyToAdvance()
+    {
+        var engagement = CreateEngagement(EngagementStage: EngagementStage.Onboarding);
+        var clientTask = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            Title = "Client Form",
+            Type = ClientActionType.CustomTask,
+            Status = ClientActionStatus.Pending,
+            AssignedToRole = "Client",
+            StageNumber = 1
+        };
+
+        var withItems = NextActionRules.Decide(new NextActionInputs
+        {
+            Engagement = engagement,
+            Actions = new[] { clientTask },
+            IsConditionsUnavailable = true
+        }, NextActionView.Client, _now);
+
+        Assert.Equal(OverallState.BlockedExternal, withItems.OverallState);
+        Assert.Equal("Client Form", withItems.PrimaryAction!.Title);
+        Assert.Contains(withItems.Blockers, b => b.Reason == "Condition status temporarily unavailable");
+
+        var nothingOpen = NextActionRules.Decide(new NextActionInputs
+        {
+            Engagement = engagement,
+            IsConditionsUnavailable = true,
+            NextStageGate = GateEvaluationResult.Satisfied()
+        }, NextActionView.Staff, _now);
+
+        Assert.Equal(OverallState.BlockedExternal, nothingOpen.OverallState);
+        Assert.Null(nothingOpen.PrimaryAction);
     }
 }

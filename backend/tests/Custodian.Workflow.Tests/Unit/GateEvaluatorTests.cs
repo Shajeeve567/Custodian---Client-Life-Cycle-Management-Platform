@@ -577,4 +577,52 @@ public class GateEvaluatorTests
         Assert.True(result.IsSatisfied);
         Assert.Null(result.Reason);
     }
+
+    [Fact]
+    public async Task EvaluateAsync_WithPrefetchedInputs_MatchesFetchingOverload_WithoutCallingDependencies()
+    {
+        // Arrange: KYC compliant but unverified, proof of address missing; one pending approval gating Verification
+        var documents = new List<DocumentSummaryDto>
+        {
+            MakeDoc("KYC_PASSPORT", "Compliant", "Unverified")
+        };
+        var conditions = new List<EngagementCondition>
+        {
+            new()
+            {
+                ConditionId = Guid.NewGuid(),
+                EngagementId = _engagementId,
+                TenantId = TenantId,
+                Type = ConditionType.Approval,
+                Status = ConditionStatus.Pending,
+                IsActive = true,
+                RequiredBeforeStage = EngagementStage.Verification,
+                Title = "Scope approval"
+            }
+        };
+
+        _mockDocumentClient
+            .Setup(c => c.GetDocumentsAsync(_engagementId, TenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(documents);
+        _mockConditionService
+            .Setup(c => c.GetActiveConditionsAsync(_engagementId, TenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conditions);
+
+        var fetched = await _evaluator.EvaluateAsync(_engagementId, TenantId, EngagementStage.Verification);
+        _mockDocumentClient.Invocations.Clear();
+        _mockConditionService.Invocations.Clear();
+
+        // Act
+        var prefetched = await _evaluator.EvaluateAsync(_engagementId, TenantId, EngagementStage.Verification, documents, conditions);
+
+        // Assert
+        Assert.False(prefetched.IsSatisfied);
+        Assert.Equal(fetched.IsSatisfied, prefetched.IsSatisfied);
+        Assert.Equal(fetched.Reason, prefetched.Reason);
+        Assert.Equal(
+            fetched.Requirements.Select(r => (r.RequirementName, r.IsSatisfied, r.Reason)),
+            prefetched.Requirements.Select(r => (r.RequirementName, r.IsSatisfied, r.Reason)));
+        _mockDocumentClient.Verify(c => c.GetDocumentsAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockConditionService.Verify(c => c.GetActiveConditionsAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

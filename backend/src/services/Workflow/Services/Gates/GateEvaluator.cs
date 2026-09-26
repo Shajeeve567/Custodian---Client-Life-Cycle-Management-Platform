@@ -44,6 +44,30 @@ public class GateEvaluator : IGateEvaluator
                 Array.Empty<GateRequirementResult>());
         }
 
+        return await EvaluateCoreAsync(engagementId, tenantId, targetStage, activeConditions, prefetchedDocuments: null, ct);
+    }
+
+    public Task<GateEvaluationResult> EvaluateAsync(
+        Guid engagementId,
+        string tenantId,
+        EngagementStage targetStage,
+        IReadOnlyList<DocumentSummaryDto> documents,
+        IReadOnlyList<EngagementCondition> activeConditions,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(documents);
+        ArgumentNullException.ThrowIfNull(activeConditions);
+        return EvaluateCoreAsync(engagementId, tenantId, targetStage, activeConditions, documents, ct);
+    }
+
+    private async Task<GateEvaluationResult> EvaluateCoreAsync(
+        Guid engagementId,
+        string tenantId,
+        EngagementStage targetStage,
+        IReadOnlyList<EngagementCondition> activeConditions,
+        IReadOnlyList<DocumentSummaryDto>? prefetchedDocuments,
+        CancellationToken ct)
+    {
         var results = new List<GateRequirementResult>();
 
         // Conditions gating entering the targetStage
@@ -117,7 +141,7 @@ public class GateEvaluator : IGateEvaluator
             IReadOnlyList<DocumentSummaryDto> documents;
             try
             {
-                documents = await _documentClient.GetDocumentsAsync(engagementId, tenantId, ct);
+                documents = prefetchedDocuments ?? await _documentClient.GetDocumentsAsync(engagementId, tenantId, ct);
             }
             catch (DocumentComplianceUnavailableException ex)
             {

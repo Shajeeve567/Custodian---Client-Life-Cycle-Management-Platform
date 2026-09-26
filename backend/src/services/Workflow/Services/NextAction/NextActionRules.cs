@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Services.Gates;
@@ -13,6 +14,24 @@ public static class NextActionRules
 {
     private const string StaffReviewBlockerReason = "Your submission is being reviewed by the Custodian team.";
     private const string DocumentUnavailableReason = "Document status temporarily unavailable";
+    private const string ConditionUnavailableReason = "Condition status temporarily unavailable";
+
+    // Action types whose completion requires the client to upload evidence (rank 4 when pending).
+    private static readonly HashSet<string> EvidenceActionTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ClientActionType.DocumentUpload,
+        ClientActionType.KycDocument,
+        ClientActionType.SignAgreement,
+        ClientActionType.ProofOfAddress
+    };
+
+    private enum LinkedDocumentState
+    {
+        None,
+        Verified,
+        ComplianceRejected,
+        CompliantUnverified
+    }
 
     public static NextActionResult Decide(NextActionInputs inputs, NextActionView view, DateTimeOffset now)
     {
@@ -73,13 +92,18 @@ public static class NextActionRules
         var currentStageNumber = (int)currentStage + 1;
         var hasNextStage = currentStage < EngagementStage.Closure;
         var nextStage = hasNextStage ? (EngagementStage)((int)currentStage + 1) : (EngagementStage?)null;
+        var isExternalUnavailable = inputs.IsDocumentsUnavailable || inputs.IsConditionsUnavailable;
 
         var candidates = new List<CandidateItem>();
+
+        // Source-owned items keyed by source id, so their mirrored ClientAction can be attached
+        // instead of being emitted a second time (AC6: no duplicates).
+        var requirementCandidates = new Dictionary<Guid, CandidateItem>();
+        var conditionCandidates = new Dictionary<Guid, CandidateItem>();
 
         // -------------------------------------------------------------
         // 1. Process Requirements (Ranks 1, 3, 8, 10)
         // -------------------------------------------------------------
-        var handledRequirementIds = new HashSet<Guid>();
         if (inputs.Requirements != null)
         {
             foreach (var req in inputs.Requirements)
@@ -94,14 +118,14 @@ public static class NextActionRules
                     continue; // Approved requirements are never blockers
                 }
 
-                handledRequirementIds.Add(req.RequirementId);
-                var sla = GetRequirementSla(req, inputs.SlaStatuses, now);
+                var sla = GetRequirementSla(req, inputs, now);
+                var stageNumber = req.StageNumber ?? currentStageNumber;
+                CandidateItem candidate;
 
                 if (string.Equals(req.Status, RequirementStatus.Submitted, StringComparison.OrdinalIgnoreCase))
                 {
                     // Staff review
-                    var rank = sla.IsOverdue ? 8 : 10;
-                    candidates.Add(new CandidateItem
+                    candidate = new CandidateItem
                     {
                         Item = new NextActionItem
                         {
@@ -111,29 +135,28 @@ public static class NextActionRules
                             Reason = sla.IsOverdue
                                 ? $"Submitted requirement '{req.Type}' is awaiting review (Overdue)."
                                 : $"Submitted requirement '{req.Type}' is awaiting staff review.",
-                            SourceType = "Requirement",
+                            SourceType = ClientActionSourceType.Requirement,
                             SourceId = req.RequirementId,
-                            StageNumber = req.StageNumber ?? currentStageNumber,
+                            StageNumber = stageNumber,
                             DueAtUtc = sla.DueAtUtc,
                             IsOverdue = sla.IsOverdue,
                             OverdueBy = sla.OverdueBy,
-                            PriorityRank = rank
+                            PriorityRank = sla.IsOverdue ? 8 : 10
                         },
                         IsRejected = false,
-                        IsCurrentStage = (req.StageNumber ?? currentStageNumber) == currentStageNumber,
+                        IsCurrentStage = stageNumber == currentStageNumber,
                         CreatedAt = req.CreatedAt
-                    });
+                    };
                 }
                 else
                 {
                     // Requested or Rejected requirement (Client submission)
                     var isRejected = string.Equals(req.Status, RequirementStatus.Rejected, StringComparison.OrdinalIgnoreCase);
-                    var rank = sla.IsOverdue ? 1 : 3;
                     var reason = isRejected
                         ? (!string.IsNullOrWhiteSpace(req.RejectionReason) ? $"Requirement rejected: {req.RejectionReason}" : $"Requirement '{req.Type}' was rejected and requires resubmission.")
                         : $"Information '{req.Type}' is required.";
 
-                    candidates.Add(new CandidateItem
+                    candidate = new CandidateItem
                     {
                         Item = new NextActionItem
                         {
@@ -141,19 +164,22 @@ public static class NextActionRules
                             ResponsibleParty = ResponsibleParty.Client,
                             Title = $"Submit requirement: {req.Type}",
                             Reason = reason,
-                            SourceType = "Requirement",
+                            SourceType = ClientActionSourceType.Requirement,
                             SourceId = req.RequirementId,
-                            StageNumber = req.StageNumber ?? currentStageNumber,
+                            StageNumber = stageNumber,
                             DueAtUtc = sla.DueAtUtc,
                             IsOverdue = sla.IsOverdue,
                             OverdueBy = sla.OverdueBy,
-                            PriorityRank = rank
+                            PriorityRank = sla.IsOverdue ? 1 : 3
                         },
                         IsRejected = isRejected,
-                        IsCurrentStage = (req.StageNumber ?? currentStageNumber) == currentStageNumber,
+                        IsCurrentStage = stageNumber == currentStageNumber,
                         CreatedAt = req.CreatedAt
-                    });
+                    };
                 }
+
+                candidates.Add(candidate);
+                requirementCandidates[req.RequirementId] = candidate;
             }
         }
 
@@ -183,16 +209,19 @@ public static class NextActionRules
                 }
 
                 var sla = GetConditionSla(cond, inputs.SlaStatuses, now);
+                CandidateItem candidate;
 
-                if (string.Equals(cond.Type, ConditionType.Approval.ToString(), StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(cond.Type, ConditionType.Approval, StringComparison.OrdinalIgnoreCase))
                 {
                     var isRejected = string.Equals(cond.Status, ConditionStatus.Rejected, StringComparison.OrdinalIgnoreCase);
-                    var rank = sla.IsOverdue ? 1 : 5;
+
+                    // The internal note is staff-only and must never be used as a reason. A client-safe
+                    // decline reason is added by CSTD-25; until then the reason is generic.
                     var reason = isRejected
-                        ? (!string.IsNullOrWhiteSpace(cond.InternalNote) ? $"Approval was declined: {cond.InternalNote}" : "Approval was declined.")
+                        ? "Approval was declined."
                         : $"Approval required before advancing to {nextStage.Value}.";
 
-                    candidates.Add(new CandidateItem
+                    candidate = new CandidateItem
                     {
                         Item = new NextActionItem
                         {
@@ -200,28 +229,27 @@ public static class NextActionRules
                             ResponsibleParty = ResponsibleParty.Client,
                             Title = cond.Title,
                             Reason = reason,
-                            SourceType = "Condition",
+                            SourceType = ClientActionSourceType.Condition,
                             SourceId = cond.ConditionId,
                             StageNumber = (int)cond.RequiredBeforeStage,
                             DueAtUtc = sla.DueAtUtc,
                             IsOverdue = sla.IsOverdue,
                             OverdueBy = sla.OverdueBy,
-                            PriorityRank = rank
+                            PriorityRank = sla.IsOverdue ? 1 : 5
                         },
                         IsRejected = isRejected,
                         IsCurrentStage = true,
                         CreatedAt = cond.CreatedAt
-                    });
+                    };
                 }
-                else if (string.Equals(cond.Type, ConditionType.Payment.ToString(), StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(cond.Type, ConditionType.Payment, StringComparison.OrdinalIgnoreCase))
                 {
-                    var rank = sla.IsOverdue ? 1 : 6;
-                    var title = view == NextActionView.Staff ? $"Confirm payment: {cond.Title}" : "Payment due";
+                    var title = view == NextActionView.Staff ? $"Confirm payment received: {cond.Title}" : "Payment due";
                     var reason = view == NextActionView.Staff
                         ? "Confirm payment received."
                         : $"Payment of {cond.Amount:F2} {cond.Currency} is required before advancing to {nextStage.Value}.";
 
-                    candidates.Add(new CandidateItem
+                    candidate = new CandidateItem
                     {
                         Item = new NextActionItem
                         {
@@ -229,19 +257,26 @@ public static class NextActionRules
                             ResponsibleParty = ResponsibleParty.Client,
                             Title = title,
                             Reason = reason,
-                            SourceType = "Condition",
+                            SourceType = ClientActionSourceType.Condition,
                             SourceId = cond.ConditionId,
                             StageNumber = (int)cond.RequiredBeforeStage,
                             DueAtUtc = sla.DueAtUtc,
                             IsOverdue = sla.IsOverdue,
                             OverdueBy = sla.OverdueBy,
-                            PriorityRank = rank
+                            PriorityRank = sla.IsOverdue ? 1 : 6
                         },
                         IsRejected = false,
                         IsCurrentStage = true,
                         CreatedAt = cond.CreatedAt
-                    });
+                    };
                 }
+                else
+                {
+                    continue;
+                }
+
+                candidates.Add(candidate);
+                conditionCandidates[cond.ConditionId] = candidate;
             }
         }
 
@@ -264,259 +299,46 @@ public static class NextActionRules
                     continue;
                 }
 
+                // Requirement-mirrored actions are represented by their requirement (section 1).
+                if (act.LinkedRequirementId.HasValue)
+                {
+                    if (requirementCandidates.TryGetValue(act.LinkedRequirementId.Value, out var reqCandidate))
+                    {
+                        AttachActionId(reqCandidate, act.ActionId);
+                    }
+                    continue;
+                }
+
+                // Condition-linked actions are represented by their condition (section 2). A satisfied,
+                // inactive or later-stage condition therefore never blocks through its action (AC4).
+                if (act.LinkedConditionId.HasValue ||
+                    string.Equals(act.SourceType, ClientActionSourceType.Condition, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (act.LinkedConditionId.HasValue &&
+                        conditionCandidates.TryGetValue(act.LinkedConditionId.Value, out var condCandidate))
+                    {
+                        AttachActionId(condCandidate, act.ActionId);
+                    }
+                    continue;
+                }
+
                 // Only current stage or earlier leftover actions
                 if (act.StageNumber > currentStageNumber)
                 {
                     continue;
                 }
 
-                // Deduplicate with mirrored requirements
-                if (act.LinkedRequirementId.HasValue && handledRequirementIds.Contains(act.LinkedRequirementId.Value))
+                var docState = GetLinkedDocumentState(act, inputs.Documents);
+                if (docState == LinkedDocumentState.Verified)
                 {
-                    var existingReqCandidate = candidates.FirstOrDefault(c =>
-                        c.Item.SourceType == "Requirement" && c.Item.SourceId == act.LinkedRequirementId.Value);
-                    if (existingReqCandidate != null && !existingReqCandidate.Item.ActionId.HasValue)
-                    {
-                        existingReqCandidate.Item = new NextActionItem
-                        {
-                            Kind = existingReqCandidate.Item.Kind,
-                            ResponsibleParty = existingReqCandidate.Item.ResponsibleParty,
-                            Title = existingReqCandidate.Item.Title,
-                            Reason = existingReqCandidate.Item.Reason,
-                            ActionId = act.ActionId,
-                            SourceType = existingReqCandidate.Item.SourceType,
-                            SourceId = existingReqCandidate.Item.SourceId,
-                            StageNumber = existingReqCandidate.Item.StageNumber,
-                            DueAtUtc = existingReqCandidate.Item.DueAtUtc,
-                            IsOverdue = existingReqCandidate.Item.IsOverdue,
-                            OverdueBy = existingReqCandidate.Item.OverdueBy,
-                            PriorityRank = existingReqCandidate.Item.PriorityRank
-                        };
-                    }
-                    continue;
-                }
-
-                // Linked document compliance & verification check
-                var isDocRejected = false;
-                var isDocUnverified = false;
-                if (act.LinkedDocumentId.HasValue && inputs.Documents != null)
-                {
-                    var doc = inputs.Documents.FirstOrDefault(d => d.DocumentId == act.LinkedDocumentId.Value && !d.IsDeleted);
-                    if (doc != null)
-                    {
-                        if (string.Equals(doc.VerificationStatus, "Verified", StringComparison.OrdinalIgnoreCase))
-                        {
-                            // Verified document is not a blocker
-                            continue;
-                        }
-
-                        if (string.Equals(doc.ComplianceStatus, "Rejected", StringComparison.OrdinalIgnoreCase))
-                        {
-                            isDocRejected = true;
-                        }
-                        else if (string.Equals(doc.ComplianceStatus, "Compliant", StringComparison.OrdinalIgnoreCase) &&
-                                 !string.Equals(doc.VerificationStatus, "Verified", StringComparison.OrdinalIgnoreCase))
-                        {
-                            isDocUnverified = true;
-                        }
-                    }
+                    continue; // Verified document is not a blocker
                 }
 
                 var sla = GetActionSla(act, inputs.SlaStatuses, now);
-                var isClientParty = string.Equals(act.AssignedToRole, ResponsibleParty.Client, StringComparison.OrdinalIgnoreCase);
-
-                if (isClientParty)
+                var candidate = ClassifyAction(act, docState, sla, currentStageNumber);
+                if (candidate != null)
                 {
-                    if (sla.IsOverdue)
-                    {
-                        // Rank 1: Overdue client item
-                        var isRejected = act.Status == ClientActionStatus.Rejected || isDocRejected;
-                        var kind = isRejected
-                            ? NextActionKind.DocumentResubmission
-                            : (act.Type == "DocumentUpload" || act.LinkedDocumentId.HasValue ? NextActionKind.DocumentUpload : NextActionKind.ClientTask);
-
-                        candidates.Add(new CandidateItem
-                        {
-                            Item = new NextActionItem
-                            {
-                                Kind = kind,
-                                ResponsibleParty = ResponsibleParty.Client,
-                                Title = act.Title,
-                                Reason = isRejected
-                                    ? (!string.IsNullOrWhiteSpace(act.Description) ? act.Description : "Document rejected and overdue for resubmission.")
-                                    : (!string.IsNullOrWhiteSpace(act.Description) ? act.Description : "Action is overdue."),
-                                ActionId = act.ActionId,
-                                SourceType = act.SourceType,
-                                SourceId = act.LinkedDocumentId ?? act.ActionId,
-                                StageNumber = act.StageNumber,
-                                DueAtUtc = sla.DueAtUtc,
-                                IsOverdue = true,
-                                OverdueBy = sla.OverdueBy,
-                                PriorityRank = 1
-                            },
-                            IsRejected = isRejected,
-                            IsCurrentStage = act.StageNumber == currentStageNumber,
-                            CreatedAt = act.CreatedAt
-                        });
-                    }
-                    else if (act.Status == ClientActionStatus.Rejected || isDocRejected)
-                    {
-                        // Rank 2: Rejected document/evidence
-                        candidates.Add(new CandidateItem
-                        {
-                            Item = new NextActionItem
-                            {
-                                Kind = NextActionKind.DocumentResubmission,
-                                ResponsibleParty = ResponsibleParty.Client,
-                                Title = act.Title,
-                                Reason = !string.IsNullOrWhiteSpace(act.Description) ? act.Description : "Document was rejected and requires resubmission.",
-                                ActionId = act.ActionId,
-                                SourceType = act.SourceType,
-                                SourceId = act.LinkedDocumentId ?? act.ActionId,
-                                StageNumber = act.StageNumber,
-                                DueAtUtc = sla.DueAtUtc,
-                                IsOverdue = false,
-                                OverdueBy = null,
-                                PriorityRank = 2
-                            },
-                            IsRejected = true,
-                            IsCurrentStage = act.StageNumber == currentStageNumber,
-                            CreatedAt = act.CreatedAt
-                        });
-                    }
-                    else if (act.Status == ClientActionStatus.Pending && (act.Type == "DocumentUpload" || act.LinkedDocumentId.HasValue))
-                    {
-                        // Rank 4: Pending document upload action
-                        candidates.Add(new CandidateItem
-                        {
-                            Item = new NextActionItem
-                            {
-                                Kind = NextActionKind.DocumentUpload,
-                                ResponsibleParty = ResponsibleParty.Client,
-                                Title = act.Title,
-                                Reason = !string.IsNullOrWhiteSpace(act.Description) ? act.Description : "Document upload required.",
-                                ActionId = act.ActionId,
-                                SourceType = act.SourceType,
-                                SourceId = act.LinkedDocumentId ?? act.ActionId,
-                                StageNumber = act.StageNumber,
-                                DueAtUtc = sla.DueAtUtc,
-                                IsOverdue = false,
-                                OverdueBy = null,
-                                PriorityRank = 4
-                            },
-                            IsRejected = false,
-                            IsCurrentStage = act.StageNumber == currentStageNumber,
-                            CreatedAt = act.CreatedAt
-                        });
-                    }
-                    else if (act.Status == ClientActionStatus.Pending)
-                    {
-                        // Rank 7: Other pending client tasks in current stage
-                        candidates.Add(new CandidateItem
-                        {
-                            Item = new NextActionItem
-                            {
-                                Kind = NextActionKind.ClientTask,
-                                ResponsibleParty = ResponsibleParty.Client,
-                                Title = act.Title,
-                                Reason = !string.IsNullOrWhiteSpace(act.Description) ? act.Description : "Client action required.",
-                                ActionId = act.ActionId,
-                                SourceType = act.SourceType,
-                                SourceId = act.ActionId,
-                                StageNumber = act.StageNumber,
-                                DueAtUtc = sla.DueAtUtc,
-                                IsOverdue = false,
-                                OverdueBy = null,
-                                PriorityRank = 7
-                            },
-                            IsRejected = false,
-                            IsCurrentStage = act.StageNumber == currentStageNumber,
-                            CreatedAt = act.CreatedAt
-                        });
-                    }
-                }
-                else
-                {
-                    // Staff party item
-                    if (sla.IsOverdue)
-                    {
-                        // Rank 8: Overdue staff item
-                        var kind = act.Status == ClientActionStatus.Uploaded || isDocUnverified
-                            ? NextActionKind.DocumentVerification
-                            : NextActionKind.StaffTask;
-
-                        candidates.Add(new CandidateItem
-                        {
-                            Item = new NextActionItem
-                            {
-                                Kind = kind,
-                                ResponsibleParty = ResponsibleParty.Staff,
-                                Title = act.Title,
-                                Reason = "Staff task is overdue for review.",
-                                ActionId = act.ActionId,
-                                SourceType = act.SourceType,
-                                SourceId = act.LinkedDocumentId ?? act.ActionId,
-                                StageNumber = act.StageNumber,
-                                DueAtUtc = sla.DueAtUtc,
-                                IsOverdue = true,
-                                OverdueBy = sla.OverdueBy,
-                                PriorityRank = 8
-                            },
-                            IsRejected = false,
-                            IsCurrentStage = act.StageNumber == currentStageNumber,
-                            CreatedAt = act.CreatedAt
-                        });
-                    }
-                    else if (act.Status == ClientActionStatus.Uploaded || isDocUnverified)
-                    {
-                        // Rank 9: Document compliant but unverified / action in Uploaded
-                        candidates.Add(new CandidateItem
-                        {
-                            Item = new NextActionItem
-                            {
-                                Kind = NextActionKind.DocumentVerification,
-                                ResponsibleParty = ResponsibleParty.Staff,
-                                Title = $"Verify {act.Title}",
-                                Reason = "Document submitted and awaiting staff verification.",
-                                ActionId = act.ActionId,
-                                SourceType = act.SourceType,
-                                SourceId = act.LinkedDocumentId ?? act.ActionId,
-                                StageNumber = act.StageNumber,
-                                DueAtUtc = sla.DueAtUtc,
-                                IsOverdue = false,
-                                OverdueBy = null,
-                                PriorityRank = 9
-                            },
-                            IsRejected = false,
-                            IsCurrentStage = act.StageNumber == currentStageNumber,
-                            CreatedAt = act.CreatedAt
-                        });
-                    }
-                    else if (act.Status == ClientActionStatus.Pending)
-                    {
-                        // Rank 11: Other pending staff tasks
-                        candidates.Add(new CandidateItem
-                        {
-                            Item = new NextActionItem
-                            {
-                                Kind = NextActionKind.StaffTask,
-                                ResponsibleParty = ResponsibleParty.Staff,
-                                Title = act.Title,
-                                Reason = !string.IsNullOrWhiteSpace(act.Description) ? act.Description : "Staff task required.",
-                                ActionId = act.ActionId,
-                                SourceType = act.SourceType,
-                                SourceId = act.ActionId,
-                                StageNumber = act.StageNumber,
-                                DueAtUtc = sla.DueAtUtc,
-                                IsOverdue = false,
-                                OverdueBy = null,
-                                PriorityRank = 11
-                            },
-                            IsRejected = false,
-                            IsCurrentStage = act.StageNumber == currentStageNumber,
-                            CreatedAt = act.CreatedAt
-                        });
-                    }
+                    candidates.Add(candidate);
                 }
             }
         }
@@ -553,12 +375,12 @@ public static class NextActionRules
                 overallState = OverallState.AllComplete;
                 primaryAction = null;
             }
-            else if (inputs.IsDocumentsUnavailable)
+            else if (isExternalUnavailable)
             {
-                // Dependency failure: Documents unavailable, cannot claim ReadyToAdvance
+                // Dependency failure: cannot claim ReadyToAdvance
                 overallState = OverallState.BlockedExternal;
                 primaryAction = null;
-                blockers.Add(CreateUnavailableBlocker());
+                AddUnavailableBlockers(blockers, inputs);
             }
             else if (inputs.NextStageGate != null && inputs.NextStageGate.IsSatisfied)
             {
@@ -613,9 +435,9 @@ public static class NextActionRules
                 primaryAction = sortedCandidates[0].Item;
                 blockers.AddRange(sortedCandidates.Skip(1).Select(c => c.Item));
 
-                if (inputs.IsDocumentsUnavailable)
+                if (isExternalUnavailable)
                 {
-                    blockers.Add(CreateUnavailableBlocker());
+                    AddUnavailableBlockers(blockers, inputs);
                     overallState = OverallState.BlockedExternal;
                 }
                 else
@@ -642,9 +464,9 @@ public static class NextActionRules
                         blockers.Add(CreateClientSafeStaffReviewBlocker());
                     }
 
-                    if (inputs.IsDocumentsUnavailable)
+                    if (isExternalUnavailable)
                     {
-                        blockers.Add(CreateUnavailableBlocker());
+                        AddUnavailableBlockers(blockers, inputs);
                         overallState = OverallState.BlockedExternal;
                     }
                     else
@@ -660,9 +482,9 @@ public static class NextActionRules
                         blockers.Add(CreateClientSafeStaffReviewBlocker());
                     }
 
-                    if (inputs.IsDocumentsUnavailable)
+                    if (isExternalUnavailable)
                     {
-                        blockers.Add(CreateUnavailableBlocker());
+                        AddUnavailableBlockers(blockers, inputs);
                         overallState = OverallState.BlockedExternal;
                     }
                     else
@@ -702,6 +524,191 @@ public static class NextActionRules
         };
     }
 
+    /// <summary>
+    /// Maps one open ClientAction to its rank. The responsible party follows the action's state,
+    /// not only its AssignedToRole: evidence a client has uploaded is waiting on staff (rank 9/8),
+    /// and rejected evidence is back with the client (rank 2/1).
+    /// </summary>
+    private static CandidateItem? ClassifyAction(ClientAction act, LinkedDocumentState docState, SlaStatus sla, int currentStageNumber)
+    {
+        var needsResubmission = act.Status == ClientActionStatus.Rejected || docState == LinkedDocumentState.ComplianceRejected;
+        if (needsResubmission)
+        {
+            // Rank 2: Rejected document/evidence (Rank 1 when overdue)
+            var reason = ExtractRejectionReason(act.SourceMetadata)
+                         ?? (!string.IsNullOrWhiteSpace(act.Description) ? act.Description : null)
+                         ?? (sla.IsOverdue ? "Document rejected and overdue for resubmission." : "Document was rejected and requires resubmission.");
+
+            return CreateActionCandidate(act, NextActionKind.DocumentResubmission, ResponsibleParty.Client, act.Title, reason,
+                sla, sla.IsOverdue ? 1 : 2, isRejected: true, currentStageNumber);
+        }
+
+        var awaitingVerification = act.Status == ClientActionStatus.Uploaded || docState == LinkedDocumentState.CompliantUnverified;
+        if (awaitingVerification)
+        {
+            // Rank 9: Document compliant but unverified / action in Uploaded (Rank 8 when overdue)
+            var reason = sla.IsOverdue
+                ? "Document submitted and overdue for staff verification."
+                : "Document submitted and awaiting staff verification.";
+
+            return CreateActionCandidate(act, NextActionKind.DocumentVerification, ResponsibleParty.Staff, $"Verify {act.Title}", reason,
+                sla, sla.IsOverdue ? 8 : 9, isRejected: false, currentStageNumber);
+        }
+
+        if (act.Status != ClientActionStatus.Pending)
+        {
+            return null;
+        }
+
+        var isClientParty = string.Equals(act.AssignedToRole, ResponsibleParty.Client, StringComparison.OrdinalIgnoreCase);
+        if (isClientParty)
+        {
+            var isEvidence = act.LinkedDocumentId.HasValue || EvidenceActionTypes.Contains(act.Type);
+            if (isEvidence)
+            {
+                // Rank 4: Pending document upload action (Rank 1 when overdue)
+                var reason = !string.IsNullOrWhiteSpace(act.Description)
+                    ? act.Description
+                    : (sla.IsOverdue ? "Action is overdue." : "Document upload required.");
+
+                return CreateActionCandidate(act, NextActionKind.DocumentUpload, ResponsibleParty.Client, act.Title, reason,
+                    sla, sla.IsOverdue ? 1 : 4, isRejected: false, currentStageNumber);
+            }
+
+            // Rank 7: Other pending client tasks (Rank 1 when overdue)
+            var taskReason = !string.IsNullOrWhiteSpace(act.Description)
+                ? act.Description
+                : (sla.IsOverdue ? "Action is overdue." : "Client action required.");
+
+            return CreateActionCandidate(act, NextActionKind.ClientTask, ResponsibleParty.Client, act.Title, taskReason,
+                sla, sla.IsOverdue ? 1 : 7, isRejected: false, currentStageNumber);
+        }
+
+        // Rank 11: Other pending staff tasks (Rank 8 when overdue)
+        var staffReason = sla.IsOverdue
+            ? "Staff task is overdue for review."
+            : (!string.IsNullOrWhiteSpace(act.Description) ? act.Description : "Staff task required.");
+
+        return CreateActionCandidate(act, NextActionKind.StaffTask, ResponsibleParty.Staff, act.Title, staffReason,
+            sla, sla.IsOverdue ? 8 : 11, isRejected: false, currentStageNumber);
+    }
+
+    private static CandidateItem CreateActionCandidate(
+        ClientAction act,
+        string kind,
+        string party,
+        string title,
+        string reason,
+        SlaStatus sla,
+        int rank,
+        bool isRejected,
+        int currentStageNumber) => new()
+    {
+        Item = new NextActionItem
+        {
+            Kind = kind,
+            ResponsibleParty = party,
+            Title = title,
+            Reason = reason,
+            ActionId = act.ActionId,
+            SourceType = act.SourceType,
+            SourceId = act.LinkedDocumentId ?? act.LinkedConditionId ?? act.LinkedRequirementId ?? act.ActionId,
+            StageNumber = act.StageNumber,
+            DueAtUtc = sla.DueAtUtc,
+            IsOverdue = sla.IsOverdue,
+            OverdueBy = sla.OverdueBy,
+            PriorityRank = rank
+        },
+        IsRejected = isRejected,
+        IsCurrentStage = act.StageNumber == currentStageNumber,
+        CreatedAt = act.CreatedAt
+    };
+
+    private static LinkedDocumentState GetLinkedDocumentState(ClientAction act, IReadOnlyList<DocumentSummaryDto>? documents)
+    {
+        if (!act.LinkedDocumentId.HasValue || documents == null)
+        {
+            return LinkedDocumentState.None;
+        }
+
+        // Deleted documents are ignored.
+        var doc = documents.FirstOrDefault(d => d.DocumentId == act.LinkedDocumentId.Value && !d.IsDeleted);
+        if (doc == null)
+        {
+            return LinkedDocumentState.None;
+        }
+
+        if (string.Equals(doc.VerificationStatus, "Verified", StringComparison.OrdinalIgnoreCase))
+        {
+            return LinkedDocumentState.Verified;
+        }
+
+        if (string.Equals(doc.ComplianceStatus, "Rejected", StringComparison.OrdinalIgnoreCase))
+        {
+            return LinkedDocumentState.ComplianceRejected;
+        }
+
+        if (string.Equals(doc.ComplianceStatus, "Compliant", StringComparison.OrdinalIgnoreCase))
+        {
+            return LinkedDocumentState.CompliantUnverified;
+        }
+
+        return LinkedDocumentState.None;
+    }
+
+    private static string? ExtractRejectionReason(string? sourceMetadata)
+    {
+        if (string.IsNullOrWhiteSpace(sourceMetadata))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(sourceMetadata);
+            foreach (var name in new[] { "verificationReason", "rejectionReason" })
+            {
+                if (doc.RootElement.TryGetProperty(name, out var prop) &&
+                    prop.ValueKind == JsonValueKind.String &&
+                    !string.IsNullOrWhiteSpace(prop.GetString()))
+                {
+                    return prop.GetString();
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Ignore non-JSON metadata
+        }
+
+        return null;
+    }
+
+    private static void AttachActionId(CandidateItem candidate, Guid actionId)
+    {
+        if (candidate.Item.ActionId.HasValue)
+        {
+            return;
+        }
+
+        var item = candidate.Item;
+        candidate.Item = new NextActionItem
+        {
+            Kind = item.Kind,
+            ResponsibleParty = item.ResponsibleParty,
+            Title = item.Title,
+            Reason = item.Reason,
+            ActionId = actionId,
+            SourceType = item.SourceType,
+            SourceId = item.SourceId,
+            StageNumber = item.StageNumber,
+            DueAtUtc = item.DueAtUtc,
+            IsOverdue = item.IsOverdue,
+            OverdueBy = item.OverdueBy,
+            PriorityRank = item.PriorityRank
+        };
+    }
+
     private static NextActionItem SanitizeClientItem(NextActionItem item) => new()
     {
         Kind = item.Kind,
@@ -726,12 +733,25 @@ public static class NextActionRules
         Reason = StaffReviewBlockerReason
     };
 
-    private static NextActionItem CreateUnavailableBlocker() => new()
+    private static void AddUnavailableBlockers(List<NextActionItem> blockers, NextActionInputs inputs)
+    {
+        if (inputs.IsDocumentsUnavailable)
+        {
+            blockers.Add(CreateUnavailableBlocker("Document Service Unavailable", DocumentUnavailableReason));
+        }
+
+        if (inputs.IsConditionsUnavailable)
+        {
+            blockers.Add(CreateUnavailableBlocker("Condition Status Unavailable", ConditionUnavailableReason));
+        }
+    }
+
+    private static NextActionItem CreateUnavailableBlocker(string title, string reason) => new()
     {
         Kind = NextActionKind.Unavailable,
         ResponsibleParty = ResponsibleParty.Staff,
-        Title = "Document Service Unavailable",
-        Reason = DocumentUnavailableReason,
+        Title = title,
+        Reason = reason,
         PriorityRank = 999
     };
 
@@ -752,14 +772,35 @@ public static class NextActionRules
         return new SlaStatus(null, false, null);
     }
 
-    private static SlaStatus GetRequirementSla(Requirement req, IReadOnlyDictionary<Guid, SlaStatus>? statuses, DateTimeOffset now)
+    /// <summary>
+    /// Requirements carry no deadline of their own; their SLA comes from the mirrored ClientAction
+    /// (LinkedRequirementId) unless an explicit requirement SLA with a due date was supplied.
+    /// </summary>
+    private static SlaStatus GetRequirementSla(Requirement req, NextActionInputs inputs, DateTimeOffset now)
     {
-        if (statuses != null && statuses.TryGetValue(req.RequirementId, out var existing))
+        SlaStatus? existing = null;
+        if (inputs.SlaStatuses != null && inputs.SlaStatuses.TryGetValue(req.RequirementId, out var found))
         {
-            return existing;
+            existing = found;
+            if (found.DueAtUtc.HasValue)
+            {
+                return found;
+            }
         }
 
-        return new SlaStatus(null, false, null);
+        var mirrored = inputs.Actions?
+            .Where(a => a.LinkedRequirementId == req.RequirementId &&
+                        a.Status is not (ClientActionStatus.Completed or ClientActionStatus.Cancelled))
+            .OrderBy(a => a.CreatedAt)
+            .ThenBy(a => a.ActionId)
+            .FirstOrDefault();
+
+        if (mirrored != null)
+        {
+            return GetActionSla(mirrored, inputs.SlaStatuses, now);
+        }
+
+        return existing ?? new SlaStatus(null, false, null);
     }
 
     private static SlaStatus GetConditionSla(EngagementCondition cond, IReadOnlyDictionary<Guid, SlaStatus>? statuses, DateTimeOffset now)

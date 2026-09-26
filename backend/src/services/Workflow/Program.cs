@@ -42,6 +42,7 @@ builder.Services.AddScoped<IClientActionService, ClientActionService>();
 builder.Services.AddScoped<IClientPortalService, ClientPortalService>();
 builder.Services.AddScoped<IRequirementService, RequirementService>();
 builder.Services.AddScoped<IConditionService, ConditionService>();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ISlaCalculator, DefaultSlaCalculator>();
 builder.Services.AddScoped<IStallService, DefaultStallService>();
 builder.Services.AddScoped<INextActionService, NextActionService>();

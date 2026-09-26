@@ -16,6 +16,7 @@ public class NextActionService : INextActionService
     private readonly ISlaCalculator _slaCalculator;
     private readonly IGateEvaluator _gateEvaluator;
     private readonly IStallService _stallService;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<NextActionService> _logger;
 
     public NextActionService(
@@ -25,6 +26,7 @@ public class NextActionService : INextActionService
         ISlaCalculator slaCalculator,
         IGateEvaluator gateEvaluator,
         IStallService stallService,
+        TimeProvider timeProvider,
         ILogger<NextActionService> logger)
     {
         _dbContext = dbContext;
@@ -33,6 +35,7 @@ public class NextActionService : INextActionService
         _slaCalculator = slaCalculator;
         _gateEvaluator = gateEvaluator;
         _stallService = stallService;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -62,7 +65,9 @@ public class NextActionService : INextActionService
             .ToListAsync(ct);
 
         // Fetch active conditions (AC2/AC3)
-        IReadOnlyList<EngagementCondition> activeConditions;
+        // A failure here is a dependency failure (BlockedExternal), not "no conditions".
+        IReadOnlyList<EngagementCondition> activeConditions = Array.Empty<EngagementCondition>();
+        var isConditionsUnavailable = false;
         try
         {
             activeConditions = await _conditionService.GetActiveConditionsAsync(engagementId, tenantId, ct);
@@ -70,7 +75,7 @@ public class NextActionService : INextActionService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to fetch active conditions for next action evaluation on engagement {EngagementId}", engagementId);
-            activeConditions = Array.Empty<EngagementCondition>();
+            isConditionsUnavailable = true;
         }
 
         // Fetch document compliance / verification status
@@ -91,7 +96,7 @@ public class NextActionService : INextActionService
             isDocumentsUnavailable = true;
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
         var slaMap = new Dictionary<Guid, SlaStatus>();
 
         foreach (var act in actions)
@@ -109,20 +114,20 @@ public class NextActionService : INextActionService
             slaMap[cond.ConditionId] = _slaCalculator.CalculateConditionSla(cond, now);
         }
 
-        // Evaluate gate for advancing to next stage if applicable
+        // Evaluate gate for advancing to next stage if applicable. The gate reuses the documents and
+        // conditions fetched above, so Documents is called once per evaluation.
         GateEvaluationResult? gateResult = null;
-        if (engagement.Stage < EngagementStage.Closure && !isDocumentsUnavailable)
+        if (engagement.Stage < EngagementStage.Closure && documents != null && !isConditionsUnavailable)
         {
             var nextStage = (EngagementStage)((int)engagement.Stage + 1);
             try
             {
-                gateResult = await _gateEvaluator.EvaluateAsync(engagementId, tenantId, nextStage, ct);
+                gateResult = await _gateEvaluator.EvaluateAsync(engagementId, tenantId, nextStage, documents, activeConditions, ct);
             }
             catch (Exception ex)
             {
+                // Leave the gate unknown: the engine then never claims ReadyToAdvance.
                 _logger.LogWarning(ex, "Gate evaluation failed during next action evaluation for engagement {EngagementId}", engagementId);
-                // In case gate evaluator failed due to downstream document service
-                isDocumentsUnavailable = true;
             }
         }
 
@@ -144,6 +149,7 @@ public class NextActionService : INextActionService
             Documents = documents,
             IsDocumentsUnavailable = isDocumentsUnavailable,
             ActiveConditions = activeConditions,
+            IsConditionsUnavailable = isConditionsUnavailable,
             SlaStatuses = slaMap,
             NextStageGate = gateResult,
             IsStalled = isStalled

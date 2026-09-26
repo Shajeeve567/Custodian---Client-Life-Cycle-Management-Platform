@@ -27,13 +27,14 @@ public class ClientPortalServiceTests
 
     private static IClientPortalService CreatePortalService(
         WorkflowDbContext db,
-        INextActionService? nextActionService = null)
+        INextActionService? nextActionService = null,
+        IReadOnlyList<EngagementCondition>? activeConditions = null)
     {
         if (nextActionService == null)
         {
             var mockConditionService = new Mock<IConditionService>();
             mockConditionService.Setup(c => c.GetActiveConditionsAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new List<EngagementCondition>());
+                .ReturnsAsync(activeConditions ?? new List<EngagementCondition>());
 
             var mockDocClient = new Mock<IDocumentComplianceClient>();
             mockDocClient.Setup(d => d.GetDocumentsAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -52,6 +53,7 @@ public class ClientPortalServiceTests
                 slaCalc,
                 mockGateEvaluator.Object,
                 mockStallService.Object,
+                TimeProvider.System,
                 NullLogger<NextActionService>.Instance);
         }
 
@@ -951,5 +953,170 @@ public class ClientPortalServiceTests
         Assert.Equal(OverallState.ClientActionRequired, dashboard.NextAction.OverallState);
         Assert.NotNull(dashboard.NextAction.PrimaryAction);
         Assert.Equal("KYC Upload", dashboard.NextAction.PrimaryAction.Title);
+    }
+
+    [Fact]
+    public async Task GetDashboard_RepeatedReads_ReturnIdenticalActionIds()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+        var clientId = "client-alpha";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = clientId,
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
+        });
+
+        // A requirement with no mirrored action yields an engine item without an ActionId.
+        db.Requirements.Add(new Requirement
+        {
+            RequirementId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "TaxId",
+            Status = RequirementStatus.Requested,
+            StageNumber = 1,
+            CreatedAt = DateTime.UtcNow
+        });
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload passport",
+            Type = ClientActionType.KycDocument,
+            Status = ClientActionStatus.Pending,
+            AssignedToRole = "Client",
+            StageNumber = 1
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreatePortalService(db);
+
+        var first = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+        var second = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+
+        Assert.NotNull(first?.PrimaryNextAction);
+        Assert.Equal(first!.PrimaryNextAction!.ActionId, second!.PrimaryNextAction!.ActionId);
+        Assert.Equal(
+            first.PendingActions.Select(a => a.ActionId),
+            second.PendingActions.Select(a => a.ActionId));
+    }
+
+    [Fact]
+    public async Task GetDashboard_ConditionWithLinkedAction_AppearsOnceWithPersistedActionId()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+        var clientId = "client-alpha";
+        var conditionId = Guid.NewGuid();
+        var linkedActionId = Guid.NewGuid();
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = clientId,
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Verification
+        });
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = linkedActionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Scope approval",
+            Type = ClientActionType.Approval,
+            Status = ClientActionStatus.Pending,
+            AssignedToRole = "Client",
+            StageNumber = 3,
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = conditionId
+        });
+        await db.SaveChangesAsync();
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            RequiredBeforeStage = EngagementStage.Execution,
+            Title = "Scope approval",
+            InternalNote = "Staff only: client disputed the fee"
+        };
+
+        var service = CreatePortalService(db, activeConditions: new[] { condition });
+
+        var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+
+        Assert.NotNull(dashboard?.PrimaryNextAction);
+        Assert.Equal(linkedActionId, dashboard!.PrimaryNextAction!.ActionId);
+        Assert.DoesNotContain(dashboard.PendingActions, a => a.ActionId == linkedActionId);
+        Assert.Equal(1, new[] { dashboard.PrimaryNextAction }.Concat(dashboard.PendingActions).Count(a => a.Title == "Scope approval"));
+    }
+
+    [Fact]
+    public async Task GetDashboard_SatisfiedConditionWithPendingLinkedAction_IsNotShownAsPending()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-test";
+        var clientId = "client-alpha";
+        var conditionId = Guid.NewGuid();
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = clientId,
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Verification
+        });
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Scope approval",
+            Type = ClientActionType.Approval,
+            Status = ClientActionStatus.Pending,
+            AssignedToRole = "Client",
+            StageNumber = 3,
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = conditionId
+        });
+        await db.SaveChangesAsync();
+
+        var satisfied = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Satisfied,
+            IsActive = true,
+            RequiredBeforeStage = EngagementStage.Execution,
+            Title = "Scope approval"
+        };
+
+        var service = CreatePortalService(db, activeConditions: new[] { satisfied });
+
+        var dashboard = await service.GetDashboardForEngagementAsync(engagementId, tenantId, clientId);
+
+        Assert.NotNull(dashboard);
+        Assert.Null(dashboard!.PrimaryNextAction);
+        Assert.DoesNotContain(dashboard.PendingActions, a => a.Title == "Scope approval");
     }
 }
