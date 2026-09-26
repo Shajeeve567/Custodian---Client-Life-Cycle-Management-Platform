@@ -268,6 +268,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
         primaryNextAction,
         pendingActions,
         stages,
+        nextAction,
     } = dashboard;
 
     return (
@@ -542,6 +543,17 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                             );
                         })}
                     </div>
+                </div>
+            )}
+
+            {/* CSTD-19: a dependency (e.g. document status) is temporarily unavailable */}
+            {nextAction?.overallState === 'BlockedExternal' && (
+                <div className="flex items-start gap-2 p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+                    <span>
+                        Some status information is temporarily unavailable, so your progress may not be fully up to date.
+                        You can still complete the tasks below; please check back shortly.
+                    </span>
                 </div>
             )}
 

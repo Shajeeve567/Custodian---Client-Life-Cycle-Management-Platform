@@ -202,6 +202,69 @@ export interface ClientPortalDashboard {
     primaryNextAction?: ClientSafeAction | null;
     pendingActions: ClientSafeAction[];
     stages: ClientPortalStage[];
+    // CSTD-19: full engine output (client view). The fields above stay for backward compatibility.
+    nextAction?: NextActionResult | null;
+}
+
+// ---------------------------------------------------------------------------
+// CSTD-19: Next-Action Orchestration (GET /api/engagements/{id}/next-action)
+// ---------------------------------------------------------------------------
+
+export type NextActionOverallState =
+    | 'Closed'
+    | 'NotStarted'
+    | 'ClientActionRequired'
+    | 'AwaitingStaff'
+    | 'ReadyToAdvance'
+    | 'BlockedExternal'
+    | 'AllComplete';
+
+export type NextActionKind =
+    | 'RequirementSubmission'
+    | 'RequirementReview'
+    | 'DocumentUpload'
+    | 'DocumentResubmission'
+    | 'DocumentVerification'
+    | 'ConditionApproval'
+    | 'ConditionPayment'
+    | 'ClientTask'
+    | 'StaffTask'
+    | 'AdvanceStage'
+    | 'Unavailable';
+
+export interface NextActionItem {
+    kind: NextActionKind | string;
+    responsibleParty: 'Client' | 'Staff' | string;
+    title: string;
+    reason: string;
+    actionId?: string | null;
+    sourceType?: string | null;
+    sourceId?: string | null;      // staff view only
+    stageNumber?: number | null;
+    dueAtUtc?: string | null;
+    isOverdue: boolean;
+    overdueBy?: string | null;     // staff view only; .NET TimeSpan string, e.g. "2.03:15:00"
+    priorityRank: number;          // staff view only
+}
+
+export interface GateSummary {
+    targetStage: string;
+    isSatisfied: boolean;
+    reasons: string[];
+}
+
+export interface NextActionResult {
+    engagementId: string;
+    engagementStatus: string;
+    currentStage: string;
+    overallState: NextActionOverallState | string;
+    primaryAction?: NextActionItem | null;
+    blockers: NextActionItem[];
+    nextStageGate?: GateSummary | null;
+    // Informational only (staff view): conditions gating a stage after the next one. Never blockers.
+    upcomingConditions: NextActionItem[];
+    isStalled: boolean;
+    evaluatedAtUtc: string;
 }
 
 export interface UploadActionEvidenceRequest {

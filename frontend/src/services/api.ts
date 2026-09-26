@@ -31,6 +31,7 @@ import {
     AttachConditionRequest,
     UpdateConditionRequest,
     DeactivateConditionRequest,
+    NextActionResult,
 } from '../types';
 
 export const API_BASE = {
@@ -255,6 +256,17 @@ export const WorkflowApi = {
             headers: { 'X-Tenant-ID': tenantId },
             body: JSON.stringify({ tenantId, stage }),
         });
+    },
+
+    // CSTD-19: Next action for the staff workspace: GET /api/engagements/{id}/next-action (Owner/Staff).
+    // Computed on every read from live state (no cache), so re-fetch after any change.
+    async getNextAction(engagementId: string, tenantId: string): Promise<NextActionResult> {
+        return request<NextActionResult>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/next-action?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'GET',
+                headers: { 'X-Tenant-ID': tenantId },
+            });
     },
 
     async deleteEngagement(engagementId: string, tenantId: string): Promise<void> {

@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { WorkflowApi, IdentityApi, DocumentsApi } from '../services/api';
-import { Engagement, ClientProfile, UserAccountResponse, ClientAction, DocumentMetadata, EngagementStage, EngagementCondition, ConditionType, ConditionPaymentType, AttachConditionRequest, UpdateConditionRequest } from '../types';
+import { Engagement, ClientProfile, UserAccountResponse, ClientAction, DocumentMetadata, EngagementStage, EngagementCondition, ConditionType, ConditionPaymentType, AttachConditionRequest, UpdateConditionRequest, NextActionResult } from '../types';
+import { NextActionPanel } from './NextActionPanel';
 import { ENGAGEMENT_STAGES, getStageDefinition, getStageIndex, getNextStage, computeClientVisibleStageNumber } from '../constants/engagementStages';
 import { ACTION_TYPE_TO_DOCUMENT_TYPE } from '../constants/documentTypes';
 import {
@@ -60,6 +61,10 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [actions, setActions] = useState<ClientAction[]>([]);
     const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
     const [conditions, setConditions] = useState<EngagementCondition[]>([]);
+    // CSTD-19 (19-N6): engine output for the staff panel; re-fetched with the rest of the workspace
+    const [nextAction, setNextAction] = useState<NextActionResult | null>(null);
+    const [nextActionError, setNextActionError] = useState<string | null>(null);
+    const [isNextActionLoading, setIsNextActionLoading] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
 
     // Which stage card the user is currently viewing details for (not necessarily
@@ -159,6 +164,24 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
         return undefined;
     };
 
+    // CSTD-19 (19-N5): next actions are computed on read with no cache, so every workspace reload
+    // (which already runs after each mutation) refreshes the panel too.
+    const loadNextAction = useCallback(async () => {
+        if (!tenantId || !engagementId) return;
+        setIsNextActionLoading(true);
+        try {
+            const result = await WorkflowApi.getNextAction(engagementId, tenantId);
+            setNextAction(result);
+            setNextActionError(null);
+        } catch (err: any) {
+            console.warn('Failed to load next action:', err);
+            setNextAction(null);
+            setNextActionError(err?.message || 'Next action is unavailable.');
+        } finally {
+            setIsNextActionLoading(false);
+        }
+    }, [tenantId, engagementId]);
+
     // Load Workspace Data
     const loadWorkspaceData = useCallback(async () => {
         if (!tenantId || !engagementId) return;
@@ -222,12 +245,14 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             } catch (cErr) {
                 console.warn('Failed to load engagement conditions:', cErr);
             }
+
+            await loadNextAction();
         } catch (err) {
             console.error(err);
         } finally {
             setIsLoading(false);
         }
-    }, [tenantId, engagementId, token, role]);
+    }, [tenantId, engagementId, token, role, loadNextAction]);
 
     useEffect(() => {
         loadWorkspaceData();
@@ -562,6 +587,8 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             const nextDef = getStageDefinition(updated.stage);
             setStageAdvanceSuccess(`Advanced to Stage ${nextDef.order}: ${nextDef.name}`);
             setTimeout(() => setStageAdvanceSuccess(null), 4000);
+            // Newly activated stage tasks and the next action must reflect the new stage.
+            await loadWorkspaceData();
         } catch (err: any) {
             setStageAdvanceError(err?.message || 'Failed to advance stage.');
         } finally {
@@ -595,6 +622,13 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const isTerminalStatus = engagement?.status === 'Closed' || engagement?.status === 'Cancelled';
     const nextStage = engagement ? getNextStage(engagement.stage) : null;
     const isViewingCurrentStage = selectedStageDef.key === engagement?.stage;
+    // Every Advance button follows the engine: enabled only when its primary action is AdvanceStage.
+    // PUT /stage still re-runs the gate server-side.
+    const canAdvanceStage = nextAction?.primaryAction?.kind === 'AdvanceStage';
+    const openItemCount = (nextAction?.blockers.length ?? 0) + (nextAction?.primaryAction && !canAdvanceStage ? 1 : 0);
+    const advanceBlockedHint = nextAction
+        ? `Resolve ${openItemCount} open item${openItemCount === 1 ? '' : 's'} before advancing.`
+        : 'Next action unavailable; advancing is disabled until it loads.';
 
     return (
         <div className="space-y-6">
@@ -683,6 +717,16 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                     </div>
                 </div>
             </div>
+
+            {/* CSTD-19 (19-N6): Next Action & blockers */}
+            <NextActionPanel
+                result={nextAction}
+                isLoading={isNextActionLoading}
+                error={nextActionError}
+                isAdvancing={isAdvancingStage}
+                onAdvance={handleAdvanceStage}
+                onRefresh={loadNextAction}
+            />
 
             {/* 5-Stage Pipeline Stepper */}
             <div className="bg-white/90 backdrop-blur-md p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
@@ -826,12 +870,13 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                         {isViewingCurrentStage && nextStage && !isTerminalStatus && (
                             <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
                                 <span className="text-xs text-slate-500">
-                                    Ready to advance to the next stage in the pipeline.
+                                    {canAdvanceStage ? 'Ready to advance to the next stage in the pipeline.' : advanceBlockedHint}
                                 </span>
                                 <button
                                     type="button"
                                     onClick={handleAdvanceStage}
-                                    disabled={isAdvancingStage}
+                                    disabled={isAdvancingStage || !canAdvanceStage}
+                                    title={canAdvanceStage ? undefined : advanceBlockedHint}
                                     className="px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-sm bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white shadow-indigo-500/25 disabled:opacity-60 disabled:cursor-not-allowed"
                                 >
                                     {isAdvancingStage ? (
@@ -859,12 +904,14 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                     </div>
                                     <p className="text-[11px] text-indigo-700 mt-1">
                                         Engagement is currently active at Stage {currentStageOrder}. Advance engagement to Stage {selectedStageDef.order} ({selectedStageDef.name}) to activate tasks on the Client Portal.
+                                        {!canAdvanceStage && ` ${advanceBlockedHint}`}
                                     </p>
                                 </div>
                                 <button
                                     type="button"
                                     onClick={handleAdvanceStage}
-                                    disabled={isAdvancingStage}
+                                    disabled={isAdvancingStage || !canAdvanceStage}
+                                    title={canAdvanceStage ? undefined : advanceBlockedHint}
                                     className="px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-sm bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white shadow-indigo-500/25 disabled:opacity-60 disabled:cursor-not-allowed shrink-0"
                                 >
                                     {isAdvancingStage ? (
@@ -1169,10 +1216,14 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                         <p className="text-emerald-700 text-[11px] leading-relaxed">
                                             All deliverables for Stage {currentStageOrder} ({ENGAGEMENT_STAGES[currentStageOrder - 1]?.name}) are complete. Advance to unlock Stage {getStageDefinition(nextStage).order}: {getStageDefinition(nextStage).name} for the client.
                                         </p>
+                                        {!canAdvanceStage && (
+                                            <p className="text-amber-700 text-[11px] font-semibold">{advanceBlockedHint}</p>
+                                        )}
                                         <button
                                             type="button"
                                             onClick={handleAdvanceStage}
-                                            disabled={isAdvancingStage}
+                                            disabled={isAdvancingStage || !canAdvanceStage}
+                                            title={canAdvanceStage ? undefined : advanceBlockedHint}
                                             className="w-full py-2 px-3 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition flex items-center justify-center gap-2 shadow-xs disabled:opacity-60"
                                         >
                                             {isAdvancingStage ? (
