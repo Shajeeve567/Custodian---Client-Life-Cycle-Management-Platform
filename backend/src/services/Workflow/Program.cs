@@ -1,8 +1,7 @@
 using Confluent.Kafka;
+using Custodian.Workflow;
 using Custodian.Workflow.Data;
-using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
-using Custodian.Workflow.Services.Gates;
 using Custodian.Workflow.Services.Kafka;
 using Custodian.Shared.Http;
 using Custodian.Shared.Auth;
@@ -20,12 +19,6 @@ builder.Services.AddTenantContext();
 builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 
-// CSTD-33: SLA thresholds are config driven
-// No runtime editing
-builder.Services.Configure<Custodian.Workflow.Configuration.SlaOptions>(
-    builder.Configuration.GetSection(Custodian.Workflow.Configuration.SlaOptions.SectionName)
-);
-
 // Configure EF Core with MySQL
 var connectionString = builder.Configuration.GetConnectionString("AzureMySqlConnection");
 if (string.IsNullOrWhiteSpace(connectionString) || connectionString.Contains("YOUR_SECRET_STRING"))
@@ -39,20 +32,8 @@ if (!string.IsNullOrWhiteSpace(connectionString))
         options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
 }
 
-// Register Repository & Audit Services
-builder.Services.AddScoped<IEngagementRepository, EngagementRepository>();
-builder.Services.AddScoped<IClientActionService, ClientActionService>();
-builder.Services.AddScoped<IClientPortalService, ClientPortalService>();
-builder.Services.AddScoped<IRequirementService, RequirementService>();
-
-// CSTD-33
-builder.Services.AddScoped<IStallDetectionService, StallDetectionService>();
-builder.Services.AddScoped<IStallActionsProvider, StallActionsProvider>();
-builder.Services.AddSingleton<IStallEventDeduplicator, StallEventDeduplicator>();
-
-// CSTD-34
-builder.Services.AddScoped<IStallQueueProvider, StallQueueProvider>();
-builder.Services.AddScoped<IStallQueueService, StallQueueService>();
+// Register Workflow domain services (repositories, actions, conditions, gate, next action, SLA/stall)
+builder.Services.AddWorkflowDomainServices(builder.Configuration);
 
 // Audit transport is feature-flagged: "Http" (default) keeps the existing
 // synchronous HTTP call to the Audit service; "Kafka" switches to publishing
@@ -99,14 +80,6 @@ else
     });
 }
 
-// CSTD-18: Gate Evaluation — mandatory gates (required documents today) that must be
-// satisfied before an engagement's stage transition proceeds.
-builder.Services.AddHttpClient<IDocumentComplianceClient, DocumentComplianceClient>(client =>
-{
-    var documentsBaseUrl = builder.Configuration["Services:DocumentsUrl"] ?? "http://localhost:5171";
-    client.BaseAddress = new Uri(documentsBaseUrl);
-});
-builder.Services.AddScoped<IGateEvaluator, GateEvaluator>();
 
 builder.Services.AddOpenApi();
 

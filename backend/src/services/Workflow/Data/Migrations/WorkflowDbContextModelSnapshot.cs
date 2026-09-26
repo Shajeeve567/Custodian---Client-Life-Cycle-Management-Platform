@@ -29,6 +29,10 @@ namespace Workflow.Data.Migrations
                         .HasColumnType("char(36)")
                         .HasColumnName("action_id");
 
+                    b.Property<DateTime?>("ActivatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("activated_at");
+
                     b.Property<string>("AssignedToRole")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -64,6 +68,18 @@ namespace Workflow.Data.Migrations
                         .HasColumnType("tinyint(1)")
                         .HasColumnName("is_internal_only");
 
+                    b.Property<Guid?>("LinkedConditionId")
+                        .HasColumnType("char(36)")
+                        .HasColumnName("linked_condition_id");
+
+                    b.Property<Guid?>("LinkedDocumentId")
+                        .HasColumnType("char(36)")
+                        .HasColumnName("linked_document_id");
+
+                    b.Property<Guid?>("LinkedMeetingId")
+                        .HasColumnType("char(36)")
+                        .HasColumnName("linked_meeting_id");
+
                     b.Property<Guid?>("LinkedRequirementId")
                         .HasColumnType("char(36)")
                         .HasColumnName("linked_requirement_id");
@@ -77,6 +93,12 @@ namespace Workflow.Data.Migrations
                     b.Property<string>("SourceMetadata")
                         .HasColumnType("longtext")
                         .HasColumnName("source_metadata");
+
+                    b.Property<string>("SourceType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("source_type");
 
                     b.Property<int>("StageNumber")
                         .ValueGeneratedOnAdd()
@@ -108,10 +130,17 @@ namespace Workflow.Data.Migrations
                         .HasColumnType("varchar(50)")
                         .HasColumnName("type");
 
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at");
+
                     b.HasKey("ActionId");
 
                     b.HasIndex("EngagementId")
                         .HasDatabaseName("idx_action_engagement_id");
+
+                    b.HasIndex("LinkedDocumentId")
+                        .HasDatabaseName("idx_action_linked_document");
 
                     b.HasIndex("LinkedRequirementId")
                         .HasDatabaseName("idx_action_linked_requirement");
@@ -124,6 +153,12 @@ namespace Workflow.Data.Migrations
 
                     b.HasIndex("TenantId", "EngagementId")
                         .HasDatabaseName("idx_action_tenant_engagement");
+
+                    b.HasIndex("TenantId", "EngagementId", "Status")
+                        .HasDatabaseName("idx_action_tenant_engagement_status");
+
+                    b.HasIndex("TenantId", "Status", "DeadlineUtc")
+                        .HasDatabaseName("idx_action_tenant_status_deadline");
 
                     b.ToTable("client_actions", (string)null);
                 });
@@ -191,6 +226,141 @@ namespace Workflow.Data.Migrations
                         .HasDatabaseName("idx_tenant_status");
 
                     b.ToTable("engagements", (string)null);
+                });
+
+            modelBuilder.Entity("Custodian.Workflow.Models.EngagementCondition", b =>
+                {
+                    b.Property<Guid>("ConditionId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)")
+                        .HasColumnName("condition_id");
+
+                    b.Property<decimal?>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)")
+                        .HasColumnName("amount");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("Currency")
+                        .HasMaxLength(3)
+                        .HasColumnType("varchar(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<DateTime?>("DeactivatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("deactivated_at");
+
+                    b.Property<string>("DeactivatedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("deactivated_by");
+
+                    b.Property<string>("DeactivationReason")
+                        .HasColumnType("longtext")
+                        .HasColumnName("deactivation_reason");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("longtext")
+                        .HasColumnName("description");
+
+                    b.Property<DateTime?>("DueDateUtc")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("due_date_utc");
+
+                    b.Property<Guid>("EngagementId")
+                        .HasColumnType("char(36)")
+                        .HasColumnName("engagement_id");
+
+                    b.Property<string>("InternalNote")
+                        .HasColumnType("longtext")
+                        .HasColumnName("internal_note");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(true)
+                        .HasColumnName("is_active");
+
+                    b.Property<string>("PaymentType")
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("payment_type");
+
+                    b.Property<string>("RequiredBeforeStage")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("varchar(40)")
+                        .HasDefaultValue("Execution")
+                        .HasColumnName("required_before_stage");
+
+                    b.Property<DateTime?>("SatisfiedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("satisfied_at");
+
+                    b.Property<string>("SatisfiedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("satisfied_by");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("Pending")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("varchar(36)")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)")
+                        .HasColumnName("title");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("type");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("ConditionId");
+
+                    b.HasIndex("EngagementId")
+                        .HasDatabaseName("idx_condition_engagement_id");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("idx_condition_tenant_id");
+
+                    b.HasIndex("TenantId", "EngagementId")
+                        .HasDatabaseName("idx_condition_tenant_engagement");
+
+                    b.HasIndex("TenantId", "EngagementId", "Type", "IsActive")
+                        .HasDatabaseName("idx_condition_tenant_eng_type_active");
+
+                    b.ToTable("engagement_conditions", (string)null);
                 });
 
             modelBuilder.Entity("Custodian.Workflow.Models.Requirement", b =>

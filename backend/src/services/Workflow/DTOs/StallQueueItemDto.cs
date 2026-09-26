@@ -25,6 +25,9 @@ public class StallQueueItemDto
     /// </summary>
     public string NextAction { get; set; } = string.Empty;
 
+    /// <summary>Who owns the next action (Client | Staff) when it comes from the next-action engine; null otherwise.</summary>
+    public string? NextActionResponsibleParty { get; set; }
+
     public DateTime DeadlineUtc { get; set; }
     public int HoursOverdue { get; set; }
     public DateTime EvaluatedAtUtc { get; set; }

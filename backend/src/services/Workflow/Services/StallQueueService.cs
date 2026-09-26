@@ -1,4 +1,5 @@
 using Custodian.Workflow.DTOs;
+using Custodian.Workflow.Services.NextAction;
 
 namespace Custodian.Workflow.Services;
 
@@ -6,13 +7,16 @@ public sealed class StallQueueService : IStallQueueService
 {
     private readonly IStallQueueProvider _provider;
     private readonly IStallDetectionService _stallDetection;
+    private readonly INextActionService? _nextActionService;
 
     public StallQueueService(
         IStallQueueProvider provider,
-        IStallDetectionService stallDetection)
+        IStallDetectionService stallDetection,
+        INextActionService? nextActionService = null)
     {
         _provider = provider;
         _stallDetection = stallDetection;
+        _nextActionService = nextActionService;
     }
 
     public async Task<IReadOnlyList<StallQueueItemDto>> GetQueueAsync(
@@ -57,6 +61,22 @@ public sealed class StallQueueService : IStallQueueService
                 HoursOverdue = status.HoursOverdue.Value,
                 EvaluatedAtUtc = status.EvaluatedAtUtc,
             });
+        }
+
+        // CSTD-19: the "next action" column comes from the deterministic engine (staff view). Only
+        // stalled engagements are evaluated, sequentially (one DbContext per request); if the engine
+        // is unavailable or has no primary, the advisory text above is kept.
+        if (_nextActionService != null)
+        {
+            foreach (var item in stalled)
+            {
+                var nextAction = await _nextActionService.GetNextActionAsync(item.EngagementId, tenantId, NextActionView.Staff, ct);
+                if (nextAction?.PrimaryAction != null)
+                {
+                    item.NextAction = nextAction.PrimaryAction.Title;
+                    item.NextActionResponsibleParty = nextAction.PrimaryAction.ResponsibleParty;
+                }
+            }
         }
 
         return stalled

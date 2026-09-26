@@ -1,4 +1,5 @@
 using Custodian.Workflow.DTOs;
+using Custodian.Workflow.Models;
 
 namespace Custodian.Workflow.Services;
 
@@ -6,11 +7,29 @@ public interface IClientActionService
 {
     Task<IEnumerable<ClientActionResponseDto>> GetActionsByEngagementAsync(Guid engagementId, string tenantId, bool isClientView, string? statusFilter = null);
     Task<ClientActionResponseDto> CreateActionAsync(Guid engagementId, string tenantId, CreateClientActionDto dto);
+    Task<ClientAction> CreateLinkedActionAsync(Guid engagementId, string tenantId, CreateLinkedActionDto dto);
+    Task<ClientAction> CreateLinkedActionAsync(
+        Guid engagementId,
+        string tenantId,
+        string sourceType,
+        Guid sourceId,
+        string title,
+        string? description = null,
+        string? type = null,
+        int stageNumber = 1,
+        DateTime? deadlineUtc = null,
+        string? assignedToRole = "Client",
+        bool isInternalOnly = false,
+        string? sourceMetadata = null);
+    Task CancelActionsForSourceAsync(Guid engagementId, string tenantId, string sourceType, Guid sourceId, string actor, string reason);
     Task<ClientActionResponseDto?> CompleteActionAsync(Guid engagementId, Guid actionId, string tenantId, CompleteClientActionDto dto);
     Task<ClientActionResponseDto?> UploadEvidenceAsync(Guid engagementId, Guid actionId, string tenantId, UploadActionEvidenceDto dto);
     Task<ClientActionResponseDto?> ReviewActionAsync(Guid engagementId, Guid actionId, string tenantId, ReviewActionDto dto);
     Task<ClientActionResponseDto?> ApplyVerificationOutcomeAsync(Guid engagementId, Guid actionId, string tenantId, ApplyActionVerificationDto dto);
-    Task<List<ClientActionResponseDto>> EnsureLifecycleActionsAsync(Guid engagementId, string tenantId);
+    Task<List<ClientActionResponseDto>?> ApplyStandardChecklistAsync(Guid engagementId, string tenantId, string actor);
+    Task<ClientActionResponseDto?> UpdateActionAsync(Guid engagementId, Guid actionId, string tenantId, UpdateClientActionDto dto, string actor);
+    Task<ClientActionResponseDto?> CancelActionAsync(Guid engagementId, Guid actionId, string tenantId, string reason, string actor);
+    Task ActivateStageActionsAsync(Guid engagementId, string tenantId, int stageNumber);
 
     /// <summary>
     /// IDOR protection (CSTD-22 fix, extended here): confirms the engagement identified by

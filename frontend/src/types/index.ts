@@ -99,7 +99,22 @@ export interface UpdateEngagementStageRequest {
     stage: EngagementStage;
 }
 
-export type ActionType = 'KycDocument' | 'SignAgreement' | 'ProofOfAddress' | 'CustomTask' | 'DocumentUpload';
+export type ActionType =
+    | 'UploadDocument'
+    | 'ReviewDocument'
+    | 'SignDocument'
+    | 'CompleteForm'
+    | 'VerifyIdentity'
+    | 'ScheduleCall'
+    | 'ProvideInformation'
+    | 'AcknowledgeNotice'
+    | 'CustomTask'
+    | 'KycDocument'
+    | 'SignAgreement'
+    | 'ProofOfAddress'
+    | 'DocumentUpload';
+
+export type ActionStatus = 'Pending' | 'Uploaded' | 'Completed' | 'Rejected' | 'Cancelled';
 
 export interface ClientAction {
     actionId: string;
@@ -108,16 +123,35 @@ export interface ClientAction {
     title: string;
     description: string;
     type: ActionType | string;
-    status?: string;
+    status?: ActionStatus | string;
+    sourceType?: string;
     stageNumber?: number;
     deadlineUtc?: string | null;
     assignedRole?: UserRole;
     isInternalOnly: boolean;
     isCompleted?: boolean;
     createdAt: string;
+    updatedAt?: string;
+    activatedAt?: string | null;
     completedAt?: string | null;
     completedByActor?: string | null;
     linkedRequirementId?: string | null;
+    linkedDocumentId?: string | null;
+    linkedConditionId?: string | null;
+    linkedMeetingId?: string | null;
+    // Backend JSON field (staff view); `assignedRole` above is kept for older callers.
+    assignedToRole?: 'Client' | 'Staff' | string | null;
+}
+
+// Staff edit of a Pending, staff-managed task (PATCH /actions/{id}). Omitted fields are unchanged.
+export interface UpdateClientActionRequest {
+    title?: string;
+    description?: string;
+    deadlineUtc?: string | null;
+    clearDeadline?: boolean;
+    stageNumber?: number;
+    assignedToRole?: 'Client' | 'Staff';
+    isInternalOnly?: boolean;
 }
 
 export interface CreateClientActionRequest {
@@ -134,6 +168,10 @@ export interface CreateClientActionRequest {
     // Backend's CreateClientActionDto.Source is [Required]; omitting it fails ModelState
     // validation (400) before the action is ever persisted.
     source: string;
+    sourceType?: string;
+    linkedDocumentId?: string;
+    linkedConditionId?: string;
+    linkedMeetingId?: string;
 }
 
 export interface ClientSafeAction {
@@ -142,6 +180,7 @@ export interface ClientSafeAction {
     description?: string | null;
     type: string;
     status: string;
+    sourceType?: string;
     stageNumber: number;
     deadlineUtc?: string | null;
     isOverdue: boolean;
@@ -176,6 +215,69 @@ export interface ClientPortalDashboard {
     primaryNextAction?: ClientSafeAction | null;
     pendingActions: ClientSafeAction[];
     stages: ClientPortalStage[];
+    // CSTD-19: full engine output (client view). The fields above stay for backward compatibility.
+    nextAction?: NextActionResult | null;
+}
+
+// ---------------------------------------------------------------------------
+// CSTD-19: Next-Action Orchestration (GET /api/engagements/{id}/next-action)
+// ---------------------------------------------------------------------------
+
+export type NextActionOverallState =
+    | 'Closed'
+    | 'NotStarted'
+    | 'ClientActionRequired'
+    | 'AwaitingStaff'
+    | 'ReadyToAdvance'
+    | 'BlockedExternal'
+    | 'AllComplete';
+
+export type NextActionKind =
+    | 'RequirementSubmission'
+    | 'RequirementReview'
+    | 'DocumentUpload'
+    | 'DocumentResubmission'
+    | 'DocumentVerification'
+    | 'ConditionApproval'
+    | 'ConditionPayment'
+    | 'ClientTask'
+    | 'StaffTask'
+    | 'AdvanceStage'
+    | 'Unavailable';
+
+export interface NextActionItem {
+    kind: NextActionKind | string;
+    responsibleParty: 'Client' | 'Staff' | string;
+    title: string;
+    reason: string;
+    actionId?: string | null;
+    sourceType?: string | null;
+    sourceId?: string | null;      // staff view only
+    stageNumber?: number | null;
+    dueAtUtc?: string | null;
+    isOverdue: boolean;
+    overdueBy?: string | null;     // staff view only; .NET TimeSpan string, e.g. "2.03:15:00"
+    priorityRank: number;          // staff view only
+}
+
+export interface GateSummary {
+    targetStage: string;
+    isSatisfied: boolean;
+    reasons: string[];
+}
+
+export interface NextActionResult {
+    engagementId: string;
+    engagementStatus: string;
+    currentStage: string;
+    overallState: NextActionOverallState | string;
+    primaryAction?: NextActionItem | null;
+    blockers: NextActionItem[];
+    nextStageGate?: GateSummary | null;
+    // Informational only (staff view): conditions gating a stage after the next one. Never blockers.
+    upcomingConditions: NextActionItem[];
+    isStalled: boolean;
+    evaluatedAtUtc: string;
 }
 
 export interface UploadActionEvidenceRequest {
@@ -298,7 +400,81 @@ export interface StallQueueItem {
     blockerActionTitle: string;
     blockerStageNumber: number;
     nextAction: string;
+    // Client | Staff when the next action comes from the CSTD-19 engine; null for the advisory fallback
+    nextActionResponsibleParty?: string | null;
     deadlineUtc: string;
     hoursOverdue: number;
     evaluatedAtUtc: string;
 }
+
+export type ConditionType = 'Approval' | 'Payment';
+export type ConditionStatus = 'Pending' | 'Satisfied' | 'Rejected';
+export type ConditionPaymentType = 'Upfront' | 'Milestone' | 'Final';
+
+export interface EngagementCondition {
+    conditionId: string;
+    engagementId: string;
+    tenantId: string;
+    type: ConditionType;
+    isActive: boolean;
+    status: ConditionStatus;
+    requiredBeforeStage: EngagementStage | string;
+    title: string;
+    description?: string;
+    dueDateUtc?: string;
+    amount?: number;
+    currency?: string;
+    paymentType?: string;
+    internalNote?: string;
+    createdBy: string;
+    createdAt: string;
+    updatedBy?: string;
+    updatedAt?: string;
+    deactivatedBy?: string;
+    deactivatedAt?: string;
+    deactivationReason?: string;
+    satisfiedAt?: string;
+    satisfiedBy?: string;
+    isOverdue?: boolean;
+}
+
+export interface ClientSafeCondition {
+    conditionId: string;
+    title: string;
+    description?: string;
+    type: ConditionType;
+    status: ConditionStatus;
+    requiredBeforeStage: string;
+    dueDateUtc?: string;
+    amount?: number;
+    currency?: string;
+    paymentType?: string;
+    isOverdue: boolean;
+}
+
+export interface AttachConditionRequest {
+    type: ConditionType;
+    requiredBeforeStage?: EngagementStage | string;
+    title: string;
+    description?: string;
+    dueDateUtc?: string;
+    amount?: number;
+    currency?: string;
+    paymentType?: string;
+    internalNote?: string;
+}
+
+export interface UpdateConditionRequest {
+    title?: string;
+    description?: string;
+    dueDateUtc?: string;
+    amount?: number;
+    currency?: string;
+    paymentType?: string;
+    internalNote?: string;
+}
+
+export interface DeactivateConditionRequest {
+    reason: string;
+}
+

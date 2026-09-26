@@ -1,6 +1,7 @@
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.NextAction;
 using Moq;
 using Xunit;
 
@@ -40,7 +41,8 @@ public class StallQueueServiceTests
             AssignedToRole = "Client",
             IsInternalOnly = false,
             DeadlineUtc = DateTime.UtcNow.AddHours(-hoursOverdue),
-            CreatedAt = DateTime.UtcNow.AddHours(-48)
+            CreatedAt = DateTime.UtcNow.AddHours(-48),
+            ActivatedAt = DateTime.UtcNow.AddHours(-48) // CSTD-21: stage has started
         };
     }
 
@@ -167,5 +169,68 @@ public class StallQueueServiceTests
 
         var item = Assert.Single(result);
         Assert.Contains("Upload ID", item.NextAction);
+    }
+
+    // =========================================================================
+    // CSTD-19 integration: "next action" column comes from the next-action engine
+    // =========================================================================
+
+    [Fact]
+    public async Task NextAction_ComesFromNextActionEngine_WhenAvailable()
+    {
+        var engagementId = Guid.NewGuid();
+        _mockProvider.Setup(p => p.GetActiveEngagementsWithActionsAsync("tenant-001", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { Group(engagementId, OverdueClientAction(hoursOverdue: 5)) });
+
+        var engine = new Mock<INextActionService>();
+        engine.Setup(e => e.GetNextActionAsync(engagementId, "tenant-001", NextActionView.Staff, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new NextActionResult
+            {
+                EngagementId = engagementId,
+                PrimaryAction = new NextActionItem
+                {
+                    Kind = NextActionKind.DocumentUpload,
+                    ResponsibleParty = ResponsibleParty.Client,
+                    Title = "Upload ID",
+                    Reason = "Action is overdue.",
+                    PriorityRank = 1
+                }
+            });
+        var service = new StallQueueService(_mockProvider.Object, _stallDetection, engine.Object);
+
+        var item = Assert.Single(await service.GetQueueAsync("tenant-001"));
+
+        Assert.Equal("Upload ID", item.NextAction);
+        Assert.Equal(ResponsibleParty.Client, item.NextActionResponsibleParty);
+    }
+
+    [Fact]
+    public async Task NextAction_FallsBackToAdvisoryText_WhenEngineHasNoPrimary()
+    {
+        var engagementId = Guid.NewGuid();
+        _mockProvider.Setup(p => p.GetActiveEngagementsWithActionsAsync("tenant-001", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { Group(engagementId, OverdueClientAction()) });
+
+        var engine = new Mock<INextActionService>();
+        engine.Setup(e => e.GetNextActionAsync(engagementId, "tenant-001", NextActionView.Staff, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((NextActionResult?)null);
+        var service = new StallQueueService(_mockProvider.Object, _stallDetection, engine.Object);
+
+        var item = Assert.Single(await service.GetQueueAsync("tenant-001"));
+
+        Assert.Equal("Contact client regarding 'Upload ID'", item.NextAction);
+        Assert.Null(item.NextActionResponsibleParty);
+    }
+
+    [Fact]
+    public async Task ActionWhoseStageHasNotStarted_DoesNotAppearInQueue()
+    {
+        var action = OverdueClientAction(stage: 4);
+        action.ActivatedAt = null; // CSTD-21: stage 4 has not started yet
+
+        _mockProvider.Setup(p => p.GetActiveEngagementsWithActionsAsync("tenant-001", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { Group(Guid.NewGuid(), action) });
+
+        Assert.Empty(await _service.GetQueueAsync("tenant-001"));
     }
 }

@@ -27,6 +27,13 @@ import {
     SubmitRequirementRequest,
     RequirementResponse,
     StallQueueItem,
+    EngagementCondition,
+    ClientSafeCondition,
+    AttachConditionRequest,
+    UpdateConditionRequest,
+    DeactivateConditionRequest,
+    NextActionResult,
+    UpdateClientActionRequest,
 } from '../types';
 
 export const API_BASE = {
@@ -261,6 +268,17 @@ export const WorkflowApi = {
         });
     },
 
+    // CSTD-19: Next action for the staff workspace: GET /api/engagements/{id}/next-action (Owner/Staff).
+    // Computed on every read from live state (no cache), so re-fetch after any change.
+    async getNextAction(engagementId: string, tenantId: string): Promise<NextActionResult> {
+        return request<NextActionResult>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/next-action?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'GET',
+                headers: { 'X-Tenant-ID': tenantId },
+            });
+    },
+
     async deleteEngagement(engagementId: string, tenantId: string): Promise<void> {
         return request<void>(`${API_BASE.WORKFLOW}/api/Engagements/${engagementId}?tenantId=${encodeURIComponent(tenantId)}`, {
             method: 'DELETE',
@@ -289,6 +307,38 @@ export const WorkflowApi = {
             method: 'POST',
             body: JSON.stringify(req),
         });
+    },
+
+    // Staff-defined stage tasks: opt-in standard checklist (idempotent). Returns only the tasks it added.
+    async applyStandardChecklist(engagementId: string, tenantId: string): Promise<ClientAction[]> {
+        return request<ClientAction[]>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/standard-checklist?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'POST',
+                headers: { 'X-Tenant-ID': tenantId },
+            });
+    },
+
+    // Edit a Pending, staff-managed task (Owner/Staff). 409 if not Pending or linked to a requirement/condition.
+    async updateAction(engagementId: string, actionId: string, req: UpdateClientActionRequest, tenantId: string): Promise<ClientAction> {
+        return request<ClientAction>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/${actionId}?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'PATCH',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify(req),
+            });
+    },
+
+    // Cancel a task that is no longer required (kept as Cancelled). 409 for completed or source-linked tasks.
+    async cancelAction(engagementId: string, actionId: string, reason: string, tenantId: string): Promise<ClientAction> {
+        return request<ClientAction>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/${actionId}/cancel?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'PUT',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify({ reason }),
+            });
     },
 
     async completeAction(actionId: string, tenantId: string, engagementId?: string, actor?: string): Promise<ClientAction> {
@@ -365,6 +415,63 @@ export const WorkflowApi = {
                 body: JSON.stringify(data),
             }
         );
+    },
+
+    // CSTD-24: Engagement Conditions Management
+    async getConditions(engagementId: string, tenantId?: string, includeInactive: boolean = true): Promise<EngagementCondition[]> {
+        const params = new URLSearchParams();
+        if (tenantId) params.set('tenantId', tenantId);
+        params.set('includeInactive', String(includeInactive));
+        const qs = params.toString();
+        const url = `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions${qs ? `?${qs}` : ''}`;
+        return request<EngagementCondition[]>(url, {
+            method: 'GET',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+        });
+    },
+
+    async getClientConditions(engagementId: string, tenantId?: string): Promise<ClientSafeCondition[]> {
+        const params = new URLSearchParams();
+        if (tenantId) params.set('tenantId', tenantId);
+        const qs = params.toString();
+        const url = `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions${qs ? `?${qs}` : ''}`;
+        return request<ClientSafeCondition[]>(url, {
+            method: 'GET',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+        });
+    },
+
+    async attachCondition(engagementId: string, req: AttachConditionRequest, tenantId?: string): Promise<EngagementCondition> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions`;
+        return request<EngagementCondition>(url, {
+            method: 'POST',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify(req),
+        });
+    },
+
+    async updateCondition(engagementId: string, conditionId: string, req: UpdateConditionRequest, tenantId?: string): Promise<EngagementCondition> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}`;
+        return request<EngagementCondition>(url, {
+            method: 'PATCH',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify(req),
+        });
+    },
+
+    async deactivateCondition(engagementId: string, conditionId: string, reason: string, tenantId?: string): Promise<EngagementCondition> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/deactivate?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/deactivate`;
+        return request<EngagementCondition>(url, {
+            method: 'PUT',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify({ reason }),
+        });
     },
 };
 

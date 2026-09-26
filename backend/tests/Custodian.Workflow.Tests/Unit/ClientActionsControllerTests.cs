@@ -957,4 +957,211 @@ public class ClientActionsControllerTests
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
         Assert.Equal(200, okResult.StatusCode);
     }
+
+    [Fact]
+    public async Task CreateAction_InvalidOperationException_Returns409Conflict()
+    {
+        // Arrange
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+        SetupTenantHeader(tenantId);
+
+        var dto = new CreateClientActionDto
+        {
+            Title = "Submit Tax Return",
+            Type = ClientActionType.DocumentUpload
+        };
+
+        _mockService.Setup(s => s.CreateActionAsync(engagementId, tenantId, dto))
+            .ThrowsAsync(new InvalidOperationException("Cannot create action for an engagement with status 'Closed'."));
+
+        // Act
+        var result = await _controller.CreateAction(engagementId, dto, tenantId: null);
+
+        // Assert: 409 Conflict
+        var conflictResult = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(409, conflictResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task CompleteAction_InvalidOperationException_Returns409Conflict()
+    {
+        // Arrange
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        SetupTenantHeader(tenantId);
+
+        var dto = new CompleteClientActionDto
+        {
+            CompletedByActor = "StaffMember"
+        };
+
+        _mockService.Setup(s => s.CompleteActionAsync(engagementId, actionId, tenantId, dto))
+            .ThrowsAsync(new InvalidOperationException("Cannot transition from Cancelled to Completed."));
+
+        // Act
+        var result = await _controller.CompleteAction(engagementId, actionId, dto, tenantId: null);
+
+        // Assert: 409 Conflict
+        var conflictResult = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(409, conflictResult.StatusCode);
+    }
+
+    // =========================================================================
+    // Staff-defined stage tasks: create/edit/cancel/checklist are Owner/Staff only
+    // =========================================================================
+
+    private void SetupRole(string role, string tenantId = "tenant-001", string? clientId = null)
+    {
+        var claims = new List<Claim>
+        {
+            new("tenant_id", tenantId),
+            new(ClaimTypes.Role, role),
+            new(ClaimTypes.NameIdentifier, $"{role.ToLowerInvariant()}-user-1")
+        };
+        if (clientId != null)
+        {
+            claims.Add(new Claim("client_id", clientId));
+        }
+
+        var httpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(claims, "TestAuth")) };
+        httpContext.Request.Headers["X-Tenant-ID"] = tenantId;
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+    }
+
+    [Fact]
+    public async Task CreateAction_ClientOwningEngagement_Returns403_ClientsCannotDefineTasks()
+    {
+        SetupRole("Client", clientId: "client-owner");
+        var engagementId = Guid.NewGuid();
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, "tenant-001", "client-owner")).ReturnsAsync(true);
+
+        var result = await _controller.CreateAction(engagementId, new CreateClientActionDto { Title = "Self task", Type = "CustomTask", Source = "Client" }, tenantId: null);
+
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.CreateActionAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CreateClientActionDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAction_UnknownEngagement_Returns404()
+    {
+        SetupRole("Staff");
+        var engagementId = Guid.NewGuid();
+        _mockService.Setup(s => s.CreateActionAsync(engagementId, "tenant-001", It.IsAny<CreateClientActionDto>()))
+            .ThrowsAsync(new KeyNotFoundException("Engagement not found."));
+
+        var result = await _controller.CreateAction(engagementId, new CreateClientActionDto { Title = "Task", Type = "CustomTask", Source = "StaffManual" }, tenantId: null);
+
+        Assert.IsType<NotFoundObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task CreateAction_PastStage_Returns400()
+    {
+        SetupRole("Staff");
+        var engagementId = Guid.NewGuid();
+        _mockService.Setup(s => s.CreateActionAsync(engagementId, "tenant-001", It.IsAny<CreateClientActionDto>()))
+            .ThrowsAsync(new ArgumentException("Tasks can only be added to the current stage (3) or a later one."));
+
+        var result = await _controller.CreateAction(engagementId, new CreateClientActionDto { Title = "Task", Type = "CustomTask", Source = "StaffManual", StageNumber = 1 }, tenantId: null);
+
+        Assert.IsType<BadRequestObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task ApplyStandardChecklist_Staff_Returns200_WithActorFromJwt()
+    {
+        SetupRole("Staff");
+        var engagementId = Guid.NewGuid();
+        _mockService.Setup(s => s.ApplyStandardChecklistAsync(engagementId, "tenant-001", "staff-user-1"))
+            .ReturnsAsync(new List<ClientActionResponseDto> { new() { Title = "Client Intake" } });
+
+        var result = await _controller.ApplyStandardChecklist(engagementId, tenantId: null);
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Single(Assert.IsAssignableFrom<IEnumerable<ClientActionResponseDto>>(ok.Value));
+    }
+
+    [Fact]
+    public async Task ApplyStandardChecklist_UnknownEngagement_Returns404_Closed_Returns409()
+    {
+        SetupRole("Owner");
+        var missing = Guid.NewGuid();
+        var closed = Guid.NewGuid();
+        _mockService.Setup(s => s.ApplyStandardChecklistAsync(missing, "tenant-001", It.IsAny<string>()))
+            .ReturnsAsync((List<ClientActionResponseDto>?)null);
+        _mockService.Setup(s => s.ApplyStandardChecklistAsync(closed, "tenant-001", It.IsAny<string>()))
+            .ThrowsAsync(new InvalidOperationException("closed"));
+
+        Assert.IsType<NotFoundObjectResult>((await _controller.ApplyStandardChecklist(missing, tenantId: null)).Result);
+        Assert.IsType<ConflictObjectResult>((await _controller.ApplyStandardChecklist(closed, tenantId: null)).Result);
+    }
+
+    [Fact]
+    public async Task UpdateAction_Staff_Returns200_NotFound404_NotPending409()
+    {
+        SetupRole("Staff");
+        var engagementId = Guid.NewGuid();
+        var ok = Guid.NewGuid();
+        var missing = Guid.NewGuid();
+        var completed = Guid.NewGuid();
+        var dto = new UpdateClientActionDto { Title = "Renamed" };
+        _mockService.Setup(s => s.UpdateActionAsync(engagementId, ok, "tenant-001", dto, "staff-user-1"))
+            .ReturnsAsync(new ClientActionResponseDto { ActionId = ok, Title = "Renamed" });
+        _mockService.Setup(s => s.UpdateActionAsync(engagementId, missing, "tenant-001", dto, It.IsAny<string>()))
+            .ReturnsAsync((ClientActionResponseDto?)null);
+        _mockService.Setup(s => s.UpdateActionAsync(engagementId, completed, "tenant-001", dto, It.IsAny<string>()))
+            .ThrowsAsync(new InvalidOperationException("Only Pending tasks can be edited."));
+
+        Assert.IsType<OkObjectResult>((await _controller.UpdateAction(engagementId, ok, dto, tenantId: null)).Result);
+        Assert.IsType<NotFoundObjectResult>((await _controller.UpdateAction(engagementId, missing, dto, tenantId: null)).Result);
+        Assert.IsType<ConflictObjectResult>((await _controller.UpdateAction(engagementId, completed, dto, tenantId: null)).Result);
+    }
+
+    [Fact]
+    public async Task CancelAction_Staff_Returns200_CompletedTask409()
+    {
+        SetupRole("Owner");
+        var engagementId = Guid.NewGuid();
+        var pending = Guid.NewGuid();
+        var completed = Guid.NewGuid();
+        _mockService.Setup(s => s.CancelActionAsync(engagementId, pending, "tenant-001", "No longer required", "owner-user-1"))
+            .ReturnsAsync(new ClientActionResponseDto { ActionId = pending, Status = ClientActionStatus.Cancelled });
+        _mockService.Setup(s => s.CancelActionAsync(engagementId, completed, "tenant-001", It.IsAny<string>(), It.IsAny<string>()))
+            .ThrowsAsync(new InvalidOperationException("Completed is terminal."));
+
+        var dto = new CancelClientActionDto { Reason = "No longer required" };
+        Assert.IsType<OkObjectResult>((await _controller.CancelAction(engagementId, pending, dto, tenantId: null)).Result);
+        Assert.IsType<ConflictObjectResult>((await _controller.CancelAction(engagementId, completed, dto, tenantId: null)).Result);
+    }
+
+    [Fact]
+    public async Task StaffTaskEndpoints_ClientRole_Return403_AndNeverCallService()
+    {
+        SetupRole("Client", clientId: "client-owner");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, "tenant-001", "client-owner")).ReturnsAsync(true);
+
+        Assert.IsType<ForbidResult>((await _controller.ApplyStandardChecklist(engagementId, tenantId: null)).Result);
+        Assert.IsType<ForbidResult>((await _controller.UpdateAction(engagementId, actionId, new UpdateClientActionDto { Title = "x" }, tenantId: null)).Result);
+        Assert.IsType<ForbidResult>((await _controller.CancelAction(engagementId, actionId, new CancelClientActionDto { Reason = "x" }, tenantId: null)).Result);
+
+        _mockService.Verify(s => s.ApplyStandardChecklistAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        _mockService.Verify(s => s.UpdateActionAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UpdateClientActionDto>(), It.IsAny<string>()), Times.Never);
+        _mockService.Verify(s => s.CancelActionAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StaffTaskEndpoints_CrossTenantQuery_Return403()
+    {
+        SetupRole("Staff", tenantId: "tenant-001");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+
+        Assert.IsType<ForbidResult>((await _controller.ApplyStandardChecklist(engagementId, tenantId: "tenant-other")).Result);
+        Assert.IsType<ForbidResult>((await _controller.UpdateAction(engagementId, actionId, new UpdateClientActionDto { Title = "x" }, tenantId: "tenant-other")).Result);
+        Assert.IsType<ForbidResult>((await _controller.CancelAction(engagementId, actionId, new CancelClientActionDto { Reason = "x" }, tenantId: "tenant-other")).Result);
+    }
 }

@@ -240,6 +240,11 @@ export const StallQueuePage: React.FC = () => {
                                                 </td>
                                                 <td className="px-4 py-4 align-top">
                                                     <div className="text-xs text-slate-700 max-w-[240px]">{item.nextAction}</div>
+                                                    {item.nextActionResponsibleParty && (
+                                                        <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mt-0.5">
+                                                            Waiting on {item.nextActionResponsibleParty}
+                                                        </div>
+                                                    )}
                                                 </td>
                                                 <td className="px-4 py-4 align-top">
                                                     <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border ${urgencyClasses(item.hoursOverdue)}`}>

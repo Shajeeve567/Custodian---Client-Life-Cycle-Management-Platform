@@ -14,16 +14,22 @@ public class ClientActionResponseDto
     public string Status { get; set; } = string.Empty;
     public int StageNumber { get; set; } = 1;
     public DateTime? DeadlineUtc { get; set; }
+    public DateTime? ActivatedAt { get; set; }
     public string Source { get; set; } = string.Empty;
+    public string SourceType { get; set; } = string.Empty;
     public bool IsInternalOnly { get; set; }
     public string? AssignedToRole { get; set; }
     public string? CompletedByActor { get; set; }
     public DateTime? CompletedAt { get; set; }
     public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
     public string? SourceMetadata { get; set; }
     public string? VerificationStatus { get; set; }
     public string? VerificationReason { get; set; }
     public Guid? LinkedRequirementId { get; set; }
+    public Guid? LinkedDocumentId { get; set; }
+    public Guid? LinkedConditionId { get; set; }
+    public Guid? LinkedMeetingId { get; set; }
 }
 
 public class CreateClientActionDto
@@ -46,6 +52,77 @@ public class CreateClientActionDto
     [Required]
     [MaxLength(100)]
     public string Source { get; set; } = string.Empty;
+
+    public bool IsInternalOnly { get; set; } = false;
+
+    [MaxLength(50)]
+    public string AssignedToRole { get; set; } = "Client";
+
+    public string? SourceMetadata { get; set; }
+
+    [MaxLength(30)]
+    public string? SourceType { get; set; }
+
+    public Guid? LinkedDocumentId { get; set; }
+
+    public Guid? LinkedConditionId { get; set; }
+
+    public Guid? LinkedMeetingId { get; set; }
+}
+
+/// <summary>
+/// Staff edit of a Pending, staff-managed task. Null fields are left unchanged.
+/// </summary>
+public class UpdateClientActionDto
+{
+    [MaxLength(200)]
+    public string? Title { get; set; }
+
+    public string? Description { get; set; }
+
+    public DateTime? DeadlineUtc { get; set; }
+
+    /// <summary>Set true to remove the deadline (DeadlineUtc is ignored).</summary>
+    public bool ClearDeadline { get; set; }
+
+    [Range(1, 5)]
+    public int? StageNumber { get; set; }
+
+    [MaxLength(50)]
+    public string? AssignedToRole { get; set; }
+
+    public bool? IsInternalOnly { get; set; }
+}
+
+public class CancelClientActionDto
+{
+    [Required]
+    [MaxLength(500)]
+    public string Reason { get; set; } = string.Empty;
+}
+
+public class CreateLinkedActionDto
+{
+    [Required]
+    [MaxLength(200)]
+    public string Title { get; set; } = string.Empty;
+
+    public string? Description { get; set; }
+
+    [MaxLength(50)]
+    public string Type { get; set; } = ClientActionType.CustomTask;
+
+    [Range(1, 5)]
+    public int StageNumber { get; set; } = 1;
+
+    public DateTime? DeadlineUtc { get; set; }
+
+    [Required]
+    [MaxLength(30)]
+    public string SourceType { get; set; } = string.Empty;
+
+    [Required]
+    public Guid SourceId { get; set; }
 
     public bool IsInternalOnly { get; set; } = false;
 

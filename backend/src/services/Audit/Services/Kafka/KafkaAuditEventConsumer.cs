@@ -24,7 +24,19 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
         "StageChange",
         // CSTD-16 (Requirements Collection)
         "RequirementRequested",
-        "RequirementSubmitted"
+        "RequirementSubmitted",
+        // CSTD-21 (Client Action Model)
+        "ClientActionStatusChanged",
+        // Staff-defined stage tasks
+        "ClientActionUpdated",
+        "StandardChecklistApplied",
+        // CSTD-33 (Action SLA & Stall Detection). Dot-case to match what Workflow publishes
+        // and what Identity's notification mapper expects.
+        "action.overdue",
+        // CSTD-24 (Engagement Condition Management)
+        "ConditionAttached",
+        "ConditionUpdated",
+        "ConditionDeactivated"
     };
 
     private readonly KafkaOptions _kafkaOptions;

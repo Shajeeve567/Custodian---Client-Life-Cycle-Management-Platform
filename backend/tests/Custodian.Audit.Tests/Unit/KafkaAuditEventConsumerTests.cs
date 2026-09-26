@@ -107,6 +107,97 @@ public class KafkaAuditEventConsumerTests
     }
 
     [Fact]
+    public async Task ProcessMessageAsync_ActionOverdueEvent_RecordsAuditEvent()
+    {
+        // Arrange: CSTD-33 stall detection publishes action.overdue once per stall (deduplicated upstream)
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+
+        var json = BuildEnvelopeJson("action.overdue", engagementId, "System", new
+        {
+            clientId = "client-001",
+            actionId = Guid.NewGuid(),
+            actionTitle = "Upload passport",
+            stageNumber = 2,
+            deadlineUtc = DateTime.UtcNow.AddDays(-1),
+            hoursOverdue = 24
+        });
+
+        // Act
+        await consumer.ProcessMessageAsync(json);
+
+        // Assert
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var stored = await db.Events.SingleOrDefaultAsync(e => e.EngagementId == engagementId);
+
+        Assert.NotNull(stored);
+        Assert.Equal("action.overdue", stored!.Type);
+        Assert.Equal("System", stored.Actor);
+    }
+
+    [Theory]
+    [InlineData("ClientActionUpdated")]
+    [InlineData("StandardChecklistApplied")]
+    public async Task ProcessMessageAsync_StageTaskEvent_RecordsAuditEvent(string eventType)
+    {
+        // Arrange: staff-defined stage task events (edit, opt-in standard checklist)
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+
+        var json = BuildEnvelopeJson(eventType, engagementId, "staff-actor", new
+        {
+            actionId = Guid.NewGuid(),
+            changedFields = new[] { "title" }
+        });
+
+        // Act
+        await consumer.ProcessMessageAsync(json);
+
+        // Assert
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var stored = await db.Events.SingleOrDefaultAsync(e => e.EngagementId == engagementId);
+
+        Assert.NotNull(stored);
+        Assert.Equal(eventType, stored!.Type);
+        Assert.Equal("staff-actor", stored.Actor);
+    }
+
+    [Theory]
+    [InlineData("ConditionAttached")]
+    [InlineData("ConditionUpdated")]
+    [InlineData("ConditionDeactivated")]
+    public async Task ProcessMessageAsync_ConditionEvent_RecordsAuditEvent(string eventType)
+    {
+        // Arrange: CSTD-24 (Engagement Condition Management) events
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+
+        var json = BuildEnvelopeJson(eventType, engagementId, "staff-actor", new
+        {
+            conditionId = Guid.NewGuid(),
+            type = "Approval",
+            title = "Scope approval"
+        });
+
+        // Act
+        await consumer.ProcessMessageAsync(json);
+
+        // Assert
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var stored = await db.Events.SingleOrDefaultAsync(e => e.EngagementId == engagementId);
+
+        Assert.NotNull(stored);
+        Assert.Equal(eventType, stored.Type);
+        Assert.Equal("staff-actor", stored.Actor);
+    }
+
+    [Fact]
     public async Task ProcessMessageAsync_UnhandledEventType_IsIgnored()
     {
         // Arrange: an event type this consumer doesn't care about (e.g. Identity's notification stream)
