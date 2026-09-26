@@ -66,18 +66,8 @@ public class EngagementsController : ControllerBase
 
         var created = await _repository.CreateAsync(engagement);
 
-        // Seed default 5-stage lifecycle actions for the new engagement
-        if (_actionService != null)
-        {
-            try
-            {
-                await _actionService.EnsureLifecycleActionsAsync(created.EngagementId, effectiveTenantId);
-            }
-            catch
-            {
-                // Fallback gracefully
-            }
-        }
+        // No tasks are seeded: staff define each stage's tasks, or explicitly apply the standard
+        // checklist (POST /api/engagements/{id}/actions/standard-checklist).
 
         // Subtask Genesis Event: Publish Genesis Event to Audit Service
         await _auditPublisher.PublishGenesisEventAsync(created, effectiveTenantId);

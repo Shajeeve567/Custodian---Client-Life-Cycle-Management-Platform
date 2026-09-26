@@ -26,7 +26,9 @@ public interface IClientActionService
     Task<ClientActionResponseDto?> UploadEvidenceAsync(Guid engagementId, Guid actionId, string tenantId, UploadActionEvidenceDto dto);
     Task<ClientActionResponseDto?> ReviewActionAsync(Guid engagementId, Guid actionId, string tenantId, ReviewActionDto dto);
     Task<ClientActionResponseDto?> ApplyVerificationOutcomeAsync(Guid engagementId, Guid actionId, string tenantId, ApplyActionVerificationDto dto);
-    Task<List<ClientActionResponseDto>> EnsureLifecycleActionsAsync(Guid engagementId, string tenantId);
+    Task<List<ClientActionResponseDto>?> ApplyStandardChecklistAsync(Guid engagementId, string tenantId, string actor);
+    Task<ClientActionResponseDto?> UpdateActionAsync(Guid engagementId, Guid actionId, string tenantId, UpdateClientActionDto dto, string actor);
+    Task<ClientActionResponseDto?> CancelActionAsync(Guid engagementId, Guid actionId, string tenantId, string reason, string actor);
     Task ActivateStageActionsAsync(Guid engagementId, string tenantId, int stageNumber);
 
     /// <summary>

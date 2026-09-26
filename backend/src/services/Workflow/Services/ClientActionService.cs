@@ -3,7 +3,6 @@ using Custodian.Shared.Contracts;
 using Custodian.Workflow.Data;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
-using Custodian.Workflow.Services.Gates;
 using Microsoft.EntityFrameworkCore;
 
 namespace Custodian.Workflow.Services;
@@ -11,13 +10,11 @@ namespace Custodian.Workflow.Services;
 public class ClientActionService : IClientActionService
 {
     private readonly WorkflowDbContext _dbContext;
-    private readonly IGateEvaluator _gateEvaluator;
     private readonly IAuditPublisher _auditPublisher;
 
-    public ClientActionService(WorkflowDbContext dbContext, IGateEvaluator gateEvaluator, IAuditPublisher auditPublisher)
+    public ClientActionService(WorkflowDbContext dbContext, IAuditPublisher auditPublisher)
     {
         _dbContext = dbContext;
-        _gateEvaluator = gateEvaluator;
         _auditPublisher = auditPublisher;
     }
 
@@ -40,35 +37,7 @@ public class ClientActionService : IClientActionService
             return Enumerable.Empty<ClientActionResponseDto>();
         }
 
-        // Check if this is an existing engagement in the system.
-        // If it exists in Engagements, ensure default lifecycle actions are seeded for all 5 stages.
-        var engagementExists = await _dbContext.Engagements
-            .AnyAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId);
-
-        if (engagementExists)
-        {
-            var existingActionCount = await _dbContext.ClientActions
-                .CountAsync(a => a.EngagementId == engagementId && a.TenantId == tenantId);
-
-            if (existingActionCount == 0)
-            {
-                await EnsureLifecycleActionsAsync(engagementId, tenantId);
-            }
-            else
-            {
-                var distinctStages = await _dbContext.ClientActions
-                    .Where(a => a.EngagementId == engagementId && a.TenantId == tenantId)
-                    .Select(a => a.StageNumber)
-                    .Distinct()
-                    .ToListAsync();
-
-                if (distinctStages.Count < 5)
-                {
-                    await EnsureLifecycleActionsAsync(engagementId, tenantId);
-                }
-            }
-        }
-
+        // Pure read: stage tasks are defined by staff (or the opt-in standard checklist), never seeded on read.
         var query = _dbContext.ClientActions
             .AsNoTracking()
             .Where(a => a.EngagementId == engagementId && a.TenantId == tenantId);
@@ -104,10 +73,17 @@ public class ClientActionService : IClientActionService
             .AsNoTracking()
             .FirstOrDefaultAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId);
 
-        if (engagement != null && (engagement.Status == EngagementStatus.Closed || engagement.Status == EngagementStatus.Cancelled))
+        if (engagement == null)
+        {
+            throw new KeyNotFoundException($"Engagement '{engagementId}' was not found.");
+        }
+
+        if (engagement.Status == EngagementStatus.Closed || engagement.Status == EngagementStatus.Cancelled)
         {
             throw new InvalidOperationException($"Cannot create actions for an engagement with status '{engagement.Status}'.");
         }
+
+        EnsureStageNotInPast(engagement, dto.StageNumber);
 
         var sourceType = string.IsNullOrWhiteSpace(dto.SourceType)
             ? ClientActionSourceType.Manual
@@ -156,7 +132,7 @@ public class ClientActionService : IClientActionService
             }
         }
 
-        int currentStageNumber = engagement != null ? (int)engagement.Stage + 1 : 1;
+        int currentStageNumber = (int)engagement.Stage + 1;
         int stageNumber = dto.StageNumber > 0 ? dto.StageNumber : 1;
         var now = DateTime.UtcNow;
         DateTime? activatedAt = stageNumber <= currentStageNumber ? now : null;
@@ -363,61 +339,8 @@ public class ClientActionService : IClientActionService
 
         await ApplyStatusAsync(action, ClientActionStatus.Completed, dto.CompletedByActor, "ActionCompleted");
 
-        // Auto-advance engagement stage if all client-facing actions for this stage are now completed
-        var engagement = await _dbContext.Engagements
-            .FirstOrDefaultAsync(e => e.EngagementId == action.EngagementId && e.TenantId == tenantId);
-
-        if (engagement != null && engagement.Status != EngagementStatus.Closed && engagement.Status != EngagementStatus.Cancelled)
-        {
-            var currentStageNum = (int)engagement.Stage + 1;
-            if (action.StageNumber == currentStageNum)
-            {
-                // Check if any other non-internal actions for this stage remain incomplete
-                var hasIncompleteTasks = await _dbContext.ClientActions
-                    .AnyAsync(a => a.EngagementId == action.EngagementId &&
-                                   a.TenantId == tenantId &&
-                                   a.StageNumber == currentStageNum &&
-                                   a.ActionId != action.ActionId &&
-                                   !a.IsInternalOnly &&
-                                   a.Status != ClientActionStatus.Completed);
-
-                if (!hasIncompleteTasks && (int)engagement.Stage < 4)
-                {
-                    var targetStage = (EngagementStage)((int)engagement.Stage + 1);
-
-                    // CSTD-18: this auto-advance must respect the exact same mandatory gate
-                    // as the staff-facing PUT /stage endpoint — completing the last
-                    // client-visible task in a stage must never silently skip a required
-                    // document's compliance/verification requirement. If the gate isn't
-                    // satisfied (e.g. a KYC document is compliant but not yet staff-verified),
-                    // the engagement simply stays put; the client sees "AllCaughtUp" until the
-                    // gate condition actually clears.
-                    var gateResult = await _gateEvaluator.EvaluateAsync(engagement.EngagementId, tenantId, targetStage);
-                    if (gateResult.IsSatisfied)
-                    {
-                        var previousStage = engagement.Stage;
-                        engagement.Stage = targetStage;
-                        var newStageNum = (int)targetStage + 1;
-                        await ActivateStageActionsAsync(engagement.EngagementId, tenantId, newStageNum);
-
-                        await _auditPublisher.PublishEventAsync(
-                            engagement.EngagementId,
-                            tenantId,
-                            dto.CompletedByActor ?? "System",
-                            "StageChange",
-                            new
-                            {
-                                fromStage = previousStage.ToString(),
-                                toStage = targetStage.ToString(),
-                                changedAt = DateTime.UtcNow,
-                                trigger = "ClientActionAutoAdvance"
-                            });
-
-                        await _dbContext.SaveChangesAsync();
-                    }
-                }
-            }
-        }
+        // No automatic stage advance: staff advance explicitly (PUT /stage, gated server-side) once the
+        // next-action engine reports AdvanceStage.
 
         return MapToResponseDto(action, isClientView: false);
     }
@@ -818,42 +741,247 @@ public class ClientActionService : IClientActionService
         };
     }
 
-    public async Task<List<ClientActionResponseDto>> EnsureLifecycleActionsAsync(Guid engagementId, string tenantId)
+    /// <summary>
+    /// Opt-in standard checklist: staff explicitly apply the default lifecycle tasks to an engagement.
+    /// Idempotent (a default task already present by title + stage, in any status, is not re-added) and
+    /// only adds tasks for the current stage or later, so a completed stage never gains new blockers.
+    /// Returns null when the engagement does not exist in the tenant.
+    /// </summary>
+    public async Task<List<ClientActionResponseDto>?> ApplyStandardChecklistAsync(Guid engagementId, string tenantId, string actor)
     {
         if (string.IsNullOrWhiteSpace(tenantId) || engagementId == Guid.Empty)
         {
-            return new List<ClientActionResponseDto>();
+            return null;
         }
 
-        var existingActions = await _dbContext.ClientActions
-            .Where(a => a.EngagementId == engagementId && a.TenantId == tenantId)
+        var engagement = await _dbContext.Engagements
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId);
+
+        if (engagement == null)
+        {
+            return null;
+        }
+
+        if (engagement.Status == EngagementStatus.Closed || engagement.Status == EngagementStatus.Cancelled)
+        {
+            throw new InvalidOperationException($"Cannot apply the standard checklist to an engagement with status '{engagement.Status}'.");
+        }
+
+        var currentStageNumber = (int)engagement.Stage + 1;
+        var existingDefaults = await _dbContext.ClientActions
+            .Where(a => a.EngagementId == engagementId &&
+                        a.TenantId == tenantId &&
+                        a.SourceType == ClientActionSourceType.Lifecycle)
+            .Select(a => new { a.Title, a.StageNumber })
             .ToListAsync();
 
-        if (existingActions.Count == 0)
-        {
-            var seeded = GenerateDefaultLifecycleActions(engagementId, tenantId);
-            await _dbContext.ClientActions.AddRangeAsync(seeded);
-            await _dbContext.SaveChangesAsync();
-            return seeded.Select(a => MapToResponseDto(a, isClientView: false)).ToList();
-        }
-
-        var existingStages = existingActions.Select(a => a.StageNumber).ToHashSet();
-        var missingStages = GenerateDefaultLifecycleActions(engagementId, tenantId)
-            .Where(a => !existingStages.Contains(a.StageNumber))
+        var toAdd = GenerateDefaultLifecycleActions(engagementId, tenantId)
+            .Where(a => a.StageNumber >= currentStageNumber)
+            .Where(a => !existingDefaults.Any(e => e.StageNumber == a.StageNumber &&
+                                                   string.Equals(e.Title, a.Title, StringComparison.OrdinalIgnoreCase)))
             .ToList();
 
-        if (missingStages.Count > 0)
+        var now = DateTime.UtcNow;
+        foreach (var action in toAdd)
         {
-            await _dbContext.ClientActions.AddRangeAsync(missingStages);
-            await _dbContext.SaveChangesAsync();
-            existingActions.AddRange(missingStages);
+            action.ActivatedAt = action.StageNumber <= currentStageNumber ? now : null;
         }
 
-        return existingActions
-            .OrderBy(a => a.StageNumber)
-            .ThenBy(a => a.CreatedAt)
-            .Select(a => MapToResponseDto(a, isClientView: false))
-            .ToList();
+        if (toAdd.Count > 0)
+        {
+            await _dbContext.ClientActions.AddRangeAsync(toAdd);
+            await _dbContext.SaveChangesAsync();
+
+            await _auditPublisher.PublishEventAsync(
+                engagementId,
+                tenantId,
+                actor,
+                "StandardChecklistApplied",
+                new
+                {
+                    actionIds = toAdd.Select(a => a.ActionId).ToList(),
+                    stageNumbers = toAdd.Select(a => a.StageNumber).Distinct().OrderBy(n => n).ToList()
+                });
+        }
+
+        return toAdd.Select(a => MapToResponseDto(a, isClientView: false)).ToList();
+    }
+
+    /// <summary>
+    /// Staff edit of a task's configurable fields. Only Pending tasks that staff own (Manual/Lifecycle
+    /// source) can be edited; requirement- and condition-linked tasks are managed through their source.
+    /// Returns null when the task does not exist for this engagement and tenant.
+    /// </summary>
+    public async Task<ClientActionResponseDto?> UpdateActionAsync(Guid engagementId, Guid actionId, string tenantId, UpdateClientActionDto dto, string actor)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return null;
+        }
+
+        var action = await _dbContext.ClientActions
+            .FirstOrDefaultAsync(a => a.ActionId == actionId && a.EngagementId == engagementId && a.TenantId == tenantId);
+
+        if (action == null)
+        {
+            return null;
+        }
+
+        var engagement = await _dbContext.Engagements
+            .AsNoTracking()
+            .FirstAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId);
+
+        if (engagement.Status == EngagementStatus.Closed || engagement.Status == EngagementStatus.Cancelled)
+        {
+            throw new InvalidOperationException($"Cannot modify actions for an engagement with status '{engagement.Status}'.");
+        }
+
+        EnsureStaffManaged(action);
+
+        if (!string.Equals(action.Status, ClientActionStatus.Pending, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Only Pending tasks can be edited; this task is '{action.Status}'.");
+        }
+
+        var changedFields = new List<string>();
+
+        if (dto.Title != null)
+        {
+            var title = dto.Title.Trim();
+            if (title.Length == 0)
+            {
+                throw new ArgumentException("Title cannot be empty.", nameof(dto));
+            }
+            if (!string.Equals(title, action.Title, StringComparison.Ordinal))
+            {
+                action.Title = title;
+                changedFields.Add("title");
+            }
+        }
+
+        if (dto.Description != null && !string.Equals(dto.Description, action.Description, StringComparison.Ordinal))
+        {
+            action.Description = dto.Description;
+            changedFields.Add("description");
+        }
+
+        if (dto.ClearDeadline)
+        {
+            if (action.DeadlineUtc != null)
+            {
+                action.DeadlineUtc = null;
+                changedFields.Add("deadlineUtc");
+            }
+        }
+        else if (dto.DeadlineUtc.HasValue && dto.DeadlineUtc != action.DeadlineUtc)
+        {
+            action.DeadlineUtc = dto.DeadlineUtc;
+            changedFields.Add("deadlineUtc");
+        }
+
+        if (dto.StageNumber.HasValue && dto.StageNumber.Value != action.StageNumber)
+        {
+            EnsureStageNotInPast(engagement, dto.StageNumber.Value);
+            var currentStageNumber = (int)engagement.Stage + 1;
+            action.StageNumber = dto.StageNumber.Value;
+            // A task moved into the current stage becomes actionable now; moved later, it waits for its stage.
+            action.ActivatedAt = action.StageNumber <= currentStageNumber ? (action.ActivatedAt ?? DateTime.UtcNow) : null;
+            changedFields.Add("stageNumber");
+        }
+
+        if (dto.AssignedToRole != null && !string.Equals(dto.AssignedToRole, action.AssignedToRole, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!string.Equals(dto.AssignedToRole, "Client", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(dto.AssignedToRole, "Staff", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException("AssignedToRole must be 'Client' or 'Staff'.", nameof(dto));
+            }
+            action.AssignedToRole = string.Equals(dto.AssignedToRole, "Client", StringComparison.OrdinalIgnoreCase) ? "Client" : "Staff";
+            changedFields.Add("assignedToRole");
+        }
+
+        if (dto.IsInternalOnly.HasValue && dto.IsInternalOnly.Value != action.IsInternalOnly)
+        {
+            action.IsInternalOnly = dto.IsInternalOnly.Value;
+            changedFields.Add("isInternalOnly");
+        }
+
+        if (changedFields.Count == 0)
+        {
+            return MapToResponseDto(action, isClientView: false);
+        }
+
+        action.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync();
+
+        await _auditPublisher.PublishEventAsync(
+            action.EngagementId,
+            action.TenantId,
+            actor,
+            "ClientActionUpdated",
+            new { actionId = action.ActionId, changedFields });
+
+        return MapToResponseDto(action, isClientView: false);
+    }
+
+    /// <summary>
+    /// Staff cancel of a task that is no longer required. The task is kept (AC4) as Cancelled, and the
+    /// transition goes through the state machine (Completed/Cancelled are terminal). Cancelling an
+    /// already-cancelled task is a no-op. Requirement- and condition-linked tasks are refused.
+    /// </summary>
+    public async Task<ClientActionResponseDto?> CancelActionAsync(Guid engagementId, Guid actionId, string tenantId, string reason, string actor)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            throw new ArgumentException("A reason is required to cancel a task.", nameof(reason));
+        }
+
+        var action = await _dbContext.ClientActions
+            .FirstOrDefaultAsync(a => a.ActionId == actionId && a.EngagementId == engagementId && a.TenantId == tenantId);
+
+        if (action == null)
+        {
+            return null;
+        }
+
+        EnsureStaffManaged(action);
+
+        await ApplyStatusAsync(action, ClientActionStatus.Cancelled, actor, reason.Trim());
+
+        return MapToResponseDto(action, isClientView: false);
+    }
+
+    private static void EnsureStaffManaged(ClientAction action)
+    {
+        if (action.LinkedRequirementId.HasValue ||
+            string.Equals(action.SourceType, ClientActionSourceType.Requirement, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("This task mirrors a requirement; manage it through the Requirements endpoints.");
+        }
+
+        if (action.LinkedConditionId.HasValue ||
+            string.Equals(action.SourceType, ClientActionSourceType.Condition, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("This task belongs to a condition; update or deactivate the condition instead.");
+        }
+    }
+
+    // Tasks may only be placed in the current stage or a later one: a completed stage must never gain
+    // new work, because the stage gate treats earlier-stage leftovers as blockers.
+    private static void EnsureStageNotInPast(Engagement engagement, int stageNumber)
+    {
+        var currentStageNumber = (int)engagement.Stage + 1;
+        if (stageNumber < currentStageNumber)
+        {
+            throw new ArgumentException(
+                $"Tasks can only be added to the current stage ({currentStageNumber}) or a later one; stage {stageNumber} is already complete.");
+        }
     }
 
     public static List<ClientAction> GenerateDefaultLifecycleActions(Guid engagementId, string tenantId)

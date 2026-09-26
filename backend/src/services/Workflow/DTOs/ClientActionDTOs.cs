@@ -70,6 +70,37 @@ public class CreateClientActionDto
     public Guid? LinkedMeetingId { get; set; }
 }
 
+/// <summary>
+/// Staff edit of a Pending, staff-managed task. Null fields are left unchanged.
+/// </summary>
+public class UpdateClientActionDto
+{
+    [MaxLength(200)]
+    public string? Title { get; set; }
+
+    public string? Description { get; set; }
+
+    public DateTime? DeadlineUtc { get; set; }
+
+    /// <summary>Set true to remove the deadline (DeadlineUtc is ignored).</summary>
+    public bool ClearDeadline { get; set; }
+
+    [Range(1, 5)]
+    public int? StageNumber { get; set; }
+
+    [MaxLength(50)]
+    public string? AssignedToRole { get; set; }
+
+    public bool? IsInternalOnly { get; set; }
+}
+
+public class CancelClientActionDto
+{
+    [Required]
+    [MaxLength(500)]
+    public string Reason { get; set; } = string.Empty;
+}
+
 public class CreateLinkedActionDto
 {
     [Required]
