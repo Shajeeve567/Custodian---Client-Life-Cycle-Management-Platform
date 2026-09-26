@@ -26,6 +26,7 @@ import {
     UpdateDocumentMetadataRequest,
     SubmitRequirementRequest,
     RequirementResponse,
+    StallQueueItem,
 } from '../types';
 
 export const API_BASE = {
@@ -231,6 +232,14 @@ export const WorkflowApi = {
             : `${API_BASE.WORKFLOW}/api/Engagements`;
         return request<Engagement[]>(url, {
             method: 'GET',
+        });
+    },
+
+    async getStallQueue(tenantId: string): Promise<StallQueueItem[]> {
+        const url = `${API_BASE.WORKFLOW}/api/stall-queue?tenantId=${encodeURIComponent(tenantId)}`;
+        return request<StallQueueItem[]>(url, {
+            method: 'GET',
+            headers: { 'X-Tenant-ID': tenantId },
         });
     },
 
