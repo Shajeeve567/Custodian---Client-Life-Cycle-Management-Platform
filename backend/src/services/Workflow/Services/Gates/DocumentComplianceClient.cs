@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using Custodian.Workflow.DTOs;
 using Microsoft.AspNetCore.Http;
+using Polly.Timeout;
 
 namespace Custodian.Workflow.Services.Gates;
 
@@ -37,7 +38,8 @@ public class DocumentComplianceClient : IDocumentComplianceClient
         {
             response = await _httpClient.SendAsync(request, ct);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        // TimeoutRejectedException comes from the resilience pipeline's per-attempt timeout (19-N7).
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or TimeoutRejectedException)
         {
             _logger.LogError(ex, "Failed to reach Documents service for engagement {EngagementId}", engagementId);
             throw new DocumentComplianceUnavailableException($"Documents service is unreachable for engagement '{engagementId}'.", ex);

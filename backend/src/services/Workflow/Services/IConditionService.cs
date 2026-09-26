@@ -3,14 +3,12 @@ using Custodian.Workflow.Models;
 
 namespace Custodian.Workflow.Services;
 
-public interface IConditionService
+/// <summary>
+/// Full condition management. GetActiveConditionsAsync is inherited from <see cref="IConditionReader"/>;
+/// read-only consumers should depend on IConditionReader instead (see its remarks on the DI cycle).
+/// </summary>
+public interface IConditionService : IConditionReader
 {
-    /// <summary>
-    /// Returns active conditions for an engagement, tenant-scoped, ordered by
-    /// RequiredBeforeStage and CreatedAt. Used by GateEvaluator and next-action orchestration.
-    /// </summary>
-    Task<IReadOnlyList<EngagementCondition>> GetActiveConditionsAsync(Guid engagementId, string tenantId, CancellationToken ct = default);
-
     /// <summary>
     /// Staff view: returns all conditions (or filtered by includeInactive).
     /// </summary>

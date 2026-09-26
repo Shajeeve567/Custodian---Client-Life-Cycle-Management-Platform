@@ -104,6 +104,10 @@ public class WorkflowDbContext : DbContext
             entity.HasIndex(a => new { a.TenantId, a.EngagementId }).HasDatabaseName("idx_action_tenant_engagement");
             entity.HasIndex(a => new { a.EngagementId, a.StageNumber }).HasDatabaseName("idx_action_engagement_stage");
             entity.HasIndex(a => a.LinkedRequirementId).HasDatabaseName("idx_action_linked_requirement");
+            // CSTD-21 (21-N1): SLA/stall and next-action queries; linked document lookups (CSTD-19 consumer)
+            entity.HasIndex(a => new { a.TenantId, a.EngagementId, a.Status }).HasDatabaseName("idx_action_tenant_engagement_status");
+            entity.HasIndex(a => new { a.TenantId, a.Status, a.DeadlineUtc }).HasDatabaseName("idx_action_tenant_status_deadline");
+            entity.HasIndex(a => a.LinkedDocumentId).HasDatabaseName("idx_action_linked_document");
         });
 
         modelBuilder.Entity<Requirement>(entity =>
@@ -150,6 +154,9 @@ public class WorkflowDbContext : DbContext
                 .HasConversion<string>()
                 .HasMaxLength(40)
                 .HasDefaultValue(EngagementStage.Execution)
+                // Always send the application's value: Onboarding is the enum's CLR default, so without
+                // this EF would silently substitute the database default (Execution) for it.
+                .ValueGeneratedNever()
                 .IsRequired();
             entity.Property(c => c.Title).HasColumnName("title").HasMaxLength(200).IsRequired();
             entity.Property(c => c.Description).HasColumnName("description");

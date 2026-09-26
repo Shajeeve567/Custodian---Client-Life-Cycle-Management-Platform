@@ -625,4 +625,131 @@ public class GateEvaluatorTests
         _mockDocumentClient.Verify(c => c.GetDocumentsAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _mockConditionService.Verify(c => c.GetActiveConditionsAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    // =========================================================================
+    // Open task gate: every task of the current or an earlier stage must be finished
+    // =========================================================================
+
+    private async Task<(WorkflowDbContext Db, GateEvaluator Evaluator)> CreateDbEvaluatorAsync(
+        EngagementStage stage,
+        params ClientAction[] actions)
+    {
+        var options = new DbContextOptionsBuilder<WorkflowDbContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .Options;
+        var db = new WorkflowDbContext(options);
+
+        await db.Engagements.AddAsync(new Engagement
+        {
+            EngagementId = _engagementId,
+            TenantId = TenantId,
+            ClientId = "client-001",
+            StaffId = "staff-001",
+            Stage = stage,
+            Status = EngagementStatus.Started
+        });
+        await db.ClientActions.AddRangeAsync(actions);
+        await db.SaveChangesAsync();
+
+        var evaluator = new GateEvaluator(
+            _mockDocumentClient.Object,
+            _mockConditionService.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GateEvaluator>.Instance,
+            db);
+
+        return (db, evaluator);
+    }
+
+    private ClientAction MakeTask(string title, string status, int stageNumber, string tenantId = TenantId) => new()
+    {
+        ActionId = Guid.NewGuid(),
+        EngagementId = _engagementId,
+        TenantId = tenantId,
+        Title = title,
+        Type = ClientActionType.CustomTask,
+        Status = status,
+        StageNumber = stageNumber,
+        AssignedToRole = "Client"
+    };
+
+    [Theory]
+    [InlineData(ClientActionStatus.Pending)]
+    [InlineData(ClientActionStatus.Uploaded)]
+    [InlineData(ClientActionStatus.Rejected)]
+    public async Task EvaluateAsync_OpenTaskInCurrentStage_BlocksAdvance(string status)
+    {
+        var (db, evaluator) = await CreateDbEvaluatorAsync(EngagementStage.Onboarding, MakeTask("Kickoff form", status, 1));
+        using var _ = db;
+
+        var result = await evaluator.EvaluateAsync(_engagementId, TenantId, EngagementStage.DocumentCollection);
+
+        Assert.False(result.IsSatisfied);
+        Assert.Contains($"Task 'Kickoff form' is still {status}.", result.Reason);
+    }
+
+    [Theory]
+    [InlineData(ClientActionStatus.Completed)]
+    [InlineData(ClientActionStatus.Cancelled)]
+    public async Task EvaluateAsync_FinishedTasks_DoNotBlockAdvance(string status)
+    {
+        var (db, evaluator) = await CreateDbEvaluatorAsync(EngagementStage.Onboarding, MakeTask("Kickoff form", status, 1));
+        using var _ = db;
+
+        var result = await evaluator.EvaluateAsync(_engagementId, TenantId, EngagementStage.DocumentCollection);
+
+        Assert.True(result.IsSatisfied);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_OpenTaskFromEarlierStage_StillBlocks_LaterStageTaskIgnored()
+    {
+        var (db, evaluator) = await CreateDbEvaluatorAsync(
+            EngagementStage.DocumentCollection,
+            MakeTask("Leftover stage 1 task", ClientActionStatus.Pending, 1),
+            MakeTask("Stage 4 task", ClientActionStatus.Pending, 4));
+        using var _ = db;
+        _mockDocumentClient
+            .Setup(c => c.GetDocumentsAsync(_engagementId, TenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<DocumentSummaryDto>
+            {
+                MakeDoc("KYC_PASSPORT", "Compliant", "Unverified"),
+                MakeDoc("PROOF_OF_ADDRESS", "Compliant", "Unverified")
+            });
+
+        var result = await evaluator.EvaluateAsync(_engagementId, TenantId, EngagementStage.Verification);
+
+        Assert.False(result.IsSatisfied);
+        Assert.Contains("Task 'Leftover stage 1 task' is still Pending.", result.Reason);
+        Assert.DoesNotContain("Stage 4 task", result.Reason);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_RequirementAndConditionLinkedTasks_AreJudgedByTheirSource_NotAsTasks()
+    {
+        var requirementTask = MakeTask("Mirrored requirement task", ClientActionStatus.Pending, 1);
+        requirementTask.LinkedRequirementId = Guid.NewGuid();
+        var conditionTask = MakeTask("Condition task", ClientActionStatus.Pending, 1);
+        conditionTask.SourceType = ClientActionSourceType.Condition;
+        conditionTask.LinkedConditionId = Guid.NewGuid();
+
+        var (db, evaluator) = await CreateDbEvaluatorAsync(EngagementStage.Onboarding, requirementTask, conditionTask);
+        using var _ = db;
+
+        var result = await evaluator.EvaluateAsync(_engagementId, TenantId, EngagementStage.DocumentCollection);
+
+        Assert.True(result.IsSatisfied);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_OtherTenantsOpenTask_IsIgnored()
+    {
+        var (db, evaluator) = await CreateDbEvaluatorAsync(
+            EngagementStage.Onboarding,
+            MakeTask("Other tenant task", ClientActionStatus.Pending, 1, tenantId: "tenant-other"));
+        using var _ = db;
+
+        var result = await evaluator.EvaluateAsync(_engagementId, TenantId, EngagementStage.DocumentCollection);
+
+        Assert.True(result.IsSatisfied);
+    }
 }

@@ -25,20 +25,8 @@ public class ConditionService : IConditionService
         _logger = logger;
     }
 
-    public async Task<IReadOnlyList<EngagementCondition>> GetActiveConditionsAsync(Guid engagementId, string tenantId, CancellationToken ct = default)
-    {
-        if (string.IsNullOrWhiteSpace(tenantId) || engagementId == Guid.Empty)
-        {
-            return Array.Empty<EngagementCondition>();
-        }
-
-        return await _dbContext.EngagementConditions
-            .AsNoTracking()
-            .Where(c => c.EngagementId == engagementId && c.TenantId == tenantId && c.IsActive)
-            .OrderBy(c => c.RequiredBeforeStage)
-            .ThenBy(c => c.CreatedAt)
-            .ToListAsync(ct);
-    }
+    public Task<IReadOnlyList<EngagementCondition>> GetActiveConditionsAsync(Guid engagementId, string tenantId, CancellationToken ct = default) =>
+        ConditionReader.QueryActiveAsync(_dbContext, engagementId, tenantId, ct);
 
     public async Task<IEnumerable<ConditionResponseDto>> GetConditionsStaffAsync(Guid engagementId, string tenantId, bool includeInactive = true)
     {

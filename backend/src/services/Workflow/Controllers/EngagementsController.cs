@@ -112,6 +112,8 @@ public class EngagementsController : ControllerBase
     /// <summary>
     /// CSTD-19 (19-N2): Deterministically evaluates and returns the highest-priority next action
     /// and ordered blockers for staff/owner workspace view.
+    /// Freshness (19-N5): computed on every read from live state, with no cache. Mutation endpoints do
+    /// not return the next action; clients re-fetch this endpoint (or the portal dashboard) after a change.
     /// </summary>
     [HttpGet("{id}/next-action")]
     [Authorize(Roles = "Owner,Staff")]

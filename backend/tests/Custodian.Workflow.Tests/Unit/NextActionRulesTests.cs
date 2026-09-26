@@ -1319,4 +1319,77 @@ public class NextActionRulesTests
         Assert.Equal(OverallState.BlockedExternal, nothingOpen.OverallState);
         Assert.Null(nothingOpen.PrimaryAction);
     }
+
+    // =========================================================================
+    // A12: later-stage conditions are informational only (staff view)
+    // =========================================================================
+
+    [Fact]
+    public void A12_LaterStageCondition_IsListedInUpcomingConditionsOnly_ForStaff()
+    {
+        var engagement = CreateEngagement(EngagementStage: EngagementStage.Onboarding); // next stage: DocumentCollection
+        var later = new EngagementCondition
+        {
+            ConditionId = Guid.NewGuid(),
+            Type = ConditionType.Payment,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            RequiredBeforeStage = EngagementStage.Execution,
+            Title = "Milestone payment",
+            Amount = 1000m,
+            Currency = "USD"
+        };
+        var satisfiedLater = new EngagementCondition
+        {
+            ConditionId = Guid.NewGuid(),
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Satisfied,
+            IsActive = true,
+            RequiredBeforeStage = EngagementStage.Closure,
+            Title = "Final sign-off"
+        };
+        var inputs = new NextActionInputs
+        {
+            Engagement = engagement,
+            ActiveConditions = new[] { later, satisfiedLater },
+            NextStageGate = GateEvaluationResult.Satisfied()
+        };
+
+        var staff = NextActionRules.Decide(inputs, NextActionView.Staff, _now);
+        var client = NextActionRules.Decide(inputs, NextActionView.Client, _now);
+
+        // Informational only: does not block, does not change state
+        Assert.Equal(OverallState.ReadyToAdvance, staff.OverallState);
+        Assert.Equal(NextActionKind.AdvanceStage, staff.PrimaryAction!.Kind);
+        Assert.Empty(staff.Blockers);
+
+        var upcoming = Assert.Single(staff.UpcomingConditions);
+        Assert.Equal("Milestone payment", upcoming.Title);
+        Assert.Equal(NextActionKind.ConditionPayment, upcoming.Kind);
+        Assert.Equal(later.ConditionId, upcoming.SourceId);
+
+        Assert.Empty(client.UpcomingConditions);
+        Assert.Equal(OverallState.ReadyToAdvance, client.OverallState);
+    }
+
+    [Fact]
+    public void A12_UpcomingConditions_AreOrderedByRequiredStageThenCreatedAt()
+    {
+        var engagement = CreateEngagement(EngagementStage: EngagementStage.Onboarding);
+        var closure = new EngagementCondition
+        {
+            ConditionId = Guid.NewGuid(), Type = ConditionType.Approval, Status = ConditionStatus.Pending, IsActive = true,
+            RequiredBeforeStage = EngagementStage.Closure, Title = "Closure approval", CreatedAt = _now.UtcDateTime.AddDays(-5)
+        };
+        var execution = new EngagementCondition
+        {
+            ConditionId = Guid.NewGuid(), Type = ConditionType.Approval, Status = ConditionStatus.Pending, IsActive = true,
+            RequiredBeforeStage = EngagementStage.Execution, Title = "Execution approval", CreatedAt = _now.UtcDateTime.AddDays(-1)
+        };
+        var inputs = new NextActionInputs { Engagement = engagement, ActiveConditions = new[] { closure, execution } };
+
+        var result = NextActionRules.Decide(inputs, NextActionView.Staff, _now);
+
+        Assert.Equal(new[] { "Execution approval", "Closure approval" }, result.UpcomingConditions.Select(u => u.Title));
+    }
 }

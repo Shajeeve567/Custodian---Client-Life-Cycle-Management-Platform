@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using Custodian.Workflow.Data;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
@@ -10,8 +11,18 @@ namespace Custodian.Workflow.Services.NextAction;
 
 public class NextActionService : INextActionService
 {
+    // 19-N7: evaluation telemetry. Tags carry only the view and resulting state, never client data.
+    public const string MeterName = "Custodian.Workflow.NextAction";
+    public const string EvaluationDurationInstrument = "custodian.next_action.evaluation.duration";
+
+    private static readonly Meter Meter = new(MeterName);
+    private static readonly Histogram<double> EvaluationDuration = Meter.CreateHistogram<double>(
+        EvaluationDurationInstrument,
+        unit: "ms",
+        description: "Duration of one next-action evaluation, including dependency calls.");
+
     private readonly WorkflowDbContext _dbContext;
-    private readonly IConditionService _conditionService;
+    private readonly IConditionReader _conditionReader;
     private readonly IDocumentComplianceClient _documentClient;
     private readonly ISlaCalculator _slaCalculator;
     private readonly IGateEvaluator _gateEvaluator;
@@ -21,7 +32,7 @@ public class NextActionService : INextActionService
 
     public NextActionService(
         WorkflowDbContext dbContext,
-        IConditionService conditionService,
+        IConditionReader conditionReader,
         IDocumentComplianceClient documentClient,
         ISlaCalculator slaCalculator,
         IGateEvaluator gateEvaluator,
@@ -30,7 +41,7 @@ public class NextActionService : INextActionService
         ILogger<NextActionService> logger)
     {
         _dbContext = dbContext;
-        _conditionService = conditionService;
+        _conditionReader = conditionReader;
         _documentClient = documentClient;
         _slaCalculator = slaCalculator;
         _gateEvaluator = gateEvaluator;
@@ -45,6 +56,8 @@ public class NextActionService : INextActionService
         NextActionView view,
         CancellationToken ct = default)
     {
+        var startedAt = _timeProvider.GetTimestamp();
+
         var engagement = await _dbContext.Engagements
             .AsNoTracking()
             .FirstOrDefaultAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId, ct);
@@ -70,7 +83,7 @@ public class NextActionService : INextActionService
         var isConditionsUnavailable = false;
         try
         {
-            activeConditions = await _conditionService.GetActiveConditionsAsync(engagementId, tenantId, ct);
+            activeConditions = await _conditionReader.GetActiveConditionsAsync(engagementId, tenantId, ct);
         }
         catch (Exception ex)
         {
@@ -155,6 +168,24 @@ public class NextActionService : INextActionService
             IsStalled = isStalled
         };
 
-        return NextActionRules.Decide(inputs, view, now);
+        var result = NextActionRules.Decide(inputs, view, now);
+
+        var elapsedMs = _timeProvider.GetElapsedTime(startedAt).TotalMilliseconds;
+        EvaluationDuration.Record(
+            elapsedMs,
+            new KeyValuePair<string, object?>("view", view.ToString()),
+            new KeyValuePair<string, object?>("overall_state", result.OverallState));
+
+        _logger.LogInformation(
+            "Next action evaluated for engagement {EngagementId}: View={View} OverallState={OverallState} PrimaryRank={PrimaryRank} DocumentsUnavailable={DocumentsUnavailable} ConditionsUnavailable={ConditionsUnavailable} ElapsedMs={ElapsedMs}",
+            engagementId,
+            view,
+            result.OverallState,
+            result.PrimaryAction?.PriorityRank,
+            isDocumentsUnavailable,
+            isConditionsUnavailable,
+            Math.Round(elapsedMs, 1));
+
+        return result;
     }
 }

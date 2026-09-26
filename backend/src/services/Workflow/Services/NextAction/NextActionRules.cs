@@ -100,6 +100,7 @@ public static class NextActionRules
         // instead of being emitted a second time (AC6: no duplicates).
         var requirementCandidates = new Dictionary<Guid, CandidateItem>();
         var conditionCandidates = new Dictionary<Guid, CandidateItem>();
+        var upcomingConditions = new List<(EngagementCondition Condition, NextActionItem Item)>();
 
         // -------------------------------------------------------------
         // 1. Process Requirements (Ranks 1, 3, 8, 10)
@@ -202,13 +203,18 @@ public static class NextActionRules
                     continue;
                 }
 
-                // Only conditions gating the immediate next stage affect current-stage progression
+                var sla = GetConditionSla(cond, inputs.SlaStatuses, now);
+
+                // Only conditions gating the immediate next stage affect current-stage progression.
+                // Conditions for later stages are listed for staff as information only (19-2).
                 if (nextStage == null || cond.RequiredBeforeStage != nextStage.Value)
                 {
+                    if (view == NextActionView.Staff && nextStage != null && cond.RequiredBeforeStage > nextStage.Value)
+                    {
+                        upcomingConditions.Add((cond, CreateUpcomingConditionItem(cond, sla)));
+                    }
                     continue;
                 }
-
-                var sla = GetConditionSla(cond, inputs.SlaStatuses, now);
                 CandidateItem candidate;
 
                 if (string.Equals(cond.Type, ConditionType.Approval, StringComparison.OrdinalIgnoreCase))
@@ -519,10 +525,33 @@ public static class NextActionRules
             PrimaryAction = primaryAction,
             Blockers = blockers,
             NextStageGate = gateSummary,
+            UpcomingConditions = upcomingConditions
+                .OrderBy(u => u.Condition.RequiredBeforeStage)
+                .ThenBy(u => u.Condition.CreatedAt)
+                .ThenBy(u => u.Condition.ConditionId)
+                .Select(u => u.Item)
+                .ToList(),
             IsStalled = inputs.IsStalled,
             EvaluatedAtUtc = now
         };
     }
+
+    private static NextActionItem CreateUpcomingConditionItem(EngagementCondition cond, SlaStatus sla) => new()
+    {
+        Kind = string.Equals(cond.Type, ConditionType.Payment, StringComparison.OrdinalIgnoreCase)
+            ? NextActionKind.ConditionPayment
+            : NextActionKind.ConditionApproval,
+        ResponsibleParty = ResponsibleParty.Client,
+        Title = cond.Title,
+        Reason = $"{cond.Type} required before advancing to {cond.RequiredBeforeStage} (status: {cond.Status}).",
+        SourceType = ClientActionSourceType.Condition,
+        SourceId = cond.ConditionId,
+        StageNumber = (int)cond.RequiredBeforeStage,
+        DueAtUtc = sla.DueAtUtc,
+        IsOverdue = sla.IsOverdue,
+        OverdueBy = sla.OverdueBy,
+        PriorityRank = 0
+    };
 
     /// <summary>
     /// Maps one open ClientAction to its rank. The responsible party follows the action's state,

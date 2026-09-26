@@ -11,18 +11,18 @@ public class GateEvaluator : IGateEvaluator
     private const string Verified = "Verified";
 
     private readonly IDocumentComplianceClient _documentClient;
-    private readonly IConditionService _conditionService;
+    private readonly IConditionReader _conditionReader;
     private readonly WorkflowDbContext? _dbContext;
     private readonly ILogger<GateEvaluator> _logger;
 
     public GateEvaluator(
         IDocumentComplianceClient documentClient,
-        IConditionService conditionService,
+        IConditionReader conditionReader,
         ILogger<GateEvaluator> logger,
         WorkflowDbContext? dbContext = null)
     {
         _documentClient = documentClient;
-        _conditionService = conditionService;
+        _conditionReader = conditionReader;
         _logger = logger;
         _dbContext = dbContext;
     }
@@ -33,7 +33,7 @@ public class GateEvaluator : IGateEvaluator
         IReadOnlyList<EngagementCondition> activeConditions;
         try
         {
-            activeConditions = await _conditionService.GetActiveConditionsAsync(engagementId, tenantId, ct);
+            activeConditions = await _conditionReader.GetActiveConditionsAsync(engagementId, tenantId, ct);
         }
         catch (Exception ex)
         {
@@ -124,17 +124,43 @@ public class GateEvaluator : IGateEvaluator
                             $"Required information '{req.Type}' has not been provided/approved."));
                     }
                 }
+
+                // 3. Open task evaluation: every task of the current or an earlier stage must be finished
+                // (Completed, or Cancelled as no longer required). Rejected still blocks: the client must
+                // resubmit. Requirement- and condition-linked tasks are judged by their source above.
+                var openTasks = await _dbContext.ClientActions
+                    .AsNoTracking()
+                    .Where(a => a.EngagementId == engagementId &&
+                                a.TenantId == tenantId &&
+                                a.StageNumber <= currentStageNumber &&
+                                a.Status != ClientActionStatus.Completed &&
+                                a.Status != ClientActionStatus.Cancelled &&
+                                a.LinkedRequirementId == null &&
+                                a.LinkedConditionId == null &&
+                                a.SourceType != ClientActionSourceType.Condition)
+                    .OrderBy(a => a.StageNumber)
+                    .ThenBy(a => a.CreatedAt)
+                    .ThenBy(a => a.ActionId)
+                    .ToListAsync(ct);
+
+                foreach (var task in openTasks)
+                {
+                    results.Add(new GateRequirementResult(
+                        task.Title,
+                        false,
+                        $"Task '{task.Title}' is still {task.Status}."));
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Gate evaluation blocked: Failed to check requirements for engagement {EngagementId}", engagementId);
+                _logger.LogError(ex, "Gate evaluation blocked: Failed to check requirements/tasks for engagement {EngagementId}", engagementId);
                 return GateEvaluationResult.Blocked(
-                    "Unable to verify engagement requirements right now. Please try again shortly.",
+                    "Unable to verify engagement requirements and tasks right now. Please try again shortly.",
                     results);
             }
         }
 
-        // 2. Document evaluation (CSTD-18)
+        // 4. Document evaluation (CSTD-18)
         var documentRequirements = GateRequirements.GetRequirementsFor(targetStage);
         if (documentRequirements.Count > 0)
         {

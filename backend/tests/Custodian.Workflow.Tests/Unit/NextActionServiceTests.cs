@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using Custodian.Workflow.Data;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
@@ -396,5 +397,57 @@ public class NextActionServiceTests
         var afterDeadline = await service.GetNextActionAsync(engagementId, tenantId, NextActionView.Staff);
         Assert.Equal(1, afterDeadline!.PrimaryAction?.PriorityRank);
         Assert.True(afterDeadline.PrimaryAction?.IsOverdue);
+    }
+
+    [Fact]
+    public async Task Evaluation_RecordsDurationMetric_TaggedWithViewAndOverallState()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        await db.Engagements.AddAsync(CreateEngagement(engagementId, tenantId));
+        await db.SaveChangesAsync();
+
+        var mockConditionService = new Mock<IConditionService>();
+        mockConditionService.Setup(c => c.GetActiveConditionsAsync(engagementId, tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<EngagementCondition>());
+        var mockDocClient = new Mock<IDocumentComplianceClient>();
+        mockDocClient.Setup(d => d.GetDocumentsAsync(engagementId, tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<DocumentSummaryDto>());
+        var mockGateEvaluator = new Mock<IGateEvaluator>();
+        SetupGate(mockGateEvaluator, GateEvaluationResult.Satisfied());
+
+        var measurements = new List<(double Value, Dictionary<string, object?> Tags)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == NextActionService.MeterName &&
+                instrument.Name == NextActionService.EvaluationDurationInstrument)
+            {
+                l.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<double>((_, value, tags, _) =>
+        {
+            lock (measurements)
+            {
+                measurements.Add((value, tags.ToArray().ToDictionary(t => t.Key, t => t.Value)));
+            }
+        });
+        listener.Start();
+
+        var service = CreateService(db, mockConditionService.Object, mockDocClient.Object, mockGateEvaluator.Object);
+        var result = await service.GetNextActionAsync(engagementId, tenantId, NextActionView.Staff);
+
+        Assert.Equal(OverallState.ReadyToAdvance, result!.OverallState);
+        lock (measurements)
+        {
+            Assert.Contains(measurements, m =>
+                m.Value >= 0 &&
+                Equals(m.Tags["view"], "Staff") &&
+                Equals(m.Tags["overall_state"], OverallState.ReadyToAdvance));
+            // No client data in tags: only view and overall_state.
+            Assert.All(measurements, m => Assert.Equal(new[] { "overall_state", "view" }, m.Tags.Keys.OrderBy(k => k)));
+        }
     }
 }

@@ -28,6 +28,12 @@ public sealed class NextActionResult
     /// <summary>Gate check evaluation for advancing to the next stage (Staff view only; null for client view).</summary>
     public GateSummary? NextStageGate { get; init; }
 
+    /// <summary>
+    /// Active, not-yet-satisfied conditions gating a stage after the next one. Informational only:
+    /// never blockers and never affect OverallState. Staff view only (empty for the client view).
+    /// </summary>
+    public IReadOnlyList<NextActionItem> UpcomingConditions { get; init; } = Array.Empty<NextActionItem>();
+
     /// <summary>True if the engagement is stalled (CSTD-33 / IStallService).</summary>
     public bool IsStalled { get; init; }
 
