@@ -5,6 +5,7 @@ using Custodian.Workflow.Models;
 using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
 using Custodian.Workflow.Services.Gates;
+using Custodian.Workflow.Services.NextAction;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
@@ -21,6 +22,7 @@ public class EngagementsControllerUnitTests
     private readonly Mock<IEngagementRepository> _mockRepo;
     private readonly Mock<IAuditPublisher> _mockAuditPublisher;
     private readonly Mock<IGateEvaluator> _mockGateEvaluator;
+    private readonly Mock<INextActionService> _mockNextActionService;
     private readonly EngagementsController _controller;
 
     public EngagementsControllerUnitTests()
@@ -28,6 +30,7 @@ public class EngagementsControllerUnitTests
         _mockRepo = new Mock<IEngagementRepository>();
         _mockAuditPublisher = new Mock<IAuditPublisher>();
         _mockGateEvaluator = new Mock<IGateEvaluator>();
+        _mockNextActionService = new Mock<INextActionService>();
 
         // Default: gates are satisfied unless a specific test overrides this, so the
         // existing transition/tenant-isolation tests are unaffected by the CSTD-18
@@ -36,18 +39,26 @@ public class EngagementsControllerUnitTests
             .Setup(g => g.EvaluateAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<EngagementStage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(GateEvaluationResult.Satisfied());
 
-        _controller = new EngagementsController(_mockRepo.Object, _mockAuditPublisher.Object, _mockGateEvaluator.Object);
+        _controller = new EngagementsController(
+            _mockRepo.Object,
+            _mockAuditPublisher.Object,
+            _mockGateEvaluator.Object,
+            actionService: null,
+            nextActionService: _mockNextActionService.Object);
     }
 
     /// <summary>
     /// Helper method to simulate an authenticated HTTP request with specific JWT claims (e.g. tenant_id)
     /// </summary>
-    private void SetupUserJwtClaim(string tenantIdClaim)
+    private void SetupUserJwtClaim(string tenantIdClaim, string role = "Staff")
     {
-        var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        var claims = new List<Claim>
         {
-            new Claim("tenant_id", tenantIdClaim)
-        }, "TestAuthType"));
+            new Claim("tenant_id", tenantIdClaim),
+            new Claim(ClaimTypes.Role, role)
+        };
+
+        var user = new ClaimsPrincipal(new ClaimsIdentity(claims, "TestAuthType"));
 
         _controller.ControllerContext = new ControllerContext
         {
@@ -732,5 +743,179 @@ public class EngagementsControllerUnitTests
         // Assert
         Assert.IsType<ForbidResult>(actionResult);
         _mockRepo.Verify(r => r.DeleteAsync(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+    }
+
+    // ==========================================
+    // 7. GET NEXT ACTION TESTS (CSTD-19 / 19-N2)
+    // ==========================================
+
+    [Fact]
+    public async Task GetNextAction_ValidStaffContext_Returns200WithStaffViewNextActionResult()
+    {
+        // Arrange
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-custodian-1";
+        SetupUserJwtClaim(tenantId, "Staff");
+
+        var engagement = new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            StaffId = "staff-001",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding
+        };
+
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, tenantId))
+            .ReturnsAsync(engagement);
+
+        var expectedResult = new NextActionResult
+        {
+            EngagementId = engagementId,
+            EngagementStatus = "Started",
+            CurrentStage = "Onboarding",
+            OverallState = OverallState.ClientActionRequired,
+            PrimaryAction = new NextActionItem
+            {
+                Kind = NextActionKind.DocumentUpload,
+                ResponsibleParty = ResponsibleParty.Client,
+                Title = "Upload Articles of Incorporation",
+                Reason = "Document required for onboarding gate.",
+                PriorityRank = 4
+            },
+            Blockers = new List<NextActionItem>
+            {
+                new NextActionItem
+                {
+                    Kind = NextActionKind.StaffTask,
+                    ResponsibleParty = ResponsibleParty.Staff,
+                    Title = "Review background check",
+                    Reason = "Staff check pending",
+                    PriorityRank = 11
+                }
+            },
+            NextStageGate = new GateSummary
+            {
+                TargetStage = "DocumentCollection",
+                IsSatisfied = false,
+                Reasons = new List<string> { "Document missing" }
+            },
+            IsStalled = false,
+            EvaluatedAtUtc = DateTimeOffset.UtcNow
+        };
+
+        _mockNextActionService
+            .Setup(s => s.GetNextActionAsync(engagementId, tenantId, NextActionView.Staff, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expectedResult);
+
+        // Act
+        var actionResult = await _controller.GetNextAction(engagementId, tenantId);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        Assert.Equal(200, okResult.StatusCode);
+
+        var resultDto = Assert.IsType<NextActionResult>(okResult.Value);
+        Assert.Equal(engagementId, resultDto.EngagementId);
+        Assert.Equal(OverallState.ClientActionRequired, resultDto.OverallState);
+        Assert.NotNull(resultDto.PrimaryAction);
+        Assert.Equal("Upload Articles of Incorporation", resultDto.PrimaryAction.Title);
+        Assert.Single(resultDto.Blockers);
+        Assert.NotNull(resultDto.NextStageGate);
+
+        _mockNextActionService.Verify(
+            s => s.GetNextActionAsync(engagementId, tenantId, NextActionView.Staff, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetNextAction_EngagementNotFound_Returns404NotFound()
+    {
+        // Arrange
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-custodian-1";
+        SetupUserJwtClaim(tenantId, "Staff");
+
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, tenantId))
+            .ReturnsAsync((Engagement?)null);
+
+        // Act
+        var actionResult = await _controller.GetNextAction(engagementId, tenantId);
+
+        // Assert
+        var notFound = Assert.IsType<NotFoundObjectResult>(actionResult.Result);
+        Assert.Equal(404, notFound.StatusCode);
+
+        _mockNextActionService.Verify(
+            s => s.GetNextActionAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<NextActionView>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task GetNextAction_CrossTenantAccess_Returns403Forbidden()
+    {
+        // Arrange
+        var engagementId = Guid.NewGuid();
+        SetupUserJwtClaim("tenant-AUTHENTICATED", "Staff");
+
+        // Act
+        var actionResult = await _controller.GetNextAction(engagementId, "tenant-ATTACKER");
+
+        // Assert
+        Assert.IsType<ForbidResult>(actionResult.Result);
+
+        _mockRepo.Verify(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+        _mockNextActionService.Verify(
+            s => s.GetNextActionAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<NextActionView>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task GetNextAction_MissingTenant_Returns400BadRequest()
+    {
+        // Arrange
+        var engagementId = Guid.NewGuid();
+        _controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext()
+        };
+
+        // Act
+        var actionResult = await _controller.GetNextAction(engagementId, tenantId: null);
+
+        // Assert
+        var badRequest = Assert.IsType<BadRequestObjectResult>(actionResult.Result);
+        Assert.Equal(400, badRequest.StatusCode);
+
+        _mockRepo.Verify(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetNextAction_EngineReturnsNull_Returns404NotFound()
+    {
+        // Arrange
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-custodian-1";
+        SetupUserJwtClaim(tenantId, "Staff");
+
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, tenantId))
+            .ReturnsAsync(new Engagement
+            {
+                EngagementId = engagementId,
+                TenantId = tenantId,
+                Status = EngagementStatus.Started
+            });
+
+        _mockNextActionService
+            .Setup(s => s.GetNextActionAsync(engagementId, tenantId, NextActionView.Staff, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((NextActionResult?)null);
+
+        // Act
+        var actionResult = await _controller.GetNextAction(engagementId, tenantId);
+
+        // Assert
+        var notFound = Assert.IsType<NotFoundObjectResult>(actionResult.Result);
+        Assert.Equal(404, notFound.StatusCode);
     }
 }

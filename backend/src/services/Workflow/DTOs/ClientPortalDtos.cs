@@ -32,6 +32,11 @@ public class ClientPortalDashboardDto
 
     // 5-Stage Onboarding Stepper overview
     public List<ClientPortalStageDto> Stages { get; set; } = new();
+
+    /// <summary>
+    /// CSTD-19: Canonical Next Action evaluation result from the next action engine.
+    /// </summary>
+    public NextActionResult? NextAction { get; set; }
 }
 
 /// <summary>
@@ -58,6 +63,8 @@ public class ClientSafeActionDto
     /// endpoints. Null for every other action type.
     /// </summary>
     public Guid? LinkedRequirementId { get; set; }
+
+    public string SourceType { get; set; } = string.Empty;
 }
 
 /// <summary>

@@ -3,6 +3,7 @@ using Custodian.Workflow.Models;
 using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
 using Custodian.Workflow.Services.Gates;
+using Custodian.Workflow.Services.NextAction;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -17,17 +18,20 @@ public class EngagementsController : ControllerBase
     private readonly IAuditPublisher _auditPublisher;
     private readonly IGateEvaluator _gateEvaluator;
     private readonly IClientActionService? _actionService;
+    private readonly INextActionService? _nextActionService;
 
     public EngagementsController(
         IEngagementRepository repository,
         IAuditPublisher auditPublisher,
         IGateEvaluator gateEvaluator,
-        IClientActionService? actionService = null)
+        IClientActionService? actionService = null,
+        INextActionService? nextActionService = null)
     {
         _repository = repository;
         _auditPublisher = auditPublisher;
         _gateEvaluator = gateEvaluator;
         _actionService = actionService;
+        _nextActionService = nextActionService;
     }
 
     [HttpPost]
@@ -62,18 +66,8 @@ public class EngagementsController : ControllerBase
 
         var created = await _repository.CreateAsync(engagement);
 
-        // Seed default 5-stage lifecycle actions for the new engagement
-        if (_actionService != null)
-        {
-            try
-            {
-                await _actionService.EnsureLifecycleActionsAsync(created.EngagementId, effectiveTenantId);
-            }
-            catch
-            {
-                // Fallback gracefully
-            }
-        }
+        // No tasks are seeded: staff define each stage's tasks, or explicitly apply the standard
+        // checklist (POST /api/engagements/{id}/actions/standard-checklist).
 
         // Subtask Genesis Event: Publish Genesis Event to Audit Service
         await _auditPublisher.PublishGenesisEventAsync(created, effectiveTenantId);
@@ -103,6 +97,50 @@ public class EngagementsController : ControllerBase
         }
 
         return Ok(MapToResponse(engagement));
+    }
+
+    /// <summary>
+    /// CSTD-19 (19-N2): Deterministically evaluates and returns the highest-priority next action
+    /// and ordered blockers for staff/owner workspace view.
+    /// Freshness (19-N5): computed on every read from live state, with no cache. Mutation endpoints do
+    /// not return the next action; clients re-fetch this endpoint (or the portal dashboard) after a change.
+    /// </summary>
+    [HttpGet("{id}/next-action")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<NextActionResult>> GetNextAction(
+        Guid id,
+        [FromQuery] string? tenantId,
+        CancellationToken ct = default)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest("tenantId parameter or JWT tenant claim is required for tenant isolation.");
+        }
+
+        var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
+        if (engagement == null)
+        {
+            return NotFound(new { message = $"Engagement '{id}' was not found in tenant '{effectiveTenantId}'." });
+        }
+
+        if (_nextActionService == null)
+        {
+            return StatusCode(500, new { message = "Next action evaluation service is not configured." });
+        }
+
+        var result = await _nextActionService.GetNextActionAsync(id, effectiveTenantId, NextActionView.Staff, ct);
+        if (result == null)
+        {
+            return NotFound(new { message = $"Next action could not be evaluated for engagement '{id}'." });
+        }
+
+        return Ok(result);
     }
 
     [HttpGet]
@@ -241,6 +279,12 @@ public class EngagementsController : ControllerBase
         engagement.Stage = newStage;
 
         var updated = await _repository.UpdateAsync(engagement);
+        int newStageNumber = (int)newStage + 1;
+
+        if (_actionService != null)
+        {
+            await _actionService.ActivateStageActionsAsync(updated.EngagementId, effectiveTenantId, newStageNumber);
+        }
 
         // Subtask Audit: Publish Stage Change Event to Audit Service
         await _auditPublisher.PublishEventAsync(

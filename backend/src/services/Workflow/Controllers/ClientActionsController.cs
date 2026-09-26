@@ -106,9 +106,11 @@ public class ClientActionsController : ControllerBase
     }
 
     /// <summary>
-    /// Creates a new action request for an engagement.
+    /// Creates a new stage task for an engagement. Owner/Staff only: tasks are defined by staff,
+    /// in the current stage or a later one.
     /// </summary>
     [HttpPost]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<ClientActionResponseDto>> CreateAction(
         [FromRoute] Guid engagementId,
         [FromBody] CreateClientActionDto dto,
@@ -130,14 +132,10 @@ public class ClientActionsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        if (User.IsInRole("Client"))
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
         {
-            var callerClientId = ResolveCallerClientId();
-            if (string.IsNullOrWhiteSpace(callerClientId) ||
-                !await _actionService.ClientOwnsEngagementAsync(engagementId, effectiveTenantId, callerClientId))
-            {
-                return Forbid();
-            }
+            return authResult;
         }
 
         try
@@ -148,10 +146,170 @@ public class ClientActionsController : ControllerBase
                 new { engagementId, tenantId = effectiveTenantId },
                 result);
         }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
         catch (ArgumentException ex)
         {
             _logger.LogWarning(ex, "Failed to create action for engagement {EngagementId}", engagementId);
             return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Conflict creating action for engagement {EngagementId}", engagementId);
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Opt-in standard checklist: applies the default lifecycle tasks for the current stage and later.
+    /// Idempotent — tasks already applied are not duplicated. Owner/Staff only.
+    /// </summary>
+    [HttpPost("standard-checklist")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<IEnumerable<ClientActionResponseDto>>> ApplyStandardChecklist(
+        [FromRoute] Guid engagementId,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        try
+        {
+            var added = await _actionService.ApplyStandardChecklistAsync(engagementId, effectiveTenantId, ResolveStaffActor() ?? "Staff");
+            if (added == null)
+            {
+                return NotFound(new { message = $"Engagement '{engagementId}' was not found for tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(added);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Edits a Pending, staff-managed task (title, description, deadline, stage, assignee).
+    /// Requirement- and condition-linked tasks are managed through their source (409). Owner/Staff only.
+    /// </summary>
+    [HttpPatch("{actionId:guid}")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<ClientActionResponseDto>> UpdateAction(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid actionId,
+        [FromBody] UpdateClientActionDto dto,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        try
+        {
+            var result = await _actionService.UpdateActionAsync(engagementId, actionId, effectiveTenantId, dto, ResolveStaffActor() ?? "Staff");
+            if (result == null)
+            {
+                return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Cancels a task that is no longer required (kept as Cancelled, never deleted). Completed tasks
+    /// cannot be cancelled (409); requirement- and condition-linked tasks are refused (409). Owner/Staff only.
+    /// </summary>
+    [HttpPut("{actionId:guid}/cancel")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<ClientActionResponseDto>> CancelAction(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid actionId,
+        [FromBody] CancelClientActionDto dto,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        try
+        {
+            var result = await _actionService.CancelActionAsync(engagementId, actionId, effectiveTenantId, dto.Reason, ResolveStaffActor() ?? "Staff");
+            if (result == null)
+            {
+                return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
         }
     }
 
@@ -205,6 +363,10 @@ public class ClientActionsController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     /// <summary>
@@ -243,13 +405,24 @@ public class ClientActionsController : ControllerBase
             }
         }
 
-        var result = await _actionService.UploadEvidenceAsync(engagementId, actionId, effectiveTenantId, dto);
-        if (result == null)
+        try
         {
-            return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
-        }
+            var result = await _actionService.UploadEvidenceAsync(engagementId, actionId, effectiveTenantId, dto);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
 
-        return Ok(result);
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     /// <summary>
@@ -302,6 +475,10 @@ public class ClientActionsController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     /// <summary>
@@ -353,6 +530,10 @@ public class ClientActionsController : ControllerBase
         catch (ArgumentException ex)
         {
             return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
         }
     }
 

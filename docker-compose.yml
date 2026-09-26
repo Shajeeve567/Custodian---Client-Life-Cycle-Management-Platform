@@ -101,6 +101,9 @@ services:
       - Jwt__ExpiryMinutes=${JWT_EXPIRY_MINUTES}
       - Kafka__BootstrapServers=kafka:29092
       - Kafka__TopicPrefix=custodian
+      # CSTD-19 (19-N5): document events consumer; off until Documents publishes to Kafka
+      - Kafka__GroupId=custodian-workflow
+      - Kafka__ConsumerEnabled=${WORKFLOW_KAFKA_CONSUMER_ENABLED:-false}
     depends_on:
       mysql:
         condition: service_healthy
