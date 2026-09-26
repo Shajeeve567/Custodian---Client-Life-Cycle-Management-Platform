@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { WorkflowApi, IdentityApi, DocumentsApi } from '../services/api';
 import { Engagement, ClientProfile, UserAccountResponse, ClientAction, DocumentMetadata, EngagementStage, EngagementCondition, ConditionType, ConditionPaymentType, AttachConditionRequest, UpdateConditionRequest, NextActionResult } from '../types';
 import { NextActionPanel } from './NextActionPanel';
+import { EditTaskModal, CancelTaskModal, isStaffManagedTask } from './StageTaskModals';
 import { ENGAGEMENT_STAGES, getStageDefinition, getStageIndex, getNextStage, computeClientVisibleStageNumber } from '../constants/engagementStages';
 import { ACTION_TYPE_TO_DOCUMENT_TYPE } from '../constants/documentTypes';
 import {
@@ -85,6 +86,11 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [newTaskDeadline, setNewTaskDeadline] = useState<string>('');
     const [isCreatingTask, setIsCreatingTask] = useState(false);
     const [createTaskError, setCreateTaskError] = useState<string | null>(null);
+    // Staff-defined stage tasks: edit / cancel / opt-in standard checklist
+    const [taskToEdit, setTaskToEdit] = useState<ClientAction | null>(null);
+    const [taskToCancel, setTaskToCancel] = useState<ClientAction | null>(null);
+    const [isApplyingChecklist, setIsApplyingChecklist] = useState(false);
+    const [checklistMessage, setChecklistMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
 
     // CSTD-24: Conditions Modals State
     const [isAddConditionOpen, setIsAddConditionOpen] = useState(false);
@@ -568,6 +574,27 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             setDeactivateConditionError(err.message || 'Failed to deactivate condition.');
         } finally {
             setIsDeactivatingCondition(false);
+        }
+    };
+
+    // Opt-in standard checklist: adds the default tasks for the current stage and later (idempotent).
+    const handleApplyStandardChecklist = async () => {
+        if (!tenantId || !engagementId) return;
+        setIsApplyingChecklist(true);
+        setChecklistMessage(null);
+        try {
+            const added = await WorkflowApi.applyStandardChecklist(engagementId, tenantId);
+            setChecklistMessage(
+                added.length > 0
+                    ? { tone: 'success', text: `Added ${added.length} standard task${added.length === 1 ? '' : 's'} for the current and later stages.` }
+                    : { tone: 'success', text: 'The standard checklist is already applied; nothing was added.' }
+            );
+            await loadWorkspaceData();
+        } catch (err: any) {
+            setChecklistMessage({ tone: 'error', text: err?.message || 'Failed to apply the standard checklist.' });
+        } finally {
+            setIsApplyingChecklist(false);
+            setTimeout(() => setChecklistMessage(null), 5000);
         }
     };
 
@@ -1273,18 +1300,39 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                         </div>
                                         <button
                                             type="button"
+                                            onClick={handleApplyStandardChecklist}
+                                            disabled={isApplyingChecklist || isTerminalStatus}
+                                            className="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold flex items-center gap-1 transition shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title="Add the default lifecycle tasks for the current and later stages (safe to run again)"
+                                        >
+                                            {isApplyingChecklist ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckSquare className="w-3.5 h-3.5" />}
+                                            <span>Standard Checklist</span>
+                                        </button>
+                                        <button
+                                            type="button"
                                             onClick={() => {
-                                                setNewTaskStage(selectedStageDef.order);
+                                                setNewTaskStage(Math.max(selectedStageDef.order, currentStageOrder || 1));
                                                 setIsAddTaskOpen(true);
                                             }}
-                                            className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold flex items-center gap-1 transition shadow-xs"
-                                            title="Add task for this stage"
+                                            disabled={isTerminalStatus}
+                                            className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold flex items-center gap-1 transition shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title="Add a task for the current stage or a later one"
                                         >
                                             <Plus className="w-3.5 h-3.5" />
                                             <span>Add Task</span>
                                         </button>
                                     </div>
                                 </div>
+
+                                {checklistMessage && (
+                                    <div className={`p-2.5 rounded-lg text-[11px] font-semibold border ${
+                                        checklistMessage.tone === 'success'
+                                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                            : 'bg-rose-50 text-rose-800 border-rose-200'
+                                    }`}>
+                                        {checklistMessage.text}
+                                    </div>
+                                )}
 
                                 {displayActions.length === 0 ? (
                                     <div className="p-5 rounded-xl bg-slate-50 text-center space-y-2 border border-slate-200">
@@ -1296,9 +1344,10 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                         </div>
                                         <p className="text-[11px] text-slate-500 max-w-xs mx-auto">
                                             {stageFilterMode === 'stage'
-                                                ? `Add customized deliverables or required documentation for Stage ${selectedStageDef.order} (${selectedStageDef.name}).`
-                                                : 'No pending gate stalls or unhandled client blockers.'}
+                                                ? `Add deliverables for Stage ${selectedStageDef.order} (${selectedStageDef.name}), or apply the standard checklist. With no tasks, only required documents and conditions gate this stage.`
+                                                : 'No tasks yet. Add tasks per stage, or apply the standard checklist.'}
                                         </p>
+                                        {selectedStageDef.order >= currentStageOrder && !isTerminalStatus && (
                                         <div className="pt-2">
                                             <button
                                                 type="button"
@@ -1312,6 +1361,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                 <span>Configure Task for Stage {selectedStageDef.order}</span>
                                             </button>
                                         </div>
+                                        )}
                                     </div>
                                 ) : (
                                     <div className="space-y-3">
@@ -1490,6 +1540,30 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                     <span>Awaiting client PDF upload in Client Portal</span>
                                                 </div>
                                             ) : null}
+
+                                            {/* Staff-defined task management: edit while Pending, cancel while not finished */}
+                                            {isStaffManagedTask(act) && !isTerminalStatus && !isActionCancelled && act.status !== 'Completed' && !act.isCompleted && (
+                                                <div className="flex items-center gap-2">
+                                                    {act.status === 'Pending' && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setTaskToEdit(act)}
+                                                            className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 flex items-center justify-center gap-1 transition"
+                                                        >
+                                                            <Edit3 className="w-3 h-3" />
+                                                            Edit
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setTaskToCancel(act)}
+                                                        className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-rose-700 bg-white hover:bg-rose-50 border border-rose-200 flex items-center justify-center gap-1 transition"
+                                                    >
+                                                        <Ban className="w-3 h-3" />
+                                                        Cancel Task
+                                                    </button>
+                                                </div>
+                                            )}
 
                                             {/* General Task: Mark Complete button */}
                                             {!act.isCompleted && act.status !== 'Completed' && !isActionCancelled && !linkedDoc && (
@@ -1706,6 +1780,27 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                 </div>
             )}
 
+            {taskToEdit && tenantId && (
+                <EditTaskModal
+                    action={taskToEdit}
+                    engagementId={engagementId}
+                    tenantId={tenantId}
+                    minStage={currentStageOrder || 1}
+                    onClose={() => setTaskToEdit(null)}
+                    onSaved={loadWorkspaceData}
+                />
+            )}
+
+            {taskToCancel && tenantId && (
+                <CancelTaskModal
+                    action={taskToCancel}
+                    engagementId={engagementId}
+                    tenantId={tenantId}
+                    onClose={() => setTaskToCancel(null)}
+                    onCancelled={loadWorkspaceData}
+                />
+            )}
+
             {/* Modal: Add Task for Stage */}
             {isAddTaskOpen && (
                 <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1770,11 +1865,12 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                         onChange={(e) => setNewTaskStage(Number(e.target.value))}
                                         className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                                     >
-                                        <option value={1}>Stage 1: Onboarding</option>
-                                        <option value={2}>Stage 2: Document Collection</option>
-                                        <option value={3}>Stage 3: Verification</option>
-                                        <option value={4}>Stage 4: Execution</option>
-                                        <option value={5}>Stage 5: Closure</option>
+                                        {ENGAGEMENT_STAGES.map((stageDef) => (
+                                            // Completed stages can't gain new tasks (they would block every later stage move).
+                                            <option key={stageDef.key} value={stageDef.order} disabled={stageDef.order < currentStageOrder}>
+                                                Stage {stageDef.order}: {stageDef.name}
+                                            </option>
+                                        ))}
                                     </select>
                                 </div>
 

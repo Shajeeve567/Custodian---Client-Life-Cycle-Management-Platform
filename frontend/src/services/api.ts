@@ -32,6 +32,7 @@ import {
     UpdateConditionRequest,
     DeactivateConditionRequest,
     NextActionResult,
+    UpdateClientActionRequest,
 } from '../types';
 
 export const API_BASE = {
@@ -297,6 +298,38 @@ export const WorkflowApi = {
             method: 'POST',
             body: JSON.stringify(req),
         });
+    },
+
+    // Staff-defined stage tasks: opt-in standard checklist (idempotent). Returns only the tasks it added.
+    async applyStandardChecklist(engagementId: string, tenantId: string): Promise<ClientAction[]> {
+        return request<ClientAction[]>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/standard-checklist?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'POST',
+                headers: { 'X-Tenant-ID': tenantId },
+            });
+    },
+
+    // Edit a Pending, staff-managed task (Owner/Staff). 409 if not Pending or linked to a requirement/condition.
+    async updateAction(engagementId: string, actionId: string, req: UpdateClientActionRequest, tenantId: string): Promise<ClientAction> {
+        return request<ClientAction>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/${actionId}?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'PATCH',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify(req),
+            });
+    },
+
+    // Cancel a task that is no longer required (kept as Cancelled). 409 for completed or source-linked tasks.
+    async cancelAction(engagementId: string, actionId: string, reason: string, tenantId: string): Promise<ClientAction> {
+        return request<ClientAction>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/${actionId}/cancel?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'PUT',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify({ reason }),
+            });
     },
 
     async completeAction(actionId: string, tenantId: string, engagementId?: string, actor?: string): Promise<ClientAction> {

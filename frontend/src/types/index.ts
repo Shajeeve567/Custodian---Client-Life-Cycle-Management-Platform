@@ -139,6 +139,19 @@ export interface ClientAction {
     linkedDocumentId?: string | null;
     linkedConditionId?: string | null;
     linkedMeetingId?: string | null;
+    // Backend JSON field (staff view); `assignedRole` above is kept for older callers.
+    assignedToRole?: 'Client' | 'Staff' | string | null;
+}
+
+// Staff edit of a Pending, staff-managed task (PATCH /actions/{id}). Omitted fields are unchanged.
+export interface UpdateClientActionRequest {
+    title?: string;
+    description?: string;
+    deadlineUtc?: string | null;
+    clearDeadline?: boolean;
+    stageNumber?: number;
+    assignedToRole?: 'Client' | 'Staff';
+    isInternalOnly?: boolean;
 }
 
 export interface CreateClientActionRequest {
