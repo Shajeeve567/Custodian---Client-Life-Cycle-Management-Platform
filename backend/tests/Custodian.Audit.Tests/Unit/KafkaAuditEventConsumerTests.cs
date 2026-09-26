@@ -105,6 +105,35 @@ public class KafkaAuditEventConsumerTests
     }
 
     [Theory]
+    [InlineData("ClientActionUpdated")]
+    [InlineData("StandardChecklistApplied")]
+    public async Task ProcessMessageAsync_StageTaskEvent_RecordsAuditEvent(string eventType)
+    {
+        // Arrange: staff-defined stage task events (edit, opt-in standard checklist)
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+
+        var json = BuildEnvelopeJson(eventType, engagementId, "staff-actor", new
+        {
+            actionId = Guid.NewGuid(),
+            changedFields = new[] { "title" }
+        });
+
+        // Act
+        await consumer.ProcessMessageAsync(json);
+
+        // Assert
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var stored = await db.Events.SingleOrDefaultAsync(e => e.EngagementId == engagementId);
+
+        Assert.NotNull(stored);
+        Assert.Equal(eventType, stored!.Type);
+        Assert.Equal("staff-actor", stored.Actor);
+    }
+
+    [Theory]
     [InlineData("ConditionAttached")]
     [InlineData("ConditionUpdated")]
     [InlineData("ConditionDeactivated")]

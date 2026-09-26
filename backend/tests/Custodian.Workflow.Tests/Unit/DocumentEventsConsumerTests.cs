@@ -3,7 +3,6 @@ using Custodian.Shared.Messaging;
 using Custodian.Workflow.Data;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Services;
-using Custodian.Workflow.Services.Gates;
 using Custodian.Workflow.Services.Kafka;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -29,14 +28,10 @@ public class DocumentEventsConsumerTests
     public DocumentEventsConsumerTests()
     {
         var dbName = Guid.NewGuid().ToString();
-        var gate = new Mock<IGateEvaluator>();
-        gate.Setup(g => g.EvaluateAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<EngagementStage>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(GateEvaluationResult.Blocked("not under test", Array.Empty<GateRequirementResult>()));
-
         var services = new ServiceCollection();
         services.AddDbContext<WorkflowDbContext>(o => o.UseInMemoryDatabase(dbName));
         services.AddScoped<IClientActionService>(sp =>
-            new ClientActionService(sp.GetRequiredService<WorkflowDbContext>(), gate.Object, _auditPublisher.Object));
+            new ClientActionService(sp.GetRequiredService<WorkflowDbContext>(), _auditPublisher.Object));
         _provider = services.BuildServiceProvider();
 
         _consumer = new DocumentEventsConsumer(
