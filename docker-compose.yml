@@ -101,9 +101,9 @@ services:
       - Jwt__ExpiryMinutes=${JWT_EXPIRY_MINUTES}
       - Kafka__BootstrapServers=kafka:29092
       - Kafka__TopicPrefix=custodian
-      # CSTD-19 (19-N5): document events consumer; off until Documents publishes to Kafka
+      # CSTD-19 (19-N5): applies Documents' verification events to the linked tasks
       - Kafka__GroupId=custodian-workflow
-      - Kafka__ConsumerEnabled=${WORKFLOW_KAFKA_CONSUMER_ENABLED:-false}
+      - Kafka__ConsumerEnabled=${WORKFLOW_KAFKA_CONSUMER_ENABLED:-true}
       # Service URLs inside the compose network (defaults point at localhost, which fails in containers)
       - Services__DocumentsUrl=http://document-service:8080
       - Services__AuditUrl=http://audit-service:8080
@@ -132,6 +132,8 @@ services:
       - Jwt__ExpiryMinutes=${JWT_EXPIRY_MINUTES}
       - AzureBlob__ConnectionString=${AZURE_BLOB_CONNECTION_STRING}
       - AzureBlob__ContainerName=${AZURE_BLOB_CONTAINER_NAME}
+      # Document events go to Kafka so Audit, Workflow and Identity (notifications) all receive them
+      - Audit__Transport=Kafka
       - Kafka__BootstrapServers=kafka:29092
       - Kafka__TopicPrefix=custodian
       - Services__WorkflowUrl=http://workflow-service:8080

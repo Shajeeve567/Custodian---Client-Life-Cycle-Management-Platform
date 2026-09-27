@@ -69,7 +69,9 @@ deploy-identity.yml
 deploy-workflow.yml
 ```
 
-These workflows run when relevant service changes are pushed to `main`.
+These workflows run when the service's code, the shared libraries (`backend/src/shared/**`) or the workflow file change on `main`. The **Test** step runs the service's test project (for example `backend/tests/Custodian.Audit.Tests`); the service project itself contains no tests.
+
+The CI workflow (`ci.yml`) builds and tests the whole `backend/Custodian.sln`, which includes all five test projects (Shared, Audit, Documents, Workflow and Identity).
 
 The deployment process is:
 
