@@ -2210,4 +2210,58 @@ public class ClientActionServiceTests
 
         Assert.True((await gate.EvaluateAsync(engagementId, "tenant-001", EngagementStage.DocumentCollection)).IsSatisfied);
     }
+
+    // =========================================================================
+    // C5: which tasks a Client may complete itself
+    // =========================================================================
+
+    public static IEnumerable<object?[]> ClientCompletionCases() => new[]
+    {
+        new object?[] { "Client", false, ClientActionType.CustomTask, false, false, true },   // own plain task
+        new object?[] { "Staff", false, ClientActionType.CustomTask, false, false, false },   // staff task
+        new object?[] { "Client", true, ClientActionType.CustomTask, false, false, false },   // internal
+        new object?[] { "Client", false, ClientActionType.KycDocument, false, false, false }, // evidence type
+        new object?[] { "Client", false, ClientActionType.CustomTask, true, false, false },   // linked document
+        new object?[] { "Client", false, ClientActionType.Approval, false, true, false },     // condition task
+    };
+
+    [Theory]
+    [MemberData(nameof(ClientCompletionCases))]
+    public async Task GetClientCompletionBlockReasonAsync_AllowsOnlyOwnPlainTasks(
+        string assignedTo, bool internalOnly, string type, bool linkedDocument, bool conditionLinked, bool allowed)
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var action = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = "tenant-001",
+            Title = "Task",
+            Type = type,
+            Status = ClientActionStatus.Pending,
+            StageNumber = 1,
+            AssignedToRole = assignedTo,
+            IsInternalOnly = internalOnly,
+            LinkedDocumentId = linkedDocument ? Guid.NewGuid() : null,
+            LinkedConditionId = conditionLinked ? Guid.NewGuid() : null,
+            SourceType = conditionLinked ? ClientActionSourceType.Condition : ClientActionSourceType.Manual
+        };
+        db.ClientActions.Add(action);
+        await db.SaveChangesAsync();
+
+        var reason = await CreateService(db).GetClientCompletionBlockReasonAsync(engagementId, action.ActionId, "tenant-001");
+
+        Assert.Equal(allowed, reason == null);
+    }
+
+    [Fact]
+    public async Task GetClientCompletionBlockReasonAsync_UnknownOrOtherTenantAction_ReturnsNull_SoCompleteReports404()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var service = CreateService(db);
+
+        Assert.Null(await service.GetClientCompletionBlockReasonAsync(Guid.NewGuid(), Guid.NewGuid(), "tenant-001"));
+    }
 }

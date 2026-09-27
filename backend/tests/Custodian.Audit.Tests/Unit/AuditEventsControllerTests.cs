@@ -1,8 +1,10 @@
 using Custodian.Audit.Controllers;
 using Custodian.Audit.DTOs;
 using Custodian.Audit.Services;
+using Custodian.Shared.Messaging;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using Moq;
 using System.Security.Claims;
 using Xunit;
@@ -14,11 +16,14 @@ public class AuditEventsControllerTests
     private readonly Mock<IAuditEventService> _mockService;
     private readonly AuditEventsController _controller;
     private readonly Guid _testTenantId = Guid.NewGuid();
+    private const string IngestionKey = "test-ingestion-key-0123456789";
 
     public AuditEventsControllerTests()
     {
         _mockService = new Mock<IAuditEventService>();
-        _controller = new AuditEventsController(_mockService.Object);
+        _controller = new AuditEventsController(
+            _mockService.Object,
+            Options.Create(new AuditIngestionOptions { ApiKey = IngestionKey }));
 
         // Setup HttpContext with authenticated claims
         var claims = new List<Claim>
@@ -29,10 +34,10 @@ public class AuditEventsControllerTests
         var identity = new ClaimsIdentity(claims, "TestAuth");
         var claimsPrincipal = new ClaimsPrincipal(identity);
 
-        _controller.ControllerContext = new ControllerContext
-        {
-            HttpContext = new DefaultHttpContext { User = claimsPrincipal }
-        };
+        var httpContext = new DefaultHttpContext { User = claimsPrincipal };
+        // Existing CreateEvent tests act as a publishing service holding the ingestion key.
+        httpContext.Request.Headers[AuditIngestion.HeaderName] = IngestionKey;
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
     }
 
     [Fact]
@@ -226,5 +231,75 @@ public class AuditEventsControllerTests
         // Assert
         Assert.IsType<ForbidResult>(result.Result);
         _mockService.Verify(s => s.RecordEventAsync(It.IsAny<CreateAuditEventRequest>(), It.IsAny<Guid>()), Times.Never);
+    }
+
+    // =========================================================================
+    // C8: audit writes are service-only (ingestion key), never user tokens
+    // =========================================================================
+
+    private static CreateAuditEventRequest ServiceEvent(Guid tenantId) => new()
+    {
+        EngagementId = Guid.NewGuid(),
+        TenantId = tenantId,
+        Actor = "System",
+        Type = "Genesis",
+        Payload = "{}"
+    };
+
+    private static AuditEventsController ControllerWith(IAuditEventService service, string? configuredKey, string? suppliedKey, ClaimsPrincipal? user = null)
+    {
+        var controller = new AuditEventsController(service, Options.Create(new AuditIngestionOptions { ApiKey = configuredKey }));
+        var httpContext = new DefaultHttpContext { User = user ?? new ClaimsPrincipal(new ClaimsIdentity()) };
+        if (suppliedKey != null)
+        {
+            httpContext.Request.Headers[AuditIngestion.HeaderName] = suppliedKey;
+        }
+        controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+        return controller;
+    }
+
+    [Theory]
+    [InlineData(null)]              // no key header
+    [InlineData("wrong-key")]       // wrong key
+    [InlineData("")]                // empty header
+    public async Task CreateEvent_WithoutValidIngestionKey_Returns403_EvenForSignedInUser(string? suppliedKey)
+    {
+        var signedInOwner = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", _testTenantId.ToString()),
+            new Claim(ClaimTypes.Role, "Owner")
+        }, "TestAuth"));
+        var controller = ControllerWith(_mockService.Object, IngestionKey, suppliedKey, signedInOwner);
+
+        var result = await controller.CreateEvent(ServiceEvent(_testTenantId), null);
+
+        var forbidden = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(403, forbidden.StatusCode);
+        _mockService.Verify(s => s.RecordEventAsync(It.IsAny<CreateAuditEventRequest>(), It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateEvent_WhenNoKeyConfigured_FailsClosed()
+    {
+        var controller = ControllerWith(_mockService.Object, configuredKey: null, suppliedKey: "anything");
+
+        var result = await controller.CreateEvent(ServiceEvent(_testTenantId), null);
+
+        Assert.Equal(403, Assert.IsType<ObjectResult>(result.Result).StatusCode);
+        _mockService.Verify(s => s.RecordEventAsync(It.IsAny<CreateAuditEventRequest>(), It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateEvent_ServiceWithValidKeyAndNoUserToken_RecordsUnderPayloadTenant()
+    {
+        var request = ServiceEvent(_testTenantId);
+        _mockService.Setup(s => s.RecordEventAsync(request, _testTenantId))
+            .ReturnsAsync(new AuditEventResponse { EventId = Guid.NewGuid(), EngagementId = request.EngagementId, TenantId = _testTenantId });
+        var controller = ControllerWith(_mockService.Object, IngestionKey, IngestionKey);
+
+        var result = await controller.CreateEvent(request, null);
+
+        Assert.IsType<CreatedAtActionResult>(result.Result);
+        _mockService.Verify(s => s.RecordEventAsync(request, _testTenantId), Times.Once);
     }
 }
