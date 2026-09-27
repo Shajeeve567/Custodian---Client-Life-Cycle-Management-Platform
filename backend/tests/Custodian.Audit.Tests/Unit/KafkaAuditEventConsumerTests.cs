@@ -205,15 +205,36 @@ public class KafkaAuditEventConsumerTests
         var consumer = CreateConsumer(provider);
         var engagementId = Guid.NewGuid();
 
-        var json = BuildEnvelopeJson("document.verified", engagementId, "System", new { documentName = "id.pdf" });
+        var json = BuildEnvelopeJson("user.created", engagementId, "System", new { email = "someone@example.com" });
 
         // Act
         await consumer.ProcessMessageAsync(json);
 
-        // Assert: nothing recorded — this consumer only handles Genesis/StatusChange/StageChange
+        // Assert: nothing recorded — this consumer only handles engagement and document events
         using var scope = provider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
         Assert.Empty(db.Events);
+    }
+
+    [Theory]
+    [InlineData("document.verified")]
+    [InlineData("document.verification_rejected")]
+    [InlineData("document.metadata_updated")]
+    [InlineData("document.soft_deleted")]
+    public async Task ProcessMessageAsync_DocumentServiceEvent_IsRecorded(string eventType)
+    {
+        // H1: Documents now publishes to Kafka; previously its HTTP events were rejected (401) and lost.
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+
+        await consumer.ProcessMessageAsync(BuildEnvelopeJson(eventType, engagementId, "staff-1", new { documentId = Guid.NewGuid() }));
+
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var recorded = Assert.Single(db.Events);
+        Assert.Equal(eventType, recorded.Type);
+        Assert.Equal(engagementId, recorded.EngagementId);
     }
 
     [Fact]

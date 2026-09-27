@@ -297,6 +297,37 @@ public class EngagementsControllerUnitTests
     }
 
     [Fact]
+    public async Task UpdateStatus_PublishesStatusChangeWithClientId()
+    {
+        // Audit expects StatusChange events and Identity welcomes the client on Draft -> Started;
+        // previously no event was published at all.
+        var engagementId = Guid.NewGuid();
+        var engagement = new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = "tenant-001",
+            ClientId = "c1",
+            StaffId = "s1",
+            Status = EngagementStatus.Draft
+        };
+        _mockRepo.Setup(r => r.GetByIdAsync(engagementId, "tenant-001")).ReturnsAsync(engagement);
+        _mockRepo.Setup(r => r.UpdateAsync(It.IsAny<Engagement>())).ReturnsAsync(engagement);
+
+        object? payload = null;
+        _mockAuditPublisher
+            .Setup(a => a.PublishEventAsync(engagementId, "tenant-001", It.IsAny<string>(), "StatusChange", It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, _, p) => payload = p)
+            .Returns(Task.CompletedTask);
+
+        await _controller.UpdateStatus(engagementId, new UpdateEngagementStatusRequest { TenantId = "tenant-001", Status = "Started" });
+
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(payload);
+        Assert.Equal("c1", json.GetProperty("clientId").GetString());
+        Assert.Equal("Draft", json.GetProperty("fromStatus").GetString());
+        Assert.Equal("Started", json.GetProperty("toStatus").GetString());
+    }
+
+    [Fact]
     public async Task UpdateStatus_IllegalTransition_ShouldReturn400BadRequest()
     {
         // Arrange: Closed engagement cannot be demoted to Draft

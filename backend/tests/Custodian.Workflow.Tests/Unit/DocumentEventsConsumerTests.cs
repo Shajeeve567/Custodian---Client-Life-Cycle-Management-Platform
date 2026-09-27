@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Custodian.Shared.Messaging;
 using Custodian.Workflow.Data;
+using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Services;
 using Custodian.Workflow.Services.Kafka;
@@ -174,5 +175,78 @@ public class DocumentEventsConsumerTests
 
         Assert.Null(exception);
         VerifyStatusChangedEvents(Times.Never());
+    }
+
+    // H1/H6: the exact shape the Documents service now publishes: fields wrapped in EngagementEventPayload.Data.
+    private string DocumentsServiceMessage(string eventType, Guid documentId) =>
+        JsonSerializer.Serialize(KafkaEnvelope.Create(eventType, TenantId, new EngagementEventPayload(
+            _engagementId,
+            "staff-042",
+            JsonSerializer.SerializeToElement(new
+            {
+                documentId,
+                engagementId = _engagementId,
+                tenantId = TenantId,
+                clientId = "client-001",
+                fileName = "passport.pdf",
+                verifiedBy = "staff-042",
+                rejectionReason = "Blurry scan"
+            }))));
+
+    [Theory]
+    [InlineData(EventTypes.DocumentVerified, ClientActionStatus.Completed)]
+    [InlineData(EventTypes.DocumentVerificationRejected, ClientActionStatus.Rejected)]
+    public async Task DocumentsServiceMessage_WrappedPayload_IsApplied(string eventType, string expectedStatus)
+    {
+        var documentId = Guid.NewGuid();
+        var action = await SeedActionAsync(documentId, ClientActionStatus.Uploaded);
+
+        Assert.True(await _consumer.HandleAsync(DocumentsServiceMessage(eventType, documentId)));
+
+        Assert.Equal(expectedStatus, (await ReloadAsync(action.ActionId)).Status);
+    }
+
+    [Theory]
+    [InlineData("not json")]
+    [InlineData("")]
+    public async Task HandleAsync_MalformedMessage_IsSkippedAndCommitted(string raw)
+    {
+        // Retrying cannot fix a malformed message, so it must not block the partition.
+        Assert.True(await _consumer.HandleAsync(raw));
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenApplyingFails_ReturnsFalseSoTheOffsetIsNotCommitted()
+    {
+        // M7: previously any failure was logged and the offset committed, losing the outcome.
+        var documentId = Guid.NewGuid();
+        await SeedActionAsync(documentId, ClientActionStatus.Uploaded);
+
+        var failingService = new Mock<IClientActionService>();
+        failingService
+            .Setup(s => s.ApplyVerificationOutcomeAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<ApplyActionVerificationDto>()))
+            .ThrowsAsync(new TimeoutException("database unavailable"));
+
+        var services = new ServiceCollection();
+        services.AddScoped(_ => _provider.GetRequiredService<WorkflowDbContext>());
+        services.AddScoped(_ => failingService.Object);
+        using var failingProvider = services.BuildServiceProvider();
+        var consumer = new DocumentEventsConsumer(
+            Options.Create(new KafkaConsumerOptions()),
+            failingProvider.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<DocumentEventsConsumer>.Instance);
+
+        Assert.False(await consumer.HandleAsync(DocumentsServiceMessage(EventTypes.DocumentVerified, documentId)));
+    }
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(2, 2)]
+    [InlineData(3, 4)]
+    [InlineData(7, 60)]
+    [InlineData(50, 60)]
+    public void RetryDelay_GrowsAndIsCapped(int failures, int expectedSeconds)
+    {
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), DocumentEventsConsumer.RetryDelay(failures));
     }
 }

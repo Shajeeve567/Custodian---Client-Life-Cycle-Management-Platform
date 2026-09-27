@@ -73,4 +73,34 @@ public class WorkflowEngagementAccessClientTests
 
         await Assert.ThrowsAsync<EngagementAccessUnavailableException>(() => client.CanAccessEngagementAsync(Guid.NewGuid(), "tenant-001"));
     }
+
+    [Fact]
+    public async Task GetEngagementClientId_ReadsClientIdFromWorkflow()
+    {
+        var (client, handler) = Create(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"engagementId\":\"x\",\"clientId\":\"client-42\"}", System.Text.Encoding.UTF8, "application/json")
+        });
+
+        Assert.Equal("client-42", await client.GetEngagementClientIdAsync(Guid.NewGuid(), "tenant-001"));
+        Assert.Equal("Bearer client-token", handler.LastRequest!.Headers.Authorization!.ToString());
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task GetEngagementClientId_ReturnsNullInsteadOfThrowing(HttpStatusCode status)
+    {
+        var (client, _) = Create(_ => new HttpResponseMessage(status));
+
+        Assert.Null(await client.GetEngagementClientIdAsync(Guid.NewGuid(), "tenant-001"));
+    }
+
+    [Fact]
+    public async Task GetEngagementClientId_WorkflowUnreachable_ReturnsNull()
+    {
+        var (client, _) = Create(_ => throw new HttpRequestException("connection refused"));
+
+        Assert.Null(await client.GetEngagementClientIdAsync(Guid.NewGuid(), "tenant-001"));
+    }
 }

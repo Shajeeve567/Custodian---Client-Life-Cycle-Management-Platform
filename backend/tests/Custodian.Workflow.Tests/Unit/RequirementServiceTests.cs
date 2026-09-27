@@ -85,6 +85,45 @@ public class RequirementServiceTests
     }
 
     [Fact]
+    public async Task RequestRequirementAsync_EventCarriesClientIdTitleAndAssignee_ForClientNotification()
+    {
+        // H2: Identity needs clientId to address the "document requested" notification.
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        const string tenantId = "tenant-001";
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-7",
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.DocumentCollection
+        });
+        await db.SaveChangesAsync();
+
+        object? payload = null;
+        var auditPublisher = new Mock<IAuditPublisher>();
+        auditPublisher
+            .Setup(a => a.PublishEventAsync(engagementId, tenantId, It.IsAny<string>(), "RequirementRequested", It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, _, p) => payload = p)
+            .Returns(Task.CompletedTask);
+        var service = new RequirementService(db, auditPublisher.Object);
+
+        await service.RequestRequirementAsync(engagementId, tenantId, new RequestRequirementDto
+        {
+            Type = "SourceOfFunds",
+            Title = "Bank statement",
+            AssignedToRole = "Client"
+        });
+
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(payload);
+        Assert.Equal("client-7", json.GetProperty("clientId").GetString());
+        Assert.Equal("Bank statement", json.GetProperty("title").GetString());
+        Assert.Equal("Client", json.GetProperty("assignedToRole").GetString());
+    }
+
+    [Fact]
     public async Task RequestRequirementAsync_PublishesRequirementRequestedEvent_WithoutValue()
     {
         // Arrange

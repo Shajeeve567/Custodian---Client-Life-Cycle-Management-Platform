@@ -593,6 +593,82 @@ public class DocumentServiceTests
     }
 
     [Fact]
+    public async Task VerifyDocumentAsync_EventCarriesClientIdAndFileName_ForClientNotification()
+    {
+        // H2: Identity addresses the "document verified" notification by clientId, which only Workflow knows.
+        using var dbContext = CreateInMemoryDbContext();
+        var auditMock = new Mock<IAuditPublisher>();
+        var accessMock = new Mock<Custodian.Documents.Services.EngagementAccess.IEngagementAccessClient>();
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        const string tenantId = "tenant-audit";
+        const string clientId = "3f2c8a1e-0000-4000-8000-000000000001";
+        accessMock.Setup(a => a.GetEngagementClientIdAsync(engagementId, tenantId, It.IsAny<CancellationToken>())).ReturnsAsync(clientId);
+
+        dbContext.Documents.Add(new Custodian.Documents.Models.DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = "Passport",
+            UploaderId = "client-user",
+            FileName = "passport.pdf",
+            ContentType = "application/pdf",
+            FileSize = 2048,
+            StoragePath = "uploads/passport.pdf",
+            ComplianceStatus = Custodian.Documents.Compliance.ComplianceStatus.Compliant,
+            VerificationStatus = DocumentVerificationStatus.Unverified
+        });
+        await dbContext.SaveChangesAsync();
+
+        object? published = null;
+        auditMock
+            .Setup(a => a.PublishEventAsync(engagementId, tenantId, It.IsAny<string>(), EventTypes.DocumentVerified, It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, _, payload) => published = payload)
+            .Returns(Task.CompletedTask);
+
+        var service = new DocumentService(dbContext, new DocumentValidator(), new Mock<IStorageService>().Object,
+            complianceEngine: null, auditPublisher: auditMock.Object, engagementAccess: accessMock.Object);
+
+        await service.VerifyDocumentAsync(engagementId, documentId, tenantId, new VerifyDocumentRequestDto { StaffActor = "staff-1" });
+
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(published);
+        Assert.Equal(clientId, json.GetProperty("clientId").GetString());
+        Assert.Equal("passport.pdf", json.GetProperty("fileName").GetString());
+    }
+
+    [Fact]
+    public async Task VerifyDocumentAsync_WhenClientLookupFails_StillVerifiesAndPublishes()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var auditMock = new Mock<IAuditPublisher>();
+        var accessMock = new Mock<Custodian.Documents.Services.EngagementAccess.IEngagementAccessClient>();
+        accessMock.Setup(a => a.GetEngagementClientIdAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("workflow down"));
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        dbContext.Documents.Add(new Custodian.Documents.Models.DocumentMetadata
+        {
+            DocumentId = documentId,
+            EngagementId = engagementId,
+            TenantId = "tenant-audit",
+            Type = "Passport",
+            FileName = "passport.pdf",
+            ComplianceStatus = Custodian.Documents.Compliance.ComplianceStatus.Compliant,
+            VerificationStatus = DocumentVerificationStatus.Unverified
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new DocumentService(dbContext, new DocumentValidator(), new Mock<IStorageService>().Object,
+            complianceEngine: null, auditPublisher: auditMock.Object, engagementAccess: accessMock.Object);
+
+        var result = await service.VerifyDocumentAsync(engagementId, documentId, "tenant-audit", new VerifyDocumentRequestDto { StaffActor = "staff-1" });
+
+        Assert.Equal(DocumentVerificationStatus.Verified, result!.VerificationStatus);
+        auditMock.Verify(a => a.PublishEventAsync(engagementId, "tenant-audit", "staff-1", EventTypes.DocumentVerified, It.IsAny<object>()), Times.Once);
+    }
+
+    [Fact]
     public async Task RejectDocumentVerificationAsync_PublishesDocumentVerificationRejectedAuditEvent()
     {
         using var dbContext = CreateInMemoryDbContext();
