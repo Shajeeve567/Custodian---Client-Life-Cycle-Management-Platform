@@ -7,7 +7,6 @@ import { NextActionPanel } from './NextActionPanel';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import { EditTaskModal, CancelTaskModal, ApplyChecklistModal, isStaffManagedTask, REQUEST_INFORMATION_OPTION } from './StageTaskModals';
 import { ENGAGEMENT_STAGES, getStageDefinition, getStageIndex, getNextStage, computeClientVisibleStageNumber } from '../constants/engagementStages';
-import { ACTION_TYPE_TO_DOCUMENT_TYPE } from '../constants/documentTypes';
 import {
     ArrowLeft,
     CheckCircle2,
@@ -53,6 +52,17 @@ interface WorkspaceStageViewProps {
 
 // Add Task form value for "Request Information": creates a requirement (question) instead of a plain task.
 const REQUEST_INFORMATION_TYPE = REQUEST_INFORMATION_OPTION;
+
+/** documentId stored in a task's SourceMetadata JSON by the evidence upload, if any. */
+const metadataDocumentId = (sourceMetadata?: string | null): string | undefined => {
+    if (!sourceMetadata) return undefined;
+    try {
+        const parsed = JSON.parse(sourceMetadata);
+        return typeof parsed?.documentId === 'string' && parsed.documentId ? parsed.documentId : undefined;
+    } catch {
+        return undefined;
+    }
+};
 
 export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     engagementId,
@@ -141,43 +151,13 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [rejectReason, setRejectReason] = useState<string>('');
     const [isRejectingAction, setIsRejectingAction] = useState<boolean>(false);
 
-    // Helper to match action to evidence document in vault
+    // Evidence document of a task: only the document uploaded through that task. Workflow records it
+    // as LinkedDocumentId (and documentId in SourceMetadata) on upload. Matching by document type or
+    // title used to attach one upload to every task of the same type, offering Verify/Reject on tasks
+    // the client never uploaded to.
     const findLinkedDoc = (act: ClientAction): DocumentMetadata | undefined => {
-        const actDocId = (act as any).documentId || (act as any).metadata?.documentId;
-        if (actDocId) {
-            const found = documents.find((d) => d.documentId === actDocId);
-            if (found) return found;
-        }
-
-        // Same mapping UploadEvidenceModal uploads under — kept in one shared place so this
-        // lookup can never drift from what's actually uploaded (see constants/documentTypes.ts).
-        const mappedDocType = ACTION_TYPE_TO_DOCUMENT_TYPE[act.type as string];
-        if (mappedDocType) {
-            const found = documents.find((d) => d.type === mappedDocType);
-            if (found) return found;
-        }
-
-        // Fallback for staff-created custom tasks with a descriptive title but a generic Type.
-        if (act.title.toLowerCase().includes('kyc') || act.title.toLowerCase().includes('passport')) {
-            const found = documents.find((d) => d.type === 'KYC_PASSPORT');
-            if (found) return found;
-        }
-
-        if (act.title.toLowerCase().includes('agreement') || act.title.toLowerCase().includes('contract')) {
-            const found = documents.find((d) => d.type === 'SIGNED_AGREEMENT');
-            if (found) return found;
-        }
-
-        if (act.title.toLowerCase().includes('proof of address') || act.title.toLowerCase().includes('address')) {
-            const found = documents.find((d) => d.type === 'PROOF_OF_ADDRESS');
-            if (found) return found;
-        }
-
-        if (act.type === 'DocumentUpload') {
-            return documents.find((d) => !d.isDeleted);
-        }
-
-        return undefined;
+        const docId = act.linkedDocumentId || metadataDocumentId(act.sourceMetadata);
+        return docId ? documents.find((d) => d.documentId === docId) : undefined;
     };
 
     // CSTD-19 (19-N5): next actions are computed on read with no cache, so every workspace reload

@@ -139,6 +139,8 @@ export interface ClientAction {
     linkedDocumentId?: string | null;
     linkedConditionId?: string | null;
     linkedMeetingId?: string | null;
+    // Staff view only (stripped for clients): JSON with the evidence documentId, compliance and verification.
+    sourceMetadata?: string | null;
     // Backend JSON field (staff view); `assignedRole` above is kept for older callers.
     assignedToRole?: 'Client' | 'Staff' | string | null;
 }
