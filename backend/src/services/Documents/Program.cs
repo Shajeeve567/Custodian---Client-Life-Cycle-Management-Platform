@@ -12,7 +12,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddCustodianCors(builder.Configuration);
 builder.Services.AddTenantContext();
-builder.Services.AddJwtAuthentication(builder.Configuration);
+builder.Services.AddJwtAuthentication(builder.Configuration, builder.Environment);
 // Tenant APIs require a workspace token (tenant_id claim); see TenantAuthorizationExtensions.
 builder.Services.AddTenantScopedAuthorization();
 
@@ -38,7 +38,7 @@ builder.Services.AddHttpClient<IAuditPublisher, AuditPublisher>(client =>
     client.BaseAddress = new Uri(auditBaseUrl);
     // Service-to-service key for POST /api/audit-events (see Custodian.Shared.Messaging.AuditIngestion).
     var ingestionKey = builder.Configuration[Custodian.Shared.Messaging.AuditIngestion.ConfigKey];
-    if (!string.IsNullOrWhiteSpace(ingestionKey))
+    if (Custodian.Shared.Messaging.AuditIngestion.IsUsableKey(ingestionKey))
     {
         client.DefaultRequestHeaders.Add(Custodian.Shared.Messaging.AuditIngestion.HeaderName, ingestionKey);
     }

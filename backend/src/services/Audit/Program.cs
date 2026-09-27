@@ -15,7 +15,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddCustodianCors(builder.Configuration);
 builder.Services.AddTenantContext();
-builder.Services.AddJwtAuthentication(builder.Configuration);
+builder.Services.AddJwtAuthentication(builder.Configuration, builder.Environment);
 // Tenant APIs require a workspace token (tenant_id claim); see TenantAuthorizationExtensions.
 builder.Services.AddTenantScopedAuthorization();
 // HTTP audit ingestion is service-only: callers must present AuditIngestion:ApiKey.

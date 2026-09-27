@@ -177,9 +177,9 @@ public class AuditEventsController : ControllerBase
     /// </summary>
     private bool HasValidIngestionKey()
     {
-        if (string.IsNullOrWhiteSpace(_ingestion.ApiKey))
+        if (!AuditIngestion.IsUsableKey(_ingestion.ApiKey))
         {
-            return false; // fail closed when no key is configured
+            return false; // fail closed when no real key is configured (blank, short or placeholder)
         }
 
         var supplied = Request?.Headers[AuditIngestion.HeaderName].ToString();
@@ -190,7 +190,7 @@ public class AuditEventsController : ControllerBase
 
         return CryptographicOperations.FixedTimeEquals(
             Encoding.UTF8.GetBytes(supplied),
-            Encoding.UTF8.GetBytes(_ingestion.ApiKey));
+            Encoding.UTF8.GetBytes(_ingestion.ApiKey!));
     }
 
     private (Guid TenantId, bool IsForbidden) TryResolveTenantId(string? tenantIdQuery = null, params Guid?[] fallbackTenantIds)
