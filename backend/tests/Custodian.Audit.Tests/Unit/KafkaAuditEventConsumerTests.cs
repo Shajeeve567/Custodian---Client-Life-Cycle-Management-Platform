@@ -222,6 +222,7 @@ public class KafkaAuditEventConsumerTests
     [InlineData("document.verification_rejected")]
     [InlineData("document.metadata_updated")]
     [InlineData("document.soft_deleted")]
+    [InlineData("StallResolved")] // CSTD-33: pairs with action.overdue via stallId
     public async Task ProcessMessageAsync_DocumentServiceEvent_IsRecorded(string eventType)
     {
         // H1: Documents now publishes to Kafka; previously its HTTP events were rejected (401) and lost.

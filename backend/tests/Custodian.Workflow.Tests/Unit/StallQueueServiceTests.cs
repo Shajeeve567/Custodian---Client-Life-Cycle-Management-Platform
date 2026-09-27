@@ -1,3 +1,7 @@
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.EntityFrameworkCore;
+using Custodian.Workflow.Services.Stall;
+using Custodian.Workflow.Data;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Services;
@@ -23,8 +27,18 @@ public class StallQueueServiceTests
                     DefaultOverdueHours = 72,
                     StageOverdueHours = new Dictionary<int, int> { [1] = 48 }
                 }));
-        _service = new StallQueueService(_mockProvider.Object, _stallDetection);
+        _service = NewService();
     }
+
+    // The real recorder on an in-memory database: stall records persist across calls in one test.
+    private readonly WorkflowDbContext _db = new(new DbContextOptionsBuilder<WorkflowDbContext>()
+        .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+    private readonly Mock<IAuditPublisher> _auditPublisher = new();
+
+    private StallQueueService NewService(INextActionService? engine = null) =>
+        new(_mockProvider.Object,
+            new StallRecorder(_db, _stallDetection, _auditPublisher.Object, TimeProvider.System, NullLogger<StallRecorder>.Instance),
+            engine);
 
     private static ClientAction OverdueClientAction(int hoursOverdue = 4, int stage = 1)
     {
@@ -63,7 +77,7 @@ public class StallQueueServiceTests
         _mockProvider.Setup(p => p.GetActiveEngagementsWithActionsAsync("tenant-001", It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<EngagementWithActions>());
 
-        var result = await _service.GetQueueAsync("tenant-001");
+        var result = (await _service.GetQueueAsync("tenant-001")).Items;
 
         Assert.Empty(result);
     }
@@ -76,7 +90,7 @@ public class StallQueueServiceTests
         _mockProvider.Setup(p => p.GetActiveEngagementsWithActionsAsync("tenant-001", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { Group(engagementId, action) });
 
-        var result = await _service.GetQueueAsync("tenant-001");
+        var result = (await _service.GetQueueAsync("tenant-001")).Items;
 
         var item = Assert.Single(result);
         Assert.Equal(engagementId, item.EngagementId);
@@ -95,7 +109,7 @@ public class StallQueueServiceTests
         _mockProvider.Setup(p => p.GetActiveEngagementsWithActionsAsync("tenant-001", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { Group(Guid.NewGuid(), action) });
 
-        var result = await _service.GetQueueAsync("tenant-001");
+        var result = (await _service.GetQueueAsync("tenant-001")).Items;
 
         Assert.Empty(result);
     }
@@ -109,7 +123,7 @@ public class StallQueueServiceTests
         _mockProvider.Setup(p => p.GetActiveEngagementsWithActionsAsync("tenant-001", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { Group(Guid.NewGuid(), action) });
 
-        var result = await _service.GetQueueAsync("tenant-001");
+        var result = (await _service.GetQueueAsync("tenant-001")).Items;
 
         Assert.Empty(result);
     }
@@ -131,7 +145,7 @@ public class StallQueueServiceTests
         _mockProvider.Setup(p => p.GetActiveEngagementsWithActionsAsync("tenant-001", It.IsAny<CancellationToken>()))
             .ReturnsAsync(groups);
 
-        var result = await _service.GetQueueAsync("tenant-001");
+        var result = (await _service.GetQueueAsync("tenant-001")).Items;
 
         Assert.Collection(result,
             first => Assert.Equal(50, first.HoursOverdue),
@@ -149,12 +163,12 @@ public class StallQueueServiceTests
         _mockProvider.Setup(p => p.GetActiveEngagementsWithActionsAsync("tenant-001", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { Group(engagementId, action) });
 
-        var beforeResolve = await _service.GetQueueAsync("tenant-001");
+        var beforeResolve = (await _service.GetQueueAsync("tenant-001")).Items;
         Assert.Single(beforeResolve);
 
         action.Status = ClientActionStatus.Completed;
 
-        var afterResolve = await _service.GetQueueAsync("tenant-001");
+        var afterResolve = (await _service.GetQueueAsync("tenant-001")).Items;
         Assert.Empty(afterResolve);
     }
 
@@ -165,7 +179,7 @@ public class StallQueueServiceTests
         _mockProvider.Setup(p => p.GetActiveEngagementsWithActionsAsync("tenant-001", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { Group(Guid.NewGuid(), action) });
 
-        var result = await _service.GetQueueAsync("tenant-001");
+        var result = (await _service.GetQueueAsync("tenant-001")).Items;
 
         var item = Assert.Single(result);
         Assert.Contains("Upload ID", item.NextAction);
@@ -196,9 +210,9 @@ public class StallQueueServiceTests
                     PriorityRank = 1
                 }
             });
-        var service = new StallQueueService(_mockProvider.Object, _stallDetection, engine.Object);
+        var service = NewService(engine.Object);
 
-        var item = Assert.Single(await service.GetQueueAsync("tenant-001"));
+        var item = Assert.Single((await service.GetQueueAsync("tenant-001")).Items);
 
         Assert.Equal("Upload ID", item.NextAction);
         Assert.Equal(ResponsibleParty.Client, item.NextActionResponsibleParty);
@@ -214,9 +228,9 @@ public class StallQueueServiceTests
         var engine = new Mock<INextActionService>();
         engine.Setup(e => e.GetNextActionAsync(engagementId, "tenant-001", NextActionView.Staff, It.IsAny<CancellationToken>()))
             .ReturnsAsync((NextActionResult?)null);
-        var service = new StallQueueService(_mockProvider.Object, _stallDetection, engine.Object);
+        var service = NewService(engine.Object);
 
-        var item = Assert.Single(await service.GetQueueAsync("tenant-001"));
+        var item = Assert.Single((await service.GetQueueAsync("tenant-001")).Items);
 
         Assert.Equal("Contact client regarding 'Upload ID'", item.NextAction);
         Assert.Null(item.NextActionResponsibleParty);
@@ -231,6 +245,94 @@ public class StallQueueServiceTests
         _mockProvider.Setup(p => p.GetActiveEngagementsWithActionsAsync("tenant-001", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { Group(Guid.NewGuid(), action) });
 
-        Assert.Empty(await _service.GetQueueAsync("tenant-001"));
+        Assert.Empty((await _service.GetQueueAsync("tenant-001")).Items);
+    }
+
+    // =========================================================================
+    // CSTD-34 (M2): urgency score, filters, paging
+    // =========================================================================
+
+    private static EngagementWithActions GroupFor(Guid engagementId, string staffId, string stage, ClientAction action) =>
+        new(engagementId, "tenant-001", Guid.NewGuid().ToString(), staffId, stage, new[] { action });
+
+    private void Queue(params EngagementWithActions[] groups) =>
+        _mockProvider.Setup(p => p.GetActiveEngagementsWithActionsAsync("tenant-001", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(groups);
+
+    [Fact]
+    public async Task StageGatingBlocker_OutranksAPlainTaskThatIsSomewhatMoreOverdue()
+    {
+        var plain = OverdueClientAction(hoursOverdue: 30);
+        var requirement = OverdueClientAction(hoursOverdue: 20);
+        requirement.Type = ClientActionType.Requirement; // gates the next stage: weight 2.0 -> score 40 vs 30
+        var plainEngagement = Guid.NewGuid();
+        var requirementEngagement = Guid.NewGuid();
+        Queue(Group(plainEngagement, plain), Group(requirementEngagement, requirement));
+
+        var items = (await _service.GetQueueAsync("tenant-001")).Items;
+
+        Assert.Equal(new[] { requirementEngagement, plainEngagement }, items.Select(i => i.EngagementId));
+        Assert.Equal(40, items[0].UrgencyScore);
+        Assert.Equal(30, items[1].UrgencyScore);
+    }
+
+    [Fact]
+    public async Task Filters_Mine_Stage_AndMinOverdueHours()
+    {
+        var mineInReview = Guid.NewGuid();
+        Queue(
+            GroupFor(mineInReview, "staff-me", "Review", OverdueClientAction(hoursOverdue: 10)),
+            GroupFor(Guid.NewGuid(), "staff-other", "Review", OverdueClientAction(hoursOverdue: 10)),
+            GroupFor(Guid.NewGuid(), "staff-me", "Onboarding", OverdueClientAction(hoursOverdue: 10)),
+            GroupFor(Guid.NewGuid(), "staff-me", "Review", OverdueClientAction(hoursOverdue: 2)));
+
+        var result = await _service.GetQueueAsync("tenant-001",
+            new StallQueueQuery(Mine: true, StaffId: "staff-me", Stage: "review", MinOverdueHours: 5));
+
+        Assert.Equal(mineInReview, Assert.Single(result.Items).EngagementId);
+        Assert.Equal(1, result.TotalCount);
+    }
+
+    [Fact]
+    public async Task Paging_ReturnsTheRequestedSlice_WithTheTotalBeforePaging_AndEvaluatesTheEngineOnlyForThatSlice()
+    {
+        var groups = Enumerable.Range(1, 5)
+            .Select(i => Group(Guid.NewGuid(), OverdueClientAction(hoursOverdue: i * 10)))
+            .ToArray();
+        Queue(groups);
+        var engine = new Mock<INextActionService>();
+        var service = NewService(engine.Object);
+
+        var page2 = await service.GetQueueAsync("tenant-001", new StallQueueQuery(Page: 2, PageSize: 2));
+
+        Assert.Equal(5, page2.TotalCount);
+        Assert.Equal(2, page2.Items.Count);
+        // Most overdue first: 50, 40 on page 1; 30, 20 on page 2.
+        Assert.Equal(new[] { 30, 20 }, page2.Items.Select(i => i.HoursOverdue));
+        engine.Verify(e => e.GetNextActionAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<NextActionView>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task PageSize_IsCappedAt100()
+    {
+        Queue(Group(Guid.NewGuid(), OverdueClientAction()));
+
+        var result = await _service.GetQueueAsync("tenant-001", new StallQueueQuery(PageSize: 5000));
+
+        Assert.Equal(StallQueueQuery.MaxPageSize, result.PageSize);
+    }
+
+    [Fact]
+    public async Task ReadingTheQueue_RecordsTheStallOnce_AndReportsWhenItStarted()
+    {
+        var engagementId = Guid.NewGuid();
+        Queue(Group(engagementId, OverdueClientAction(hoursOverdue: 5)));
+
+        var first = Assert.Single((await _service.GetQueueAsync("tenant-001")).Items);
+        var second = Assert.Single((await _service.GetQueueAsync("tenant-001")).Items);
+
+        Assert.Equal(first.StalledSinceUtc, second.StalledSinceUtc);
+        Assert.Equal(1, second.OpenStallCount);
+        _auditPublisher.Verify(a => a.PublishEventAsync(engagementId, "tenant-001", It.IsAny<string>(), "action.overdue", It.IsAny<object>()), Times.Once);
     }
 }

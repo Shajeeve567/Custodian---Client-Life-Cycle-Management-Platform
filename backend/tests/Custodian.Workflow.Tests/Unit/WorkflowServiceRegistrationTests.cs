@@ -63,7 +63,7 @@ public class WorkflowServiceRegistrationTests
     // CSTD-33/34 (merged from dev) and the CSTD-19 adapters over them
     [InlineData(typeof(IStallDetectionService))]
     [InlineData(typeof(IStallActionsProvider))]
-    [InlineData(typeof(IStallEventDeduplicator))]
+    [InlineData(typeof(Custodian.Workflow.Services.Stall.IStallRecorder))]
     [InlineData(typeof(IStallQueueService))]
     [InlineData(typeof(Custodian.Workflow.Services.Sla.ISlaCalculator))]
     [InlineData(typeof(Custodian.Workflow.Services.Stall.IStallService))]

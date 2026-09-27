@@ -4,6 +4,7 @@ using Custodian.Workflow.Controllers;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Stall;
 using Custodian.Workflow.Services.Gates;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -16,10 +17,8 @@ namespace Custodian.Workflow.Tests.Unit;
 public class ClientActionsControllerTests
 {
     private readonly Mock<IClientActionService> _mockService;
-    private readonly Mock<IStallDetectionService> _mockStall;
     private readonly Mock<IStallActionsProvider> _mockStallActions;
-    private readonly Mock<IStallEventDeduplicator> _mockStallDedup;
-    private readonly Mock<IAuditPublisher> _mockAuditPublisher;
+    private readonly Mock<IStallRecorder> _mockStallRecorder;
     private readonly Mock<IDocumentComplianceClient> _mockDocumentClient;
     private readonly Mock<ILogger<ClientActionsController>> _mockLogger;
     private readonly ClientActionsController _controller;
@@ -27,19 +26,15 @@ public class ClientActionsControllerTests
     public ClientActionsControllerTests()
     {
         _mockService = new Mock<IClientActionService>();
-        _mockStall = new Mock<IStallDetectionService>();
         _mockStallActions = new Mock<IStallActionsProvider>();
-        _mockStallDedup = new Mock<IStallEventDeduplicator>();
-        _mockAuditPublisher = new Mock<IAuditPublisher>();
+        _mockStallRecorder = new Mock<IStallRecorder>();
         _mockDocumentClient = new Mock<IDocumentComplianceClient>();
         _mockLogger = new Mock<ILogger<ClientActionsController>>();
 
         _controller = new ClientActionsController(
             _mockService.Object,
-            _mockStall.Object,
             _mockStallActions.Object,
-            _mockStallDedup.Object,
-            _mockAuditPublisher.Object,
+            _mockStallRecorder.Object,
             _mockDocumentClient.Object,
             _mockLogger.Object);
     }
