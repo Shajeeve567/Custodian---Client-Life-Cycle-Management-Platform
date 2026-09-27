@@ -1448,7 +1448,10 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                     const isActionVerified = (act as any).verificationStatus === 'Verified' || linkedDoc?.verificationStatus?.toUpperCase() === 'VERIFIED';
                                     const isActionRejected = (act as any).verificationStatus === 'Rejected' || linkedDoc?.verificationStatus?.toUpperCase() === 'REJECTED';
                                     const isActionCancelled = act.status === 'Cancelled';
+                                    // Only client-owned, unfinished evidence tasks wait on the portal; staff tasks are done in the workspace.
+                                    const isStaffTask = (act.assignedToRole ?? act.assignedRole) === 'Staff';
                                     const isDocAction = act.type === 'DocumentUpload' || act.type === 'KycDocument' || act.type === 'SignAgreement' || act.title.toLowerCase().includes('document') || act.title.toLowerCase().includes('kyc') || act.title.toLowerCase().includes('agreement');
+                                    const isAwaitingClientUpload = isDocAction && !isStaffTask && !isActionCancelled && !act.isCompleted && act.status !== 'Completed';
 
                                     return (
                                         <div
@@ -1674,7 +1677,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                         </div>
                                                     )}
                                                 </div>
-                                            ) : isDocAction && !isActionCancelled ? (
+                                            ) : isAwaitingClientUpload ? (
                                                 <div className="p-2 rounded-lg bg-amber-50/60 border border-amber-200/60 text-[11px] text-amber-800 flex items-center gap-1.5">
                                                     <Clock className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
                                                     <span>Awaiting client PDF upload in Client Portal</span>
