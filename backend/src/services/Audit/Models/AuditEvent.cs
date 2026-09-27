@@ -36,7 +36,7 @@ public class AuditEvent
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
 
     [Required]
-    [Column("payload", TypeName = "json")]
+    [Column("payload", TypeName = "longtext")]
     public string Payload { get; set; } = "{}";
 
     [DatabaseGenerated(DatabaseGeneratedOption.Identity)]

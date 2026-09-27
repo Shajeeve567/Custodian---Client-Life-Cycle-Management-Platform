@@ -64,7 +64,11 @@ if (app.Environment.IsDevelopment())
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetService<AuditDbContext>();
-    dbContext?.Database.Migrate();
+    if (dbContext != null)
+    {
+        // Baselines databases created by the old EnsureCreated() call, then applies migrations.
+        AuditDatabaseInitializer.Migrate(dbContext, app.Logger);
+    }
 }
 
 app.UseCors();

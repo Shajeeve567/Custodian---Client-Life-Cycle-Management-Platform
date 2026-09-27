@@ -62,6 +62,11 @@ public class AuditEventsController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
+        catch (Custodian.Audit.Repositories.AuditChainConflictException ex)
+        {
+            // The event id or the engagement's chain belongs to another tenant.
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     /// <summary>
