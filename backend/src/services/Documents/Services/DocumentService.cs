@@ -113,6 +113,34 @@ public class DocumentService : IDocumentService
         _dbContext.Documents.Add(metadata);
         await _dbContext.SaveChangesAsync();
 
+        if (_auditPublisher != null)
+        {
+            try
+            {
+                await _auditPublisher.PublishEventAsync(
+                    engagementId,
+                    tenantId,
+                    string.IsNullOrWhiteSpace(metadata.UploaderId) ? "Unknown" : metadata.UploaderId,
+                    EventTypes.DocumentUploaded,
+                    new
+                    {
+                        documentId = metadata.DocumentId,
+                        engagementId = metadata.EngagementId,
+                        tenantId = metadata.TenantId,
+                        documentType = metadata.Type,
+                        fileName = metadata.FileName,
+                        fileSize = metadata.FileSize,
+                        complianceStatus = metadata.ComplianceStatus,
+                        rejectionReason = metadata.RejectionReason,
+                        uploadedAtUtc = metadata.UploadedAt
+                    });
+            }
+            catch
+            {
+                // Non-blocking: audit event side effects must not fail the upload
+            }
+        }
+
         return MapToResponseDto(metadata);
     }
 

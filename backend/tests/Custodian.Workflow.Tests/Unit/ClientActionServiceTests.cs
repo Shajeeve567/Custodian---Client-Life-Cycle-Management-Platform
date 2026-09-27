@@ -2196,6 +2196,65 @@ public class ClientActionServiceTests
         Assert.Null(await service.UpdateActionAsync(engagementId, task.ActionId, "tenant-other", new UpdateClientActionDto { Title = "x" }, "staff-1"));
     }
 
+    // =========================================================================
+    // Audit detail: events say which task and exactly what changed
+    // =========================================================================
+
+    private static (Mock<IAuditPublisher> Mock, List<(string Type, object Payload)> Events) CapturingAudit()
+    {
+        var events = new List<(string, object)>();
+        var mock = new Mock<IAuditPublisher>();
+        mock.Setup(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, type, payload) => events.Add((type, payload)))
+            .Returns(Task.CompletedTask);
+        return (mock, events);
+    }
+
+    [Fact]
+    public async Task CreateActionAsync_PublishesClientActionCreated_WithTitleAndCreator()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var (audit, events) = CapturingAudit();
+
+        await new ClientActionService(db, audit.Object).CreateActionAsync(engagementId, "tenant-001", new CreateClientActionDto
+        {
+            Title = "Upload passport",
+            Type = "KycDocument",
+            Source = "StaffManual",
+            StageNumber = 1,
+            CreatedBy = "staff-1"
+        });
+
+        var created = Assert.Single(events, e => e.Type == "ClientActionCreated");
+        Assert.Equal("Upload passport", System.Text.Json.JsonSerializer.SerializeToElement(created.Payload).GetProperty("title").GetString());
+        audit.Verify(a => a.PublishEventAsync(engagementId, "tenant-001", "staff-1", "ClientActionCreated", It.IsAny<object>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_EventRecordsTheOldAndNewValues()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001");
+        task.Title = "Old title";
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        var (audit, events) = CapturingAudit();
+
+        await new ClientActionService(db, audit.Object).UpdateActionAsync(engagementId, task.ActionId, "tenant-001",
+            new UpdateClientActionDto { Title = "New title", Type = "KycDocument" }, "staff-1");
+
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(Assert.Single(events, e => e.Type == "ClientActionUpdated").Payload);
+        var changes = json.GetProperty("changes").EnumerateArray().ToDictionary(c => c.GetProperty("field").GetString()!);
+        Assert.Equal("Old title", changes["title"].GetProperty("from").GetString());
+        Assert.Equal("New title", changes["title"].GetProperty("to").GetString());
+        Assert.Equal("CustomTask", changes["type"].GetProperty("from").GetString());
+        Assert.Equal("KycDocument", changes["type"].GetProperty("to").GetString());
+    }
+
     [Fact]
     public async Task PreviewStandardChecklist_SavesNothing_AndMatchesWhatApplyAdds()
     {

@@ -25,8 +25,10 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
         // CSTD-16 (Requirements Collection)
         "RequirementRequested",
         "RequirementSubmitted",
+        "RequirementReviewed",
         // CSTD-21 (Client Action Model)
         "ClientActionStatusChanged",
+        "ClientActionCreated",
         // Staff-defined stage tasks
         "ClientActionUpdated",
         "StandardChecklistApplied",
@@ -41,6 +43,7 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
         "ConditionUpdated",
         "ConditionDeactivated",
         // CSTD-27/28 (Documents), published by the Documents service since it moved to Kafka
+        EventTypes.DocumentUploaded,
         EventTypes.DocumentVerified,
         EventTypes.DocumentVerificationRejected,
         EventTypes.DocumentMetadataUpdated,

@@ -63,6 +63,10 @@ public class CreateClientActionDto
     [MaxLength(30)]
     public string? SourceType { get; set; }
 
+    /// <summary>Who added the task (set by the controller from the JWT; recorded in the audit event).</summary>
+    [MaxLength(100)]
+    public string? CreatedBy { get; set; }
+
     public Guid? LinkedDocumentId { get; set; }
 
     public Guid? LinkedConditionId { get; set; }

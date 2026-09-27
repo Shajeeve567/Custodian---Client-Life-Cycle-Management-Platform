@@ -163,6 +163,22 @@ public class ClientActionService : IClientActionService
         _dbContext.ClientActions.Add(action);
         await _dbContext.SaveChangesAsync();
 
+        await _auditPublisher.PublishEventAsync(
+            engagementId,
+            tenantId,
+            string.IsNullOrWhiteSpace(dto.CreatedBy) ? "Staff" : dto.CreatedBy,
+            "ClientActionCreated",
+            new
+            {
+                actionId = action.ActionId,
+                title = action.Title,
+                type = action.Type,
+                stageNumber = action.StageNumber,
+                assignedToRole = action.AssignedToRole,
+                isInternalOnly = action.IsInternalOnly,
+                deadlineUtc = action.DeadlineUtc
+            });
+
         return MapToResponseDto(action, isClientView: false);
     }
 
@@ -756,6 +772,7 @@ public class ClientActionService : IClientActionService
             new
             {
                 actionId = action.ActionId,
+                title = action.Title,
                 fromStatus,
                 toStatus = newStatus,
                 sourceType = action.SourceType,
@@ -870,7 +887,8 @@ public class ClientActionService : IClientActionService
                 new
                 {
                     actionIds = toAdd.Select(a => a.ActionId).ToList(),
-                    stageNumbers = toAdd.Select(a => a.StageNumber).Distinct().OrderBy(n => n).ToList()
+                    stageNumbers = toAdd.Select(a => a.StageNumber).Distinct().OrderBy(n => n).ToList(),
+                    tasks = toAdd.Select(a => new { actionId = a.ActionId, title = a.Title, stageNumber = a.StageNumber }).ToList()
                 });
         }
 
@@ -940,6 +958,8 @@ public class ClientActionService : IClientActionService
 
         var changedFields = new List<string>();
         Requirement? createdRequirement = null;
+        // Before-values, so the audit event records exactly what changed (from -> to), not just field names.
+        var before = AuditSnapshot(action);
 
         if (dto.Title != null)
         {
@@ -1103,7 +1123,13 @@ public class ClientActionService : IClientActionService
             action.TenantId,
             actor,
             "ClientActionUpdated",
-            new { actionId = action.ActionId, changedFields });
+            new
+            {
+                actionId = action.ActionId,
+                title = action.Title,
+                changedFields,
+                changes = DescribeChanges(before, AuditSnapshot(action), changedFields)
+            });
 
         return MapToResponseDto(action, isClientView: false);
     }
@@ -1139,6 +1165,23 @@ public class ClientActionService : IClientActionService
 
         return MapToResponseDto(action, isClientView: false);
     }
+
+    private static Dictionary<string, string?> AuditSnapshot(ClientAction a) => new()
+    {
+        ["title"] = a.Title,
+        ["description"] = a.Description,
+        ["deadlineUtc"] = a.DeadlineUtc?.ToString("O"),
+        ["stageNumber"] = a.StageNumber.ToString(),
+        ["assignedToRole"] = a.AssignedToRole,
+        ["isInternalOnly"] = a.IsInternalOnly ? "true" : "false",
+        ["type"] = a.Type
+    };
+
+    private static List<object> DescribeChanges(Dictionary<string, string?> before, Dictionary<string, string?> after, IEnumerable<string> fields) =>
+        fields.Distinct()
+            .Where(before.ContainsKey)
+            .Select(f => (object)new { field = f, from = before[f], to = after[f] })
+            .ToList();
 
     /// <summary>Requirement type recorded for questions staff ask through Request Information.</summary>
     public const string RequestedInformationRequirementType = "ClientInformation";

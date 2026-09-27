@@ -72,6 +72,7 @@ public class AuditEventsController : ControllerBase
     /// <summary>
     /// Gets all audit events for a specific engagement within the caller's tenant.
     /// </summary>
+    [Authorize(Roles = "Owner,Staff")] // the audit trail spans every client in the workspace: staff only
     [HttpGet("engagement/{engagementId:guid}")]
     public async Task<ActionResult<IEnumerable<AuditEventResponse>>> GetEventsByEngagement(
         Guid engagementId,
@@ -99,6 +100,7 @@ public class AuditEventsController : ControllerBase
     /// change, timestamp tamper, previous-hash substitution — breaks verification
     /// at the first bad event.
     /// </summary>
+    [Authorize(Roles = "Owner,Staff")] // the audit trail spans every client in the workspace: staff only
     [HttpGet("verify")]
     public async Task<ActionResult<ChainVerificationResult>> VerifyChain(
         [FromQuery] Guid engagementId,
@@ -128,6 +130,7 @@ public class AuditEventsController : ControllerBase
     /// <summary>
     /// Gets a single audit event by ID within the caller's tenant.
     /// </summary>
+    [Authorize(Roles = "Owner,Staff")] // the audit trail spans every client in the workspace: staff only
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<AuditEventResponse>> GetEventById(
         Guid id,
@@ -156,6 +159,7 @@ public class AuditEventsController : ControllerBase
     /// <summary>
     /// Gets all audit events for the caller's tenant.
     /// </summary>
+    [Authorize(Roles = "Owner,Staff")] // the audit trail spans every client in the workspace: staff only
     [HttpGet]
     public async Task<ActionResult<IEnumerable<AuditEventResponse>>> GetEvents(
         [FromQuery] string? tenantId)

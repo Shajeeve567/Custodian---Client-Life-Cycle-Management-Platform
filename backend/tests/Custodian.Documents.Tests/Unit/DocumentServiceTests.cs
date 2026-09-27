@@ -79,6 +79,34 @@ public class DocumentServiceTests
     }
 
     [Fact]
+    public async Task UploadDocumentAsync_PublishesDocumentUploaded_WithFileNameAndComplianceResult()
+    {
+        using var dbContext = CreateInMemoryDbContext();
+        var storageMock = new Mock<IStorageService>();
+        storageMock.Setup(s => s.SaveFileAsync(It.IsAny<IFormFile>(), It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<Guid>()))
+            .ReturnsAsync("uploads/x.pdf");
+        var auditMock = new Mock<IAuditPublisher>();
+        object? payload = null;
+        auditMock.Setup(a => a.PublishEventAsync(It.IsAny<Guid>(), "tenant-alpha", "user-123", EventTypes.DocumentUploaded, It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, _, p) => payload = p)
+            .Returns(Task.CompletedTask);
+        var service = new DocumentService(dbContext, new DocumentValidator(), storageMock.Object, complianceEngine: null, auditPublisher: auditMock.Object);
+
+        await service.UploadDocumentAsync(Guid.NewGuid(), "tenant-alpha", new DocumentUploadDto
+        {
+            File = CreateValidPdfFormFile(),
+            Type = "Identity",
+            IssueDate = DateTime.UtcNow.AddDays(-10),
+            ExpiryDate = DateTime.UtcNow.AddYears(5),
+            UploaderId = "user-123"
+        });
+
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(payload);
+        Assert.Equal("passport.pdf", json.GetProperty("fileName").GetString());
+        Assert.False(string.IsNullOrEmpty(json.GetProperty("complianceStatus").GetString()));
+    }
+
+    [Fact]
     public async Task UploadDocumentAsync_InvalidFile_ThrowsArgumentException()
     {
         using var dbContext = CreateInMemoryDbContext();

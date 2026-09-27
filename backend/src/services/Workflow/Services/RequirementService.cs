@@ -194,6 +194,7 @@ public class RequirementService : IRequirementService
             new
             {
                 requirementId = requirement.RequirementId,
+                title = mirroredAction?.Title,
                 requirementType = requirement.Type,
                 submittedAt = requirement.SubmittedAt
                 // Deliberately excludes the submitted Value: this event flows through a shared
@@ -255,6 +256,21 @@ public class RequirementService : IRequirementService
 
         await _dbContext.SaveChangesAsync();
 
+        // The staff decision on the client's answer (the answer itself stays out of the shared topic).
+        await _auditPublisher.PublishEventAsync(
+            engagementId,
+            tenantId,
+            dto.ReviewerActor,
+            "RequirementReviewed",
+            new
+            {
+                requirementId = requirement.RequirementId,
+                title = mirroredAction?.Title,
+                decision = requirement.Status,
+                rejectionReason = requirement.RejectionReason,
+                reviewedAt = requirement.ReviewedAt
+            });
+
         return MapToResponseDto(requirement, isClientView: false);
     }
 
@@ -310,6 +326,7 @@ public class RequirementService : IRequirementService
             new
             {
                 actionId = action.ActionId,
+                title = action.Title,
                 fromStatus,
                 toStatus = newStatus,
                 sourceType = action.SourceType,

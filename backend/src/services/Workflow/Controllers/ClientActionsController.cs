@@ -140,6 +140,7 @@ public class ClientActionsController : ControllerBase
 
         try
         {
+            dto.CreatedBy = ResolveStaffActor() ?? dto.CreatedBy; // actor from the JWT, for the audit trail
             var result = await _actionService.CreateActionAsync(engagementId, effectiveTenantId, dto);
             return CreatedAtAction(
                 nameof(GetActionHistory),

@@ -525,6 +525,31 @@ public class RequirementServiceTests
     }
 
     [Fact]
+    public async Task ReviewRequirementAsync_PublishesRequirementReviewed_WithDecisionAndReason()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        db.Engagements.Add(new Engagement { EngagementId = engagementId, TenantId = "tenant-001", ClientId = "c1", StaffId = "s1", Status = EngagementStatus.Started });
+        await db.SaveChangesAsync();
+        object? reviewed = null;
+        var audit = new Mock<IAuditPublisher>();
+        audit.Setup(a => a.PublishEventAsync(engagementId, "tenant-001", "staff-9", "RequirementReviewed", It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, _, p) => reviewed = p)
+            .Returns(Task.CompletedTask);
+        var service = new RequirementService(db, audit.Object);
+        var requested = await service.RequestRequirementAsync(engagementId, "tenant-001", new RequestRequirementDto { Type = "SourceOfFunds", Title = "Source of funds?" });
+        await service.SubmitRequirementAsync(engagementId, requested.RequirementId, "tenant-001", new SubmitRequirementDto { Value = "Salary" });
+
+        await service.ReviewRequirementAsync(engagementId, requested.RequirementId, "tenant-001",
+            new ReviewRequirementDto { Status = RequirementReviewStatus.Rejected, ReviewerActor = "staff-9", RejectionReason = "Please give the employer's name." });
+
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(reviewed);
+        Assert.Equal("Source of funds?", json.GetProperty("title").GetString());
+        Assert.Equal(RequirementStatus.Rejected, json.GetProperty("decision").GetString());
+        Assert.Equal("Please give the employer's name.", json.GetProperty("rejectionReason").GetString());
+    }
+
+    [Fact]
     public async Task GetRequirementsByEngagementAsync_CrossTenant_ReturnsEmpty()
     {
         // Arrange
