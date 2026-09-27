@@ -92,6 +92,8 @@ Set these in each App Service under **Settings → Environment variables**. The 
 | `AuditIngestion__ApiKey` | Audit, Workflow, Documents | The same random value, at least 32 characters (e.g. `openssl rand -hex 32`). Without it, HTTP audit writes are refused (fail closed). |
 | `Services__AuditUrl`, `Services__DocumentsUrl` | Workflow | Staging URLs of the Audit and Documents apps. |
 | `Services__AuditUrl`, `Services__WorkflowUrl` | Documents | `WorkflowUrl` is required for the client ownership check; without it Client document requests get 503. |
+| `Cors__AllowedOrigins__0` (`__1`, … for more) | all four | The frontend origin(s), e.g. `https://<app>.vercel.app`. Outside Development no other origin is allowed; with none set, **the browser frontend is blocked** and startup logs a warning. |
+| `Audit__Transport` + `Kafka__*` | Workflow, Documents (publish); Audit, Identity (consume) | `Kafka` (the default in `appsettings.json`) is required for notifications and document → task sync. Startup logs which transport is active. See `event-hubs-kafka.md`. |
 
 `ASPNETCORE_ENVIRONMENT` must not be `Development` on a deployed App Service: that environment accepts the public development JWT key.
 

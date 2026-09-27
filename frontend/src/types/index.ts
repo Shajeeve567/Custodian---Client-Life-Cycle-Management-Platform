@@ -404,7 +404,26 @@ export interface StallQueueItem {
     nextActionResponsibleParty?: string | null;
     deadlineUtc: string;
     hoursOverdue: number;
+    // CSTD-33: when the stall was first recorded, and how many stall episodes are open on the engagement
+    stalledSinceUtc: string;
+    openStallCount: number;
+    // CSTD-34-2: hours overdue x weight (stage-gating blockers weigh more); the queue is sorted by it
+    urgencyScore: number;
     evaluatedAtUtc: string;
+}
+
+export interface StallQueueFilters {
+    mine?: boolean;
+    stage?: EngagementStage | '';
+    minOverdueHours?: number;
+    page?: number;
+    pageSize?: number;
+}
+
+export interface StallQueueResult {
+    items: StallQueueItem[];
+    // Total stalled engagements matching the filters, before paging (X-Total-Count header)
+    totalCount: number;
 }
 
 export type ConditionType = 'Approval' | 'Payment';

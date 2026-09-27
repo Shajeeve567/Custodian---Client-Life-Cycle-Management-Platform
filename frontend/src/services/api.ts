@@ -27,6 +27,8 @@ import {
     SubmitRequirementRequest,
     RequirementResponse,
     StallQueueItem,
+    StallQueueFilters,
+    StallQueueResult,
     EngagementCondition,
     ClientSafeCondition,
     AttachConditionRequest,
@@ -255,12 +257,21 @@ export const WorkflowApi = {
         });
     },
 
-    async getStallQueue(tenantId: string): Promise<StallQueueItem[]> {
-        const url = `${API_BASE.WORKFLOW}/api/stall-queue?tenantId=${encodeURIComponent(tenantId)}`;
-        return request<StallQueueItem[]>(url, {
+    async getStallQueue(tenantId: string, filters: StallQueueFilters = {}): Promise<StallQueueResult> {
+        const params = new URLSearchParams({ tenantId });
+        if (filters.mine) params.append('mine', 'true');
+        if (filters.stage) params.append('stage', filters.stage);
+        if (filters.minOverdueHours) params.append('minOverdueHours', String(filters.minOverdueHours));
+        if (filters.page) params.append('page', String(filters.page));
+        if (filters.pageSize) params.append('pageSize', String(filters.pageSize));
+
+        const response = await authorizedFetch(`${API_BASE.WORKFLOW}/api/stall-queue?${params.toString()}`, {
             method: 'GET',
             headers: { 'X-Tenant-ID': tenantId },
         });
+        const items = (await response.json()) as StallQueueItem[];
+        const total = Number(response.headers.get('X-Total-Count'));
+        return { items, totalCount: Number.isFinite(total) && total > 0 ? total : items.length };
     },
 
     async updateStatus(engagementId: string, status: EngagementStatus, tenantId: string): Promise<Engagement> {
