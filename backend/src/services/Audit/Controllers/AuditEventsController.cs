@@ -1,8 +1,12 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
+using Custodian.Shared.Messaging;
 using Custodian.Audit.DTOs;
 using Custodian.Audit.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace Custodian.Audit.Controllers;
 
@@ -13,20 +17,31 @@ namespace Custodian.Audit.Controllers;
 public class AuditEventsController : ControllerBase
 {
     private readonly IAuditEventService _eventService;
+    private readonly AuditIngestionOptions _ingestion;
 
-    public AuditEventsController(IAuditEventService eventService)
+    public AuditEventsController(IAuditEventService eventService, IOptions<AuditIngestionOptions>? ingestionOptions = null)
     {
         _eventService = eventService;
+        _ingestion = ingestionOptions?.Value ?? new AuditIngestionOptions();
     }
 
     /// <summary>
     /// Ingests a new append-only domain event.
     /// </summary>
     [HttpPost]
+    [AllowAnonymous] // authenticated by the service ingestion key below, not by a user token
     public async Task<ActionResult<AuditEventResponse>> CreateEvent(
         [FromBody] CreateAuditEventRequest request,
         [FromQuery] string? tenantId)
     {
+        // Only services may write to the tamper-evident log. A user token (any role) is not enough:
+        // otherwise anyone signed in could append forged events to an engagement's chain.
+        if (!HasValidIngestionKey())
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new { message = "Audit events can only be written by Custodian services." });
+        }
+
         var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId, request.TenantId);
         if (isForbidden)
         {
@@ -160,6 +175,24 @@ public class AuditEventsController : ControllerBase
     /// Strictly rejects cross-tenant requests where a caller specifies a different tenant ID than their JWT claim.
     /// Falls back to request header/query parameter only in unauthenticated test mock contexts.
     /// </summary>
+    private bool HasValidIngestionKey()
+    {
+        if (string.IsNullOrWhiteSpace(_ingestion.ApiKey))
+        {
+            return false; // fail closed when no key is configured
+        }
+
+        var supplied = Request?.Headers[AuditIngestion.HeaderName].ToString();
+        if (string.IsNullOrEmpty(supplied))
+        {
+            return false;
+        }
+
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(supplied),
+            Encoding.UTF8.GetBytes(_ingestion.ApiKey));
+    }
+
     private (Guid TenantId, bool IsForbidden) TryResolveTenantId(string? tenantIdQuery = null, params Guid?[] fallbackTenantIds)
     {
         var claim = User?.FindFirst("tenant_id") ?? User?.FindFirst("tenantId");

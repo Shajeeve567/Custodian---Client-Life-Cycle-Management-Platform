@@ -22,6 +22,12 @@ public interface IClientActionService
         bool isInternalOnly = false,
         string? sourceMetadata = null);
     Task CancelActionsForSourceAsync(Guid engagementId, string tenantId, string sourceType, Guid sourceId, string actor, string reason);
+    /// <summary>
+    /// Why a Client may not complete this action directly, or null when it may (or the action does not
+    /// exist, which CompleteActionAsync reports as 404). Clients complete only their own plain tasks:
+    /// staff/internal tasks, evidence tasks (need staff verification) and condition tasks are refused.
+    /// </summary>
+    Task<string?> GetClientCompletionBlockReasonAsync(Guid engagementId, Guid actionId, string tenantId);
     Task<ClientActionResponseDto?> CompleteActionAsync(Guid engagementId, Guid actionId, string tenantId, CompleteClientActionDto dto);
     Task<ClientActionResponseDto?> UploadEvidenceAsync(Guid engagementId, Guid actionId, string tenantId, UploadActionEvidenceDto dto);
     Task<ClientActionResponseDto?> ReviewActionAsync(Guid engagementId, Guid actionId, string tenantId, ReviewActionDto dto);

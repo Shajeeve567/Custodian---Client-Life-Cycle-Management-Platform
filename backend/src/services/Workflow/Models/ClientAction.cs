@@ -42,6 +42,21 @@ public static class ClientActionType
     public const string Approval = "Approval";
     public const string Payment = "Payment";
     public const string Meeting = "Meeting";
+
+    /// <summary>
+    /// Types whose completion requires the client to upload evidence that staff then verify.
+    /// Used by the next-action engine (rank 4) and to stop clients self-completing evidence tasks.
+    /// </summary>
+    public static readonly IReadOnlySet<string> EvidenceTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        DocumentUpload,
+        KycDocument,
+        SignAgreement,
+        ProofOfAddress
+    };
+
+    public static bool IsEvidence(ClientAction action) =>
+        action.LinkedDocumentId.HasValue || EvidenceTypes.Contains(action.Type ?? string.Empty);
 }
 
 public class ClientAction

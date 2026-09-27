@@ -29,6 +29,7 @@ public class EngagementConditionsController : ControllerBase
     /// Staff attaches an Approval or Payment condition to an engagement.
     /// </summary>
     [HttpPost]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<ConditionResponseDto>> AttachCondition(
         [FromRoute] Guid engagementId,
         [FromBody] AttachConditionDto dto,
@@ -195,6 +196,7 @@ public class EngagementConditionsController : ControllerBase
     /// Updates configurable fields while active and pending.
     /// </summary>
     [HttpPatch("{conditionId:guid}")]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<ConditionResponseDto>> UpdateCondition(
         [FromRoute] Guid engagementId,
         [FromRoute] Guid conditionId,
@@ -249,6 +251,7 @@ public class EngagementConditionsController : ControllerBase
     /// Deactivates an active condition and cancels linked client actions (idempotent).
     /// </summary>
     [HttpPut("{conditionId:guid}/deactivate")]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<ConditionResponseDto>> DeactivateCondition(
         [FromRoute] Guid engagementId,
         [FromRoute] Guid conditionId,
@@ -310,21 +313,12 @@ public class EngagementConditionsController : ControllerBase
     private bool IsClientCaller()
     {
         if (User.IsInRole("Client")) return true;
-        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Role", out var roleHeader))
-        {
-            return roleHeader.ToString().Equals("Client", StringComparison.OrdinalIgnoreCase);
-        }
         return false;
     }
 
     private bool IsStaffOrOwnerCaller()
     {
         if (User.IsInRole("Owner") || User.IsInRole("Staff")) return true;
-        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Role", out var roleHeader))
-        {
-            var role = roleHeader.ToString();
-            return role.Equals("Owner", StringComparison.OrdinalIgnoreCase) || role.Equals("Staff", StringComparison.OrdinalIgnoreCase);
-        }
         return false;
     }
 
@@ -354,10 +348,6 @@ public class EngagementConditionsController : ControllerBase
             return actor.Trim();
         }
 
-        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Id", out var userHeader))
-        {
-            return userHeader.ToString().Trim();
-        }
 
         return null;
     }

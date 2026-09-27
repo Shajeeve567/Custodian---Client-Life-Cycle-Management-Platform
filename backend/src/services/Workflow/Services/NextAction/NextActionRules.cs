@@ -16,15 +16,6 @@ public static class NextActionRules
     private const string DocumentUnavailableReason = "Document status temporarily unavailable";
     private const string ConditionUnavailableReason = "Condition status temporarily unavailable";
 
-    // Action types whose completion requires the client to upload evidence (rank 4 when pending).
-    private static readonly HashSet<string> EvidenceActionTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ClientActionType.DocumentUpload,
-        ClientActionType.KycDocument,
-        ClientActionType.SignAgreement,
-        ClientActionType.ProofOfAddress
-    };
-
     private enum LinkedDocumentState
     {
         None,
@@ -592,7 +583,7 @@ public static class NextActionRules
         var isClientParty = string.Equals(act.AssignedToRole, ResponsibleParty.Client, StringComparison.OrdinalIgnoreCase);
         if (isClientParty)
         {
-            var isEvidence = act.LinkedDocumentId.HasValue || EvidenceActionTypes.Contains(act.Type);
+            var isEvidence = ClientActionType.IsEvidence(act);
             if (isEvidence)
             {
                 // Rank 4: Pending document upload action (Rank 1 when overdue)

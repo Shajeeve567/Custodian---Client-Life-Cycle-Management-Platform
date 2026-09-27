@@ -1,5 +1,6 @@
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Gates;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -17,14 +18,18 @@ public class ClientActionsController : ControllerBase
     private readonly IStallActionsProvider _stallActionsProvider;
     private readonly IStallEventDeduplicator _stallDeduplicator;
     private readonly IAuditPublisher _auditPublisher;
+    private readonly IDocumentComplianceClient _documentClient;
+
     public ClientActionsController(
         IClientActionService actionService,
         IStallDetectionService stall,
         IStallActionsProvider stallActionsProvider,
         IStallEventDeduplicator stallDeduplicator,
         IAuditPublisher auditPublisher,
+        IDocumentComplianceClient documentClient,
         ILogger<ClientActionsController> logger)
     {
+        _documentClient = documentClient;
         _actionService = actionService;
         _stall = stall;
         _stallActionsProvider = stallActionsProvider;
@@ -347,7 +352,17 @@ public class ClientActionsController : ControllerBase
             {
                 return Forbid();
             }
+
+            // Clients complete only their own plain tasks; staff, evidence and condition tasks are refused.
+            var blockReason = await _actionService.GetClientCompletionBlockReasonAsync(engagementId, actionId, effectiveTenantId);
+            if (blockReason != null)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = blockReason });
+            }
         }
+
+        // Actor identity comes from the JWT, never from the request body.
+        dto.CompletedByActor = ResolveStaffActor() ?? dto.CompletedByActor;
 
         try
         {
@@ -405,6 +420,17 @@ public class ClientActionsController : ControllerBase
             }
         }
 
+        // Actor identity comes from the JWT, never from the request body.
+        dto.UploaderActor = ResolveStaffActor() ?? dto.UploaderActor;
+
+        // Compliance and verification outcomes are never taken from the caller: a client could otherwise
+        // send verificationStatus "Verified" and complete its own evidence. Read them from Documents.
+        var untrusted = await ApplyTrustedDocumentStatusAsync(engagementId, effectiveTenantId, dto);
+        if (untrusted != null)
+        {
+            return untrusted;
+        }
+
         try
         {
             var result = await _actionService.UploadEvidenceAsync(engagementId, actionId, effectiveTenantId, dto);
@@ -459,7 +485,8 @@ public class ClientActionsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        dto.ReviewerActor ??= ResolveStaffActor();
+        // Actor identity comes from the JWT, never from the request body.
+        dto.ReviewerActor = ResolveStaffActor() ?? dto.ReviewerActor;
 
         try
         {
@@ -515,7 +542,8 @@ public class ClientActionsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        dto.VerifiedBy ??= ResolveStaffActor();
+        // Actor identity comes from the JWT, never from the request body.
+        dto.VerifiedBy = ResolveStaffActor() ?? dto.VerifiedBy;
 
         try
         {
@@ -549,13 +577,6 @@ public class ClientActionsController : ControllerBase
             return isStaff ? null : Forbid();
         }
 
-        // 2. Check X-User-Role header fallback for direct testing / service-to-service calls
-        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Role", out var roleHeader))
-        {
-            var role = roleHeader.ToString();
-            var isStaff = role.Equals("Owner", StringComparison.OrdinalIgnoreCase) || role.Equals("Staff", StringComparison.OrdinalIgnoreCase);
-            return isStaff ? null : Forbid();
-        }
 
         return null;
     }
@@ -579,6 +600,54 @@ public class ClientActionsController : ControllerBase
         return string.IsNullOrWhiteSpace(fallbackSub) ? null : fallbackSub.Trim();
     }
 
+    /// <summary>
+    /// Replaces caller-supplied document outcome fields with the Documents service's own record.
+    /// Returns an error result when the document is unknown for this engagement (400) or Documents
+    /// cannot be reached (503, fail closed); null when the DTO now holds trusted values.
+    /// </summary>
+    private async Task<ActionResult?> ApplyTrustedDocumentStatusAsync(Guid engagementId, string tenantId, UploadActionEvidenceDto dto)
+    {
+        dto.ComplianceStatus = null;
+        dto.RejectionReason = null;
+        dto.VerificationStatus = null;
+        dto.VerificationReason = null;
+        dto.VerifiedBy = null;
+
+        if (!dto.DocumentId.HasValue)
+        {
+            return null; // No document yet: the action simply moves to Uploaded, awaiting staff review.
+        }
+
+        IReadOnlyList<DocumentSummaryDto> documents;
+        try
+        {
+            documents = await _documentClient.GetDocumentsAsync(engagementId, tenantId, HttpContext?.RequestAborted ?? default);
+        }
+        catch (DocumentComplianceUnavailableException ex)
+        {
+            _logger.LogWarning(ex, "Documents unavailable while recording evidence for engagement {EngagementId}", engagementId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { message = "Document status is temporarily unavailable. Please try again shortly." });
+        }
+
+        var document = documents.FirstOrDefault(d => d.DocumentId == dto.DocumentId.Value && !d.IsDeleted);
+        if (document == null)
+        {
+            return BadRequest(new { message = $"Document '{dto.DocumentId}' was not found for engagement '{engagementId}'." });
+        }
+
+        dto.ComplianceStatus = document.ComplianceStatus;
+        dto.RejectionReason = document.RejectionReason;
+        // Only a staff decision already recorded in Documents counts; a fresh upload stays awaiting review.
+        if (string.Equals(document.VerificationStatus, Custodian.Shared.Contracts.DocumentVerificationStatus.Verified, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(document.VerificationStatus, Custodian.Shared.Contracts.DocumentVerificationStatus.Rejected, StringComparison.OrdinalIgnoreCase))
+        {
+            dto.VerificationStatus = document.VerificationStatus;
+        }
+
+        return null;
+    }
+
     private string? ResolveStaffActor()
     {
         var actor = User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
@@ -591,10 +660,6 @@ public class ClientActionsController : ControllerBase
             return actor.Trim();
         }
 
-        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Id", out var userHeader))
-        {
-            return userHeader.ToString().Trim();
-        }
 
         return null;
     }

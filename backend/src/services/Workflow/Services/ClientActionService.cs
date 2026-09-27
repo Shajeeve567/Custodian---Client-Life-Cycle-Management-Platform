@@ -311,6 +311,41 @@ public class ClientActionService : IClientActionService
         }
     }
 
+    public async Task<string?> GetClientCompletionBlockReasonAsync(Guid engagementId, Guid actionId, string tenantId)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return null;
+        }
+
+        var action = await _dbContext.ClientActions
+            .AsNoTracking()
+            .FirstOrDefaultAsync(a => a.ActionId == actionId && a.EngagementId == engagementId && a.TenantId == tenantId);
+
+        if (action == null)
+        {
+            return null;
+        }
+
+        if (action.IsInternalOnly || !string.Equals(action.AssignedToRole, "Client", StringComparison.OrdinalIgnoreCase))
+        {
+            return "This task is handled by the Custodian team.";
+        }
+
+        if (ClientActionType.IsEvidence(action))
+        {
+            return "This task needs a document upload, which the Custodian team verifies. Please upload the document instead.";
+        }
+
+        if (action.LinkedConditionId.HasValue ||
+            string.Equals(action.SourceType, ClientActionSourceType.Condition, StringComparison.OrdinalIgnoreCase))
+        {
+            return "This approval or payment is confirmed by the Custodian team.";
+        }
+
+        return null;
+    }
+
     public async Task<ClientActionResponseDto?> CompleteActionAsync(Guid engagementId, Guid actionId, string tenantId, CompleteClientActionDto dto)
     {
         if (string.IsNullOrWhiteSpace(tenantId))

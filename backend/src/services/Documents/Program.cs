@@ -13,17 +13,35 @@ builder.Services.AddControllers();
 builder.Services.AddCustodianCors(builder.Configuration);
 builder.Services.AddTenantContext();
 builder.Services.AddJwtAuthentication(builder.Configuration);
-builder.Services.AddAuthorization();
+// Tenant APIs require a workspace token (tenant_id claim); see TenantAuthorizationExtensions.
+builder.Services.AddTenantScopedAuthorization();
 
 builder.Services.AddSingleton<IDocumentValidator, DocumentValidator>();
 
 builder.Services.AddScoped<IStorageService, LocalStorageService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 
+// Client ownership of an engagement lives in Workflow; Documents asks it (as the caller) before letting
+// a Client read or upload an engagement's documents. Fails closed when Workflow is unreachable.
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddHttpClient<Custodian.Documents.Services.EngagementAccess.IEngagementAccessClient,
+    Custodian.Documents.Services.EngagementAccess.WorkflowEngagementAccessClient>(client =>
+{
+    var workflowBaseUrl = builder.Configuration["Services:WorkflowUrl"] ?? "http://localhost:5225";
+    client.BaseAddress = new Uri(workflowBaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(5);
+});
+
 builder.Services.AddHttpClient<IAuditPublisher, AuditPublisher>(client =>
 {
     var auditBaseUrl = builder.Configuration["Services:AuditUrl"] ?? builder.Configuration["AuditService:BaseUrl"] ?? "http://localhost:5051";
     client.BaseAddress = new Uri(auditBaseUrl);
+    // Service-to-service key for POST /api/audit-events (see Custodian.Shared.Messaging.AuditIngestion).
+    var ingestionKey = builder.Configuration[Custodian.Shared.Messaging.AuditIngestion.ConfigKey];
+    if (!string.IsNullOrWhiteSpace(ingestionKey))
+    {
+        client.DefaultRequestHeaders.Add(Custodian.Shared.Messaging.AuditIngestion.HeaderName, ingestionKey);
+    }
 });
 
 
@@ -70,6 +88,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseTenantContext();
 app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Documents Service" }));
-app.MapControllers();
+// Every controller endpoint requires a workspace token (tenant_id), combined with its own roles.
+app.MapControllers().RequireTenantMembership();
 
 app.Run();

@@ -16,7 +16,10 @@ builder.Services.AddControllers();
 builder.Services.AddCustodianCors(builder.Configuration);
 builder.Services.AddTenantContext();
 builder.Services.AddJwtAuthentication(builder.Configuration);
-builder.Services.AddAuthorization();
+// Tenant APIs require a workspace token (tenant_id claim); see TenantAuthorizationExtensions.
+builder.Services.AddTenantScopedAuthorization();
+// HTTP audit ingestion is service-only: callers must present AuditIngestion:ApiKey.
+builder.Services.Configure<AuditIngestionOptions>(builder.Configuration.GetSection(AuditIngestionOptions.SectionName));
 
 // Add OpenAPI / Swagger
 builder.Services.AddOpenApi();
@@ -70,7 +73,8 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseTenantContext();
 app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Audit Service" }));
-app.MapControllers();
+// Every controller endpoint requires a workspace token (tenant_id), combined with its own roles.
+app.MapControllers().RequireTenantMembership();
 
 app.Run();
 

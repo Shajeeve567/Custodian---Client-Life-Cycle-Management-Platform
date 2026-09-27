@@ -17,6 +17,8 @@ builder.Services.AddControllers();
 builder.Services.AddCustodianCors(builder.Configuration);
 builder.Services.AddTenantContext();
 builder.Services.AddJwtAuthentication(builder.Configuration);
+// Tenant APIs require a workspace token (tenant_id claim); see TenantAuthorizationExtensions.
+builder.Services.AddTenantScopedAuthorization();
 builder.Services.AddHttpContextAccessor();
 
 // Configure EF Core with MySQL
@@ -77,6 +79,12 @@ else
     {
         var auditBaseUrl = builder.Configuration["Services:AuditUrl"] ?? builder.Configuration["AuditService:BaseUrl"] ?? "http://localhost:5051";
         client.BaseAddress = new Uri(auditBaseUrl);
+        // Service-to-service key for POST /api/audit-events (see Custodian.Shared.Messaging.AuditIngestion).
+        var ingestionKey = builder.Configuration[Custodian.Shared.Messaging.AuditIngestion.ConfigKey];
+        if (!string.IsNullOrWhiteSpace(ingestionKey))
+        {
+            client.DefaultRequestHeaders.Add(Custodian.Shared.Messaging.AuditIngestion.HeaderName, ingestionKey);
+        }
     });
 }
 
@@ -99,7 +107,11 @@ using (var scope = app.Services.CreateScope())
     // only creates a brand-new database from the current model and silently does
     // nothing to a database that already exists, so later migrations (e.g. adding
     // the Stage column) would never actually reach it.
-    dbContext?.Database.Migrate();
+    // Migrations only apply to the relational (MySQL) provider; test hosts may use an in-memory store.
+    if (dbContext?.Database.IsRelational() == true)
+    {
+        dbContext.Database.Migrate();
+    }
 }
 
 app.UseCors();
@@ -108,7 +120,8 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseTenantContext();
 app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Workflow Service" }));
-app.MapControllers();
+// Every controller endpoint requires a workspace token (tenant_id), combined with its own roles.
+app.MapControllers().RequireTenantMembership();
 
 app.Run();
 

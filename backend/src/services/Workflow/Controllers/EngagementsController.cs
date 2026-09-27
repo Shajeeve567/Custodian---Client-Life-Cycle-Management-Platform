@@ -35,6 +35,7 @@ public class EngagementsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<EngagementResponse>> CreateEngagement([FromBody] CreateEngagementRequest request)
     {
         if (!ModelState.IsValid)
@@ -91,7 +92,8 @@ public class EngagementsController : ControllerBase
 
         var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
 
-        if (engagement == null)
+        // A Client may only read its own engagement; answer 404 so other engagements' existence isn't revealed.
+        if (engagement == null || (IsClientCaller() && !IsOwnedByCaller(engagement)))
         {
             return NotFound();
         }
@@ -159,10 +161,17 @@ public class EngagementsController : ControllerBase
 
         var engagements = await _repository.GetAllByTenantAsync(effectiveTenantId);
 
+        // Owner/Staff see the whole tenant; a Client sees only its own engagements.
+        if (IsClientCaller())
+        {
+            engagements = engagements.Where(IsOwnedByCaller).ToList();
+        }
+
         return Ok(engagements.Select(MapToResponse));
     }
 
     [HttpPut("{id}/status")]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<EngagementResponse>> UpdateStatus(Guid id, [FromBody] UpdateEngagementStatusRequest request)
     {
         if (!ModelState.IsValid)
@@ -213,6 +222,7 @@ public class EngagementsController : ControllerBase
     }
 
     [HttpPut("{id}/stage")]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<EngagementResponse>> UpdateStage(Guid id, [FromBody] UpdateEngagementStageRequest request)
     {
         if (!ModelState.IsValid)
@@ -303,6 +313,7 @@ public class EngagementsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<IActionResult> DeleteEngagement(Guid id, [FromQuery] string? tenantId)
     {
         var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
@@ -342,6 +353,20 @@ public class EngagementsController : ControllerBase
     /// Strictly rejects cross-tenant requests where a caller specifies a different tenant ID than their JWT claim.
     /// Falls back to request parameter only in unauthenticated test contexts.
     /// </summary>
+    private bool IsClientCaller() => User?.IsInRole("Client") == true;
+
+    // Client identity comes only from the JWT (client_id, else sub) — never from the request.
+    private bool IsOwnedByCaller(Engagement engagement)
+    {
+        var callerClientId = User?.FindFirst("client_id")?.Value
+            ?? User?.FindFirst("clientId")?.Value
+            ?? User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? User?.FindFirst("sub")?.Value;
+
+        return !string.IsNullOrWhiteSpace(callerClientId) &&
+               string.Equals(engagement.ClientId, callerClientId.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
     private (string? TenantId, bool IsForbidden) TryResolveTenantId(string? requestTenantId)
     {
         var jwtTenantId = User?.FindFirst("tenant_id")?.Value ?? User?.FindFirst("tenantId")?.Value;
