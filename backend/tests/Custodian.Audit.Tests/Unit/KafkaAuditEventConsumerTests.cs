@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Moq;
 using Xunit;
 
 namespace Custodian.Audit.Tests.Unit;
@@ -273,5 +274,55 @@ public class KafkaAuditEventConsumerTests
 
         // Act & Assert: malformed messages are logged and discarded, not thrown
         await consumer.ProcessMessageAsync("not valid json at all");
+    }
+
+    // M7: a failure that may be transient must leave the offset uncommitted so the event is retried.
+    private static KafkaAuditEventConsumer ConsumerWithService(IAuditEventService service)
+    {
+        var services = new ServiceCollection();
+        services.AddScoped(_ => service);
+        var provider = services.BuildServiceProvider();
+        return new KafkaAuditEventConsumer(
+            Options.Create(new KafkaOptions()),
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<KafkaAuditEventConsumer>.Instance);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenRecordingFails_ReturnsFalseSoTheOffsetIsNotCommitted()
+    {
+        var service = new Mock<IAuditEventService>();
+        service.Setup(s => s.RecordEventAsync(It.IsAny<Custodian.Audit.DTOs.CreateAuditEventRequest>(), It.IsAny<Guid>()))
+            .ThrowsAsync(new TimeoutException("database unavailable"));
+
+        var handled = await ConsumerWithService(service.Object)
+            .HandleAsync(BuildEnvelopeJson("StageChange", Guid.NewGuid(), "System", new { toStage = "DocumentCollection" }));
+
+        Assert.False(handled);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InvalidOrConflictingEvent_IsSkippedAndCommitted()
+    {
+        // Retrying can't fix these, so they must not block the partition.
+        var service = new Mock<IAuditEventService>();
+        service.SetupSequence(s => s.RecordEventAsync(It.IsAny<Custodian.Audit.DTOs.CreateAuditEventRequest>(), It.IsAny<Guid>()))
+            .ThrowsAsync(new ArgumentException("Actor is required."))
+            .ThrowsAsync(new AuditChainConflictException("Engagement belongs to another tenant."));
+        var consumer = ConsumerWithService(service.Object);
+        var message = BuildEnvelopeJson("StageChange", Guid.NewGuid(), "System", new { toStage = "DocumentCollection" });
+
+        Assert.True(await consumer.HandleAsync(message));
+        Assert.True(await consumer.HandleAsync(message));
+        Assert.True(await consumer.HandleAsync("not json"));
+    }
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(3, 4)]
+    [InlineData(20, 60)]
+    public void RetryDelay_GrowsAndIsCapped(int failures, int expectedSeconds)
+    {
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), KafkaAuditEventConsumer.RetryDelay(failures));
     }
 }
