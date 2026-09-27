@@ -1,9 +1,12 @@
 using Custodian.Documents.Data;
+using Confluent.Kafka;
 using Custodian.Documents.Services;
+using Custodian.Documents.Services.Kafka;
 using Custodian.Shared.Auth;
 using Custodian.Shared.Http;
 using Custodian.Shared.Tenancy;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -32,17 +35,55 @@ builder.Services.AddHttpClient<Custodian.Documents.Services.EngagementAccess.IEn
     client.Timeout = TimeSpan.FromSeconds(5);
 });
 
-builder.Services.AddHttpClient<IAuditPublisher, AuditPublisher>(client =>
+// Audit transport: "Kafka" publishes document events to the shared custodian.events topic, where Audit
+// records them, Workflow applies verification outcomes to the linked task (DocumentEventsConsumer) and
+// Identity notifies the client. "Http" posts to the Audit API only (no Workflow sync, no notifications).
+var auditTransport = builder.Configuration["Audit:Transport"] ?? "Http";
+if (string.Equals(auditTransport, "Kafka", StringComparison.OrdinalIgnoreCase))
 {
-    var auditBaseUrl = builder.Configuration["Services:AuditUrl"] ?? builder.Configuration["AuditService:BaseUrl"] ?? "http://localhost:5051";
-    client.BaseAddress = new Uri(auditBaseUrl);
-    // Service-to-service key for POST /api/audit-events (see Custodian.Shared.Messaging.AuditIngestion).
-    var ingestionKey = builder.Configuration[Custodian.Shared.Messaging.AuditIngestion.ConfigKey];
-    if (Custodian.Shared.Messaging.AuditIngestion.IsUsableKey(ingestionKey))
+    builder.Services.Configure<KafkaProducerOptions>(builder.Configuration.GetSection(KafkaProducerOptions.SectionName));
+    builder.Services.AddSingleton<IProducer<string, string>>(sp =>
     {
-        client.DefaultRequestHeaders.Add(Custodian.Shared.Messaging.AuditIngestion.HeaderName, ingestionKey);
-    }
-});
+        var opts = sp.GetRequiredService<IOptions<KafkaProducerOptions>>().Value;
+        var config = new ProducerConfig
+        {
+            BootstrapServers = opts.BootstrapServers,
+            ClientId = opts.ClientId,
+            Acks = Acks.All,
+            EnableIdempotence = true,
+            MessageTimeoutMs = 10000
+        };
+
+        if (!string.IsNullOrWhiteSpace(opts.SecurityProtocol) &&
+            Enum.TryParse<SecurityProtocol>(opts.SecurityProtocol, true, out var secProtocol))
+        {
+            config.SecurityProtocol = secProtocol;
+            if (Enum.TryParse<SaslMechanism>(opts.SaslMechanism ?? "Plain", true, out var saslMech))
+            {
+                config.SaslMechanism = saslMech;
+            }
+            config.SaslUsername = !string.IsNullOrWhiteSpace(opts.SaslUsername) ? opts.SaslUsername : "$ConnectionString";
+            config.SaslPassword = opts.SaslPassword;
+        }
+
+        return new ProducerBuilder<string, string>(config).Build();
+    });
+    builder.Services.AddSingleton<IAuditPublisher, KafkaAuditPublisher>();
+}
+else
+{
+    builder.Services.AddHttpClient<IAuditPublisher, AuditPublisher>(client =>
+    {
+        var auditBaseUrl = builder.Configuration["Services:AuditUrl"] ?? builder.Configuration["AuditService:BaseUrl"] ?? "http://localhost:5051";
+        client.BaseAddress = new Uri(auditBaseUrl);
+        // Service-to-service key for POST /api/audit-events (see Custodian.Shared.Messaging.AuditIngestion).
+        var ingestionKey = builder.Configuration[Custodian.Shared.Messaging.AuditIngestion.ConfigKey];
+        if (Custodian.Shared.Messaging.AuditIngestion.IsUsableKey(ingestionKey))
+        {
+            client.DefaultRequestHeaders.Add(Custodian.Shared.Messaging.AuditIngestion.HeaderName, ingestionKey);
+        }
+    });
+}
 
 
 // Compliance Rule Store, Engine & Rules

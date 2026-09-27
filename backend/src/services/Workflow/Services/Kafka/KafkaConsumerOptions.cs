@@ -9,7 +9,10 @@ public sealed class KafkaConsumerOptions
 {
     public const string SectionName = "Kafka";
 
-    /// <summary>Off by default: Documents does not publish to Kafka yet (see DocumentEventsConsumer).</summary>
+    /// <summary>
+    /// Off unless configured (appsettings.json turns it on). Needs Documents to publish with
+    /// Audit:Transport=Kafka; tests and hosts without a broker leave it off.
+    /// </summary>
     public bool ConsumerEnabled { get; set; } = false;
     public string BootstrapServers { get; set; } = "localhost:9092";
     public string Topic { get; set; } = "custodian.events";

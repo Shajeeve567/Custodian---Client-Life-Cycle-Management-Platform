@@ -100,6 +100,13 @@ public class RequirementService : IRequirementService
         _dbContext.ClientActions.Add(mirroredAction);
         await _dbContext.SaveChangesAsync();
 
+        // clientId and title let Identity address and word the client notification.
+        var clientId = await _dbContext.Engagements
+            .AsNoTracking()
+            .Where(e => e.EngagementId == engagementId && e.TenantId == tenantId)
+            .Select(e => e.ClientId)
+            .FirstOrDefaultAsync();
+
         await _auditPublisher.PublishEventAsync(
             engagementId,
             tenantId,
@@ -108,6 +115,9 @@ public class RequirementService : IRequirementService
             new
             {
                 requirementId = requirement.RequirementId,
+                clientId,
+                title = mirroredAction.Title,
+                assignedToRole = requirement.AssignedToRole,
                 requirementType = requirement.Type,
                 stageNumber = requirement.StageNumber,
                 requestedBy = requirement.RequestedBy,

@@ -211,6 +211,7 @@ public class EngagementsController : ControllerBase
             });
         }
 
+        var previousStatus = engagement.Status;
         engagement.Status = newStatus;
         if (newStatus == EngagementStatus.Closed || newStatus == EngagementStatus.Cancelled)
         {
@@ -218,6 +219,24 @@ public class EngagementsController : ControllerBase
         }
 
         var updated = await _repository.UpdateAsync(engagement);
+
+        // Audit expects StatusChange events; Identity welcomes the client when an engagement starts.
+        if (previousStatus != newStatus)
+        {
+            await _auditPublisher.PublishEventAsync(
+                updated.EngagementId,
+                effectiveTenantId,
+                ResolveActor(),
+                "StatusChange",
+                new
+                {
+                    clientId = updated.ClientId,
+                    fromStatus = previousStatus.ToString(),
+                    toStatus = newStatus.ToString(),
+                    changedAt = DateTime.UtcNow
+                });
+        }
+
         return Ok(MapToResponse(updated));
     }
 
@@ -304,6 +323,7 @@ public class EngagementsController : ControllerBase
             "StageChange",
             new
             {
+                clientId = updated.ClientId,
                 fromStage = previousStage.ToString(),
                 toStage = newStage.ToString(),
                 changedAt = DateTime.UtcNow
@@ -354,6 +374,11 @@ public class EngagementsController : ControllerBase
     /// Falls back to request parameter only in unauthenticated test contexts.
     /// </summary>
     private bool IsClientCaller() => User?.IsInRole("Client") == true;
+
+    private string ResolveActor() =>
+        User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+        ?? User?.FindFirst("sub")?.Value
+        ?? "System";
 
     // Client identity comes only from the JWT (client_id, else sub) — never from the request.
     private bool IsOwnedByCaller(Engagement engagement)

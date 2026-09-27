@@ -10,6 +10,12 @@ public interface IEngagementAccessClient
     /// <returns>True when the caller may access the engagement; false when Workflow denies it.</returns>
     /// <exception cref="EngagementAccessUnavailableException">Workflow could not be reached or answered unexpectedly.</exception>
     Task<bool> CanAccessEngagementAsync(Guid engagementId, string tenantId, CancellationToken ct = default);
+
+    /// <summary>
+    /// The engagement's client id (as the caller sees it), used to address client notifications on
+    /// document events. Best effort: returns null instead of throwing when Workflow is unavailable.
+    /// </summary>
+    Task<string?> GetEngagementClientIdAsync(Guid engagementId, string tenantId, CancellationToken ct = default);
 }
 
 public sealed class EngagementAccessUnavailableException : Exception

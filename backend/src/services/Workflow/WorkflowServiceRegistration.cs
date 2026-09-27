@@ -50,8 +50,8 @@ public static class WorkflowServiceRegistration
         }).AddDocumentComplianceResilience();
         services.AddScoped<IGateEvaluator, GateEvaluator>();
 
-        // CSTD-19 (19-N5): service-side document sync. Disabled unless Kafka:ConsumerEnabled=true
-        // (Documents does not publish to Kafka yet; the frontend dual call is the live path).
+        // CSTD-19 (19-N5): service-side document sync from the Documents service's Kafka events.
+        // Runs when Kafka:ConsumerEnabled=true (the appsettings.json default).
         services.Configure<KafkaConsumerOptions>(configuration.GetSection(KafkaConsumerOptions.SectionName));
         services.AddHostedService<DocumentEventsConsumer>();
 

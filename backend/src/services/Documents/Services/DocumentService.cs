@@ -4,6 +4,7 @@ using Custodian.Documents.Compliance.Store;
 using Custodian.Documents.Data;
 using Custodian.Documents.DTOs;
 using Custodian.Documents.Models;
+using Custodian.Documents.Services.EngagementAccess;
 using Custodian.Shared.Contracts;
 using Custodian.Shared.Messaging;
 using Microsoft.EntityFrameworkCore;
@@ -17,13 +18,15 @@ public class DocumentService : IDocumentService
     private readonly IStorageService _storageService;
     private readonly IComplianceRuleEngine _complianceEngine;
     private readonly IAuditPublisher? _auditPublisher;
+    private readonly IEngagementAccessClient? _engagementAccess;
 
     public DocumentService(
         DocumentDbContext dbContext,
         IDocumentValidator validator,
         IStorageService storageService,
         IComplianceRuleEngine? complianceEngine = null,
-        IAuditPublisher? auditPublisher = null)
+        IAuditPublisher? auditPublisher = null,
+        IEngagementAccessClient? engagementAccess = null)
     {
         _dbContext = dbContext;
         _validator = validator;
@@ -32,6 +35,28 @@ public class DocumentService : IDocumentService
             new IComplianceRule[] { new DocumentFreshnessRule(), new DocumentExpiryRule() },
             new ComplianceRuleStore());
         _auditPublisher = auditPublisher;
+        _engagementAccess = engagementAccess;
+    }
+
+    /// <summary>
+    /// The engagement's client id for verification events, so Identity can notify the client.
+    /// Best effort: an event without it is still audited and still syncs Workflow.
+    /// </summary>
+    private async Task<string?> ResolveClientIdAsync(Guid engagementId, string tenantId)
+    {
+        if (_engagementAccess == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _engagementAccess.GetEngagementClientIdAsync(engagementId, tenantId);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
 
@@ -226,7 +251,9 @@ public class DocumentService : IDocumentService
                     documentId = document.DocumentId,
                     engagementId = document.EngagementId,
                     tenantId = document.TenantId,
+                    clientId = await ResolveClientIdAsync(engagementId, tenantId),
                     documentType = document.Type,
+                    fileName = document.FileName,
                     complianceStatus = document.ComplianceStatus,
                     verificationStatus = document.VerificationStatus,
                     verifiedBy = document.VerifiedBy,
@@ -298,7 +325,9 @@ public class DocumentService : IDocumentService
                     documentId = document.DocumentId,
                     engagementId = document.EngagementId,
                     tenantId = document.TenantId,
+                    clientId = await ResolveClientIdAsync(engagementId, tenantId),
                     documentType = document.Type,
+                    fileName = document.FileName,
                     complianceStatus = document.ComplianceStatus,
                     verificationStatus = document.VerificationStatus,
                     verifiedBy = document.VerifiedBy,

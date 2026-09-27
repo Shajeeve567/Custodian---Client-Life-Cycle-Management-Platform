@@ -36,7 +36,12 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
         // CSTD-24 (Engagement Condition Management)
         "ConditionAttached",
         "ConditionUpdated",
-        "ConditionDeactivated"
+        "ConditionDeactivated",
+        // CSTD-27/28 (Documents), published by the Documents service since it moved to Kafka
+        EventTypes.DocumentVerified,
+        EventTypes.DocumentVerificationRejected,
+        EventTypes.DocumentMetadataUpdated,
+        EventTypes.DocumentSoftDeleted
     };
 
     private readonly KafkaOptions _kafkaOptions;
