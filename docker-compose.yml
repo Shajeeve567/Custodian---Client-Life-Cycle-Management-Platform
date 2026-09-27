@@ -104,6 +104,11 @@ services:
       # CSTD-19 (19-N5): document events consumer; off until Documents publishes to Kafka
       - Kafka__GroupId=custodian-workflow
       - Kafka__ConsumerEnabled=${WORKFLOW_KAFKA_CONSUMER_ENABLED:-false}
+      # Service URLs inside the compose network (defaults point at localhost, which fails in containers)
+      - Services__DocumentsUrl=http://document-service:8080
+      - Services__AuditUrl=http://audit-service:8080
+      # Service-to-service key for POST /api/audit-events (same value on audit, workflow, documents)
+      - AuditIngestion__ApiKey=${AUDIT_INGESTION_KEY}
     depends_on:
       mysql:
         condition: service_healthy
@@ -129,6 +134,9 @@ services:
       - AzureBlob__ContainerName=${AZURE_BLOB_CONTAINER_NAME}
       - Kafka__BootstrapServers=kafka:29092
       - Kafka__TopicPrefix=custodian
+      - Services__WorkflowUrl=http://workflow-service:8080
+      - Services__AuditUrl=http://audit-service:8080
+      - AuditIngestion__ApiKey=${AUDIT_INGESTION_KEY}
     depends_on:
       mysql:
         condition: service_healthy
@@ -153,6 +161,7 @@ services:
       - Kafka__BootstrapServers=kafka:29092
       - Kafka__TopicPrefix=custodian
       - Kafka__ConsumerGroup=custodian-audit
+      - AuditIngestion__ApiKey=${AUDIT_INGESTION_KEY}
     depends_on:
       mysql:
         condition: service_healthy

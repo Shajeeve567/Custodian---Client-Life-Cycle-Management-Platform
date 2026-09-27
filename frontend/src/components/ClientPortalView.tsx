@@ -54,6 +54,13 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
     const isRequirementAction = (action: ClientSafeAction): boolean =>
         Boolean(action.linkedRequirementId) || action.sourceType === 'Requirement';
 
+    // Approval/Payment condition tasks are confirmed by the Custodian team (CSTD-25/26), so the
+    // server refuses a client "complete" on them; show a status label instead of a button.
+    const isCustodianConfirmedAction = (action: ClientSafeAction): boolean => {
+        const type = (action.type || '').toLowerCase();
+        return action.sourceType === 'Condition' || type === 'approval' || type === 'payment';
+    };
+
     const isEvidenceAction = (action: ClientSafeAction): boolean => {
         if (action.sourceType === 'Document') return true;
         const type = (action.type || '').toLowerCase();
@@ -666,6 +673,10 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                     <UploadCloud className="w-4 h-4" />
                                     <span>{primaryNextAction.status === 'Rejected' ? 'Re-upload Evidence' : 'Upload Evidence'}</span>
                                 </button>
+                            ) : isCustodianConfirmedAction(primaryNextAction) ? (
+                                <span className="px-4 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold">
+                                    Confirmed by the Custodian team
+                                </span>
                             ) : (
                                 <button
                                     onClick={() => handleCompleteAction(primaryNextAction)}
@@ -795,6 +806,10 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                             <UploadCloud className="w-3.5 h-3.5" />
                                             <span>Upload</span>
                                         </button>
+                                    ) : isCustodianConfirmedAction(action) ? (
+                                        <span className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 text-xs font-semibold">
+                                            Confirmed by Custodian
+                                        </span>
                                     ) : (
                                         <button
                                             onClick={() => handleCompleteAction(action)}
