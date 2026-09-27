@@ -54,6 +54,15 @@ public class ClientSafeActionDto
     public DateTime? DeadlineUtc { get; set; }
     public bool IsOverdue { get; set; }
     public int? DaysRemaining { get; set; }
+
+    /// <summary>
+    /// False while the task's stage has not started (or the engagement is still a draft): the client can
+    /// see it but not act on it yet. The Workflow API enforces the same rule.
+    /// </summary>
+    public bool IsAvailable { get; set; } = true;
+
+    /// <summary>The stage in which an unavailable task opens.</summary>
+    public int? AvailableFromStage { get; set; }
     public string? RejectionReason { get; set; }
     public string? VerificationStatus { get; set; }
 

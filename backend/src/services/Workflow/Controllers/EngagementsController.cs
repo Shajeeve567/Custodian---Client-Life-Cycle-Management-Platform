@@ -224,6 +224,16 @@ public class EngagementsController : ControllerBase
 
         var updated = await _repository.UpdateAsync(engagement);
 
+        // Starting the engagement opens its current stage (normally stage 1): tasks added while it was a
+        // draft become actionable now, so their SLA clocks start at the start, not at creation.
+        if (_actionService != null && previousStatus == EngagementStatus.Draft && newStatus == EngagementStatus.Started)
+        {
+            for (var stageNumber = 1; stageNumber <= (int)updated.Stage + 1; stageNumber++)
+            {
+                await _actionService.ActivateStageActionsAsync(updated.EngagementId, effectiveTenantId, stageNumber);
+            }
+        }
+
         // CSTD-33: a closed or cancelled engagement is no longer stalled.
         if (_stallRecorder != null && (newStatus == EngagementStatus.Closed || newStatus == EngagementStatus.Cancelled))
         {
@@ -283,6 +293,15 @@ public class EngagementsController : ControllerBase
             return Conflict(new
             {
                 message = $"Engagement in status '{engagement.Status}' cannot advance stage."
+            });
+        }
+
+        // A draft has not started: its stages open only after it is started (PUT /status Started).
+        if (engagement.Status == EngagementStatus.Draft)
+        {
+            return Conflict(new
+            {
+                message = "Start the engagement before advancing its stage."
             });
         }
 

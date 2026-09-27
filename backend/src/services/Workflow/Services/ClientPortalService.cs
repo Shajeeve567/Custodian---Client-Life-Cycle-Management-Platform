@@ -214,6 +214,14 @@ public class ClientPortalService : IClientPortalService
             }
         }
 
+        // Whether the client can act on each task yet (its stage has started); future ones are a preview.
+        foreach (var dto in pendingSafeActions.Prepend(primaryActionDto).OfType<ClientSafeActionDto>())
+        {
+            var entity = allActions.FirstOrDefault(a => a.ActionId == dto.ActionId);
+            dto.IsAvailable = engagement.Status == EngagementStatus.Started && (entity == null || entity.ActivatedAt.HasValue);
+            dto.AvailableFromStage = dto.IsAvailable ? null : (entity?.StageNumber ?? currentStageNumber);
+        }
+
         // 3. Determine Condition Status & Description
         var (conditionStatus, conditionDescription) = EvaluateConditionStatus(
             engagement,
@@ -227,7 +235,11 @@ public class ClientPortalService : IClientPortalService
         var stages = StageDefinitions.Select(s =>
         {
             string status;
-            if (engagement.Status == EngagementStatus.Closed || s.StageNumber < currentStageNumber)
+            if (engagement.Status == EngagementStatus.Draft)
+            {
+                status = "Upcoming"; // nothing has started yet
+            }
+            else if (engagement.Status == EngagementStatus.Closed || s.StageNumber < currentStageNumber)
             {
                 status = "Completed";
             }
@@ -280,6 +292,8 @@ public class ClientPortalService : IClientPortalService
         return Math.Clamp((int)engagement.Stage + 1, 1, 5);
     }
 
+    public const string NotStartedStatus = "NotStarted";
+
     private static (string Status, string Description) EvaluateConditionStatus(
         Engagement engagement,
         int currentStageNumber,
@@ -292,6 +306,12 @@ public class ClientPortalService : IClientPortalService
             string.Equals(nextActionResult?.OverallState, OverallState.Closed, StringComparison.OrdinalIgnoreCase))
         {
             return ("Closed", "Engagement successfully completed and sealed into the immutable audit ledger.");
+        }
+
+        // A draft has no client work yet; without this it read as "all caught up" while tasks were listed.
+        if (engagement.Status == EngagementStatus.Draft)
+        {
+            return (NotStartedStatus, "Your onboarding hasn't started yet. Your Custodian team will start it shortly.");
         }
 
         if (primaryAction != null)

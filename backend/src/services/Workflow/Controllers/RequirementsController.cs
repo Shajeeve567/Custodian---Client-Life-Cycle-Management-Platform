@@ -180,7 +180,16 @@ public class RequirementsController : ControllerBase
 
         dto.SubmittedByActor = ResolveActor() ?? dto.SubmittedByActor; // actor from the JWT, not the body
 
-        var result = await _requirementService.SubmitRequirementAsync(engagementId, requirementId, effectiveTenantId, dto, callerClientId);
+        RequirementResponseDto? result;
+        try
+        {
+            result = await _requirementService.SubmitRequirementAsync(engagementId, requirementId, effectiveTenantId, dto, callerClientId);
+        }
+        catch (ClientActionNotAvailableException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+
         if (result == null)
         {
             return NotFound(new { message = $"Requirement '{requirementId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });

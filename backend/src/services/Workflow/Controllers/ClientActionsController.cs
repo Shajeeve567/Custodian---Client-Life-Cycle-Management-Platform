@@ -349,6 +349,13 @@ public class ClientActionsController : ControllerBase
             }
 
             // Clients complete only their own plain tasks; staff, evidence and condition tasks are refused.
+            // Not yet: the engagement or the task's stage has not started (the client may act later).
+            var notYetReason = await _actionService.GetClientAvailabilityBlockReasonAsync(engagementId, actionId, effectiveTenantId);
+            if (notYetReason != null)
+            {
+                return Conflict(new { message = notYetReason });
+            }
+
             var blockReason = await _actionService.GetClientCompletionBlockReasonAsync(engagementId, actionId, effectiveTenantId);
             if (blockReason != null)
             {
@@ -412,6 +419,13 @@ public class ClientActionsController : ControllerBase
                 !await _actionService.ClientOwnsEngagementAsync(engagementId, effectiveTenantId, callerClientId))
             {
                 return Forbid();
+            }
+
+            // A client uploads evidence only once the task's stage has started.
+            var notYetReason = await _actionService.GetClientAvailabilityBlockReasonAsync(engagementId, actionId, effectiveTenantId);
+            if (notYetReason != null)
+            {
+                return Conflict(new { message = notYetReason });
             }
         }
 

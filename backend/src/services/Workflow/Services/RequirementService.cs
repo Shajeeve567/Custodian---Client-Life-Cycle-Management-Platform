@@ -74,6 +74,12 @@ public class RequirementService : IRequirementService
 
         _dbContext.Requirements.Add(requirement);
 
+        // Decides whether the mirrored task is actionable now (Started engagement, stage reached) and
+        // gives Identity the clientId for the "information requested" notification.
+        var engagement = await _dbContext.Engagements
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId);
+
         // Mirror into a ClientAction so this shows up in the existing Next Action selection
         // (ClientPortalService.SelectStageBasedActions) without any change to that service —
         // it already knows how to surface a Pending, Client-assigned action.
@@ -94,6 +100,7 @@ public class RequirementService : IRequirementService
             AssignedToRole = dto.AssignedToRole,
             CreatedAt = now,
             UpdatedAt = now,
+            ActivatedAt = StageActivation.ActivatedAtFor(engagement, dto.StageNumber ?? 1, now),
             LinkedRequirementId = requirement.RequirementId
         };
 
@@ -101,11 +108,7 @@ public class RequirementService : IRequirementService
         await _dbContext.SaveChangesAsync();
 
         // clientId and title let Identity address and word the client notification.
-        var clientId = await _dbContext.Engagements
-            .AsNoTracking()
-            .Where(e => e.EngagementId == engagementId && e.TenantId == tenantId)
-            .Select(e => e.ClientId)
-            .FirstOrDefaultAsync();
+        var clientId = engagement?.ClientId;
 
         await _auditPublisher.PublishEventAsync(
             engagementId,
@@ -147,6 +150,27 @@ public class RequirementService : IRequirementService
             return null;
         }
 
+        var mirroredAction = await _dbContext.ClientActions
+            .FirstOrDefaultAsync(a => a.LinkedRequirementId == requirementId && a.EngagementId == engagementId && a.TenantId == tenantId);
+
+        // A client answers only once the requirement's stage has started (same rule as client tasks).
+        if (!string.IsNullOrWhiteSpace(callerClientId))
+        {
+            var engagementStatus = await _dbContext.Engagements
+                .AsNoTracking()
+                .Where(e => e.EngagementId == engagementId && e.TenantId == tenantId)
+                .Select(e => (EngagementStatus?)e.Status)
+                .FirstOrDefaultAsync();
+            var notYetReason = ClientActionService.ClientAvailabilityBlockReason(
+                engagementStatus,
+                mirroredAction?.ActivatedAt,
+                mirroredAction?.StageNumber ?? requirement.StageNumber ?? 1);
+            if (notYetReason != null)
+            {
+                throw new ClientActionNotAvailableException(notYetReason);
+            }
+        }
+
         var now = DateTime.UtcNow;
         requirement.Value = dto.Value;
         requirement.Status = RequirementStatus.Submitted;
@@ -154,8 +178,6 @@ public class RequirementService : IRequirementService
 
         // Clear the mirrored ClientAction so it drops out of Next Action — same convention as
         // completing any other client-facing action.
-        var mirroredAction = await _dbContext.ClientActions
-            .FirstOrDefaultAsync(a => a.LinkedRequirementId == requirementId && a.EngagementId == engagementId && a.TenantId == tenantId);
 
         if (mirroredAction != null)
         {

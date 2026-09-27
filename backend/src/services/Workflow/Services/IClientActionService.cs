@@ -28,6 +28,12 @@ public interface IClientActionService
     /// staff/internal tasks, evidence tasks (need staff verification) and condition tasks are refused.
     /// </summary>
     Task<string?> GetClientCompletionBlockReasonAsync(Guid engagementId, Guid actionId, string tenantId);
+
+    /// <summary>
+    /// Why a client cannot act on this task YET, or null when they can: the engagement has not been
+    /// started, or the task's stage has not been reached (no ActivatedAt). Staff are not subject to it.
+    /// </summary>
+    Task<string?> GetClientAvailabilityBlockReasonAsync(Guid engagementId, Guid actionId, string tenantId);
     Task<ClientActionResponseDto?> CompleteActionAsync(Guid engagementId, Guid actionId, string tenantId, CompleteClientActionDto dto);
     Task<ClientActionResponseDto?> UploadEvidenceAsync(Guid engagementId, Guid actionId, string tenantId, UploadActionEvidenceDto dto);
     Task<ClientActionResponseDto?> ReviewActionAsync(Guid engagementId, Guid actionId, string tenantId, ReviewActionDto dto);

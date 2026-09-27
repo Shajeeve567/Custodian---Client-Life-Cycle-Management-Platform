@@ -132,10 +132,9 @@ public class ClientActionService : IClientActionService
             }
         }
 
-        int currentStageNumber = (int)engagement.Stage + 1;
         int stageNumber = dto.StageNumber > 0 ? dto.StageNumber : 1;
         var now = DateTime.UtcNow;
-        DateTime? activatedAt = stageNumber <= currentStageNumber ? now : null;
+        DateTime? activatedAt = StageActivation.ActivatedAtFor(engagement, stageNumber, now);
 
         var action = new ClientAction
         {
@@ -197,10 +196,9 @@ public class ClientActionService : IClientActionService
             throw new ArgumentException("SourceId must be a non-empty Guid.", nameof(dto));
         }
 
-        int currentStageNumber = engagement != null ? (int)engagement.Stage + 1 : 1;
         int stageNumber = dto.StageNumber > 0 ? dto.StageNumber : 1;
         var now = DateTime.UtcNow;
-        DateTime? activatedAt = stageNumber <= currentStageNumber ? now : null;
+        DateTime? activatedAt = StageActivation.ActivatedAtFor(engagement, stageNumber, now);
 
         var action = new ClientAction
         {
@@ -344,6 +342,41 @@ public class ClientActionService : IClientActionService
         }
 
         return null;
+    }
+
+    public async Task<string?> GetClientAvailabilityBlockReasonAsync(Guid engagementId, Guid actionId, string tenantId)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            return null;
+        }
+
+        var action = await _dbContext.ClientActions
+            .AsNoTracking()
+            .FirstOrDefaultAsync(a => a.ActionId == actionId && a.EngagementId == engagementId && a.TenantId == tenantId);
+        if (action == null)
+        {
+            return null; // the endpoint reports not found
+        }
+
+        var engagementStatus = await _dbContext.Engagements
+            .AsNoTracking()
+            .Where(e => e.EngagementId == engagementId && e.TenantId == tenantId)
+            .Select(e => (EngagementStatus?)e.Status)
+            .FirstOrDefaultAsync();
+
+        return ClientAvailabilityBlockReason(engagementStatus, action.ActivatedAt, action.StageNumber);
+    }
+
+    /// <summary>Shared by client task and requirement endpoints so both word the rule the same way.</summary>
+    public static string? ClientAvailabilityBlockReason(EngagementStatus? engagementStatus, DateTime? activatedAt, int stageNumber)
+    {
+        if (engagementStatus != EngagementStatus.Started)
+        {
+            return "Your onboarding hasn't started yet. This task opens once your Custodian team starts it.";
+        }
+
+        return activatedAt.HasValue ? null : $"This task opens in Stage {stageNumber}.";
     }
 
     public async Task<ClientActionResponseDto?> CompleteActionAsync(Guid engagementId, Guid actionId, string tenantId, CompleteClientActionDto dto)
@@ -848,7 +881,7 @@ public class ClientActionService : IClientActionService
         var now = DateTime.UtcNow;
         foreach (var action in toAdd)
         {
-            action.ActivatedAt = action.StageNumber <= currentStageNumber ? now : null;
+            action.ActivatedAt = StageActivation.ActivatedAtFor(engagement, action.StageNumber, now);
         }
 
         if (toAdd.Count > 0)
@@ -946,10 +979,10 @@ public class ClientActionService : IClientActionService
         if (dto.StageNumber.HasValue && dto.StageNumber.Value != action.StageNumber)
         {
             EnsureStageNotInPast(engagement, dto.StageNumber.Value);
-            var currentStageNumber = (int)engagement.Stage + 1;
             action.StageNumber = dto.StageNumber.Value;
-            // A task moved into the current stage becomes actionable now; moved later, it waits for its stage.
-            action.ActivatedAt = action.StageNumber <= currentStageNumber ? (action.ActivatedAt ?? DateTime.UtcNow) : null;
+            // A task moved into the current stage of a started engagement becomes actionable now; moved later
+            // (or while the engagement is still Draft), it waits for its stage.
+            action.ActivatedAt = StageActivation.ActivatedAtFor(engagement, action.StageNumber, DateTime.UtcNow, action.ActivatedAt);
             changedFields.Add("stageNumber");
         }
 
