@@ -62,10 +62,14 @@ export function setUnauthorizedHandler(handler: OnUnauthorizedCallback | null) {
     unauthorizedHandler = handler;
 }
 
-export async function request<T = any>(
+/**
+ * fetch with the caller's bearer token and the shared error handling (ApiError, 401 handler).
+ * Returns the successful Response unread, so callers can take JSON, text or a Blob.
+ */
+async function authorizedFetch(
     url: string,
     options: RequestInit & { token?: string; skipAuthHeader?: boolean } = {}
-): Promise<T> {
+): Promise<Response> {
     const { token, skipAuthHeader = false, headers: customHeaders, ...rest } = options;
 
     const headers = new Headers(customHeaders || {});
@@ -116,6 +120,15 @@ export async function request<T = any>(
 
         throw new ApiError(response.status, errorMessage || `HTTP Error ${response.status}`, errorData);
     }
+
+    return response;
+}
+
+export async function request<T = any>(
+    url: string,
+    options: RequestInit & { token?: string; skipAuthHeader?: boolean } = {}
+): Promise<T> {
+    const response = await authorizedFetch(url, options);
 
     // Parse successful response
     const contentType = response.headers.get('content-type') || '';
@@ -633,6 +646,33 @@ export const DocumentsApi = {
             method: 'DELETE',
             headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
         });
+    },
+
+    /**
+     * Downloads a document with the caller's token and saves it under fileName. The download endpoint
+     * requires authentication, so a plain link (which sends no Authorization header) gets a 401.
+     */
+    async downloadDocument(
+        engagementId: string,
+        documentId: string,
+        fileName: string,
+        tenantId?: string,
+        includeDeleted: boolean = false
+    ): Promise<void> {
+        const response = await authorizedFetch(
+            DocumentsApi.getDownloadUrl(engagementId, documentId, tenantId, includeDeleted),
+            { headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined }
+        );
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = objectUrl;
+        link.download = fileName || `document-${documentId}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        // Give the browser a moment to start the download before releasing the blob.
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
     },
 
     getDownloadUrl(engagementId: string, documentId: string, tenantId?: string, includeDeleted: boolean = false): string {
