@@ -16,7 +16,7 @@ public class AuditEventsControllerTests
     private readonly Mock<IAuditEventService> _mockService;
     private readonly AuditEventsController _controller;
     private readonly Guid _testTenantId = Guid.NewGuid();
-    private const string IngestionKey = "test-ingestion-key-0123456789";
+    private const string IngestionKey = "test-ingestion-key-0123456789-abcdefghij";
 
     public AuditEventsControllerTests()
     {
@@ -278,10 +278,14 @@ public class AuditEventsControllerTests
         _mockService.Verify(s => s.RecordEventAsync(It.IsAny<CreateAuditEventRequest>(), It.IsAny<Guid>()), Times.Never);
     }
 
-    [Fact]
-    public async Task CreateEvent_WhenNoKeyConfigured_FailsClosed()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("<generate-a-random-secret>")] // .env.example placeholder copied as-is: public, so never accepted
+    [InlineData("short-key")]                   // below AuditIngestion.MinimumKeyLength
+    public async Task CreateEvent_WhenNoRealKeyConfigured_FailsClosed(string? configuredKey)
     {
-        var controller = ControllerWith(_mockService.Object, configuredKey: null, suppliedKey: "anything");
+        // Even a caller that sends exactly the configured value is refused.
+        var controller = ControllerWith(_mockService.Object, configuredKey, suppliedKey: configuredKey ?? "anything");
 
         var result = await controller.CreateEvent(ServiceEvent(_testTenantId), null);
 

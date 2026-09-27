@@ -81,6 +81,20 @@ AZURE_IDENTITY_PUBLISH_PROFILE
 
 Sensitive configuration values such as database connection strings and JWT signing keys should be configured through the Azure App Service environment rather than committed to the repository.
 
+### Required application settings
+
+Set these in each App Service under **Settings → Environment variables**. The repository is public, so anything committed is known to everyone.
+
+| Setting | Services | Notes |
+|---|---|---|
+| `Jwt__SigningKey` | Identity, Workflow, Documents, Audit | The same random secret on all four (e.g. `openssl rand -base64 64`). **Startup fails** if it is missing, shorter than 32 bytes, the `.env.example` placeholder, or (outside Development) the development key committed in `appsettings.json`. Changing it signs everyone out. |
+| `ConnectionStrings__AzureMySqlConnection` | all four | Per-service database. Never commit it; if one leaks, rotate the MySQL password. |
+| `AuditIngestion__ApiKey` | Audit, Workflow, Documents | The same random value, at least 32 characters (e.g. `openssl rand -hex 32`). Without it, HTTP audit writes are refused (fail closed). |
+| `Services__AuditUrl`, `Services__DocumentsUrl` | Workflow | Staging URLs of the Audit and Documents apps. |
+| `Services__AuditUrl`, `Services__WorkflowUrl` | Documents | `WorkflowUrl` is required for the client ownership check; without it Client document requests get 503. |
+
+`ASPNETCORE_ENVIRONMENT` must not be `Development` on a deployed App Service: that environment accepts the public development JWT key.
+
 ## Application Deployment
 
 The services are deployed as published .NET applications using `azure/webapps-deploy@v3`.

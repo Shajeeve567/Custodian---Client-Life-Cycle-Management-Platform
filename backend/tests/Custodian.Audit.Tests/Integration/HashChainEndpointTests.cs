@@ -22,7 +22,7 @@ public class HashChainEndpointTests : IClassFixture<WebApplicationFactory<Progra
     private static readonly bool DbReachable = ProbeMySql();
 
     // Audit writes are service-only: the test host is given an ingestion key and the client sends it.
-    private const string IngestionKey = "integration-test-ingestion-key";
+    private const string IngestionKey = "integration-test-ingestion-key-0123456789";
 
     public HashChainEndpointTests(WebApplicationFactory<Program> factory)
     {
