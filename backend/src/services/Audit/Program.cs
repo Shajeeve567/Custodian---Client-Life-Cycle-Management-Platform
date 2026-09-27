@@ -13,7 +13,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add Controllers & CORS
 builder.Services.AddControllers();
-builder.Services.AddCustodianCors(builder.Configuration);
+builder.Services.AddCustodianCors(builder.Configuration, builder.Environment);
 builder.Services.AddTenantContext();
 builder.Services.AddJwtAuthentication(builder.Configuration, builder.Environment);
 // Tenant APIs require a workspace token (tenant_id claim); see TenantAuthorizationExtensions.
@@ -71,6 +71,7 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
+app.LogCustodianCors();
 app.UseCors();
 // app.UseHttpsRedirection();
 app.UseAuthentication();

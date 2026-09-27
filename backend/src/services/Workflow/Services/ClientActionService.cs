@@ -691,7 +691,27 @@ public class ClientActionService : IClientActionService
             }
         }
 
+        // CSTD-33 AC6: completing, cancelling or submitting (client upload) the action ends its stall in
+        // the same save as the status change, so the stall queue drops it immediately.
+        var resolvedStalls = new List<StallRecord>();
+        var stallResolution = StallResolutionFor(newStatus);
+        if (stallResolution != null)
+        {
+            resolvedStalls = await _dbContext.StallRecords
+                .Where(r => r.ActionId == action.ActionId && r.TenantId == action.TenantId && r.ResolvedAtUtc == null)
+                .ToListAsync();
+            foreach (var stall in resolvedStalls)
+            {
+                stall.Resolve(stallResolution, now);
+            }
+        }
+
         await _dbContext.SaveChangesAsync();
+
+        foreach (var stall in resolvedStalls)
+        {
+            await Stall.StallRecorder.PublishResolvedAsync(_auditPublisher, stall);
+        }
 
         Guid? sourceId = action.LinkedRequirementId ?? action.LinkedDocumentId ?? action.LinkedConditionId ?? action.LinkedMeetingId;
 
@@ -712,6 +732,14 @@ public class ClientActionService : IClientActionService
 
         return true;
     }
+
+    private static string? StallResolutionFor(string newStatus) => newStatus switch
+    {
+        ClientActionStatus.Completed => StallResolution.ActionCompleted,
+        ClientActionStatus.Cancelled => StallResolution.ActionCancelled,
+        ClientActionStatus.Uploaded => StallResolution.ActionSubmitted,
+        _ => null
+    };
 
     private static (string? DocumentId, string? ComplianceStatus, string? VerificationStatus, string? VerificationReason) ParseSourceMetadata(string? sourceMetadata)
     {

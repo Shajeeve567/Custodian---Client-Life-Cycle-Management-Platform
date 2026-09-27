@@ -14,7 +14,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add controllers & CORS
 builder.Services.AddControllers();
-builder.Services.AddCustodianCors(builder.Configuration);
+builder.Services.AddCustodianCors(builder.Configuration, builder.Environment);
 builder.Services.AddTenantContext();
 builder.Services.AddJwtAuthentication(builder.Configuration, builder.Environment);
 // Tenant APIs require a workspace token (tenant_id claim); see TenantAuthorizationExtensions.
@@ -37,10 +37,11 @@ if (!string.IsNullOrWhiteSpace(connectionString))
 // Register Workflow domain services (repositories, actions, conditions, gate, next action, SLA/stall)
 builder.Services.AddWorkflowDomainServices(builder.Configuration);
 
-// Audit transport is feature-flagged: "Http" (default) keeps the existing
-// synchronous HTTP call to the Audit service; "Kafka" switches to publishing
-// onto the shared "custodian.events" topic instead. Toggle via Audit:Transport
-// config (or the Audit__Transport env var) once the Kafka path is verified.
+// Audit transport (Audit:Transport, env Audit__Transport). "Kafka" (appsettings.json) publishes onto the
+// shared "custodian.events" topic, which Audit, Identity (notifications) and Workflow's own consumer
+// read. "Http" posts to the Audit API only (needs AuditIngestion:ApiKey) and is the fallback when the
+// setting is absent. With Kafka selected and no broker reachable, each event fails after the producer
+// timeout and is logged as an error; the startup log line below says which transport is active.
 var auditTransport = builder.Configuration["Audit:Transport"] ?? "Http";
 if (string.Equals(auditTransport, "Kafka", StringComparison.OrdinalIgnoreCase))
 {
@@ -93,6 +94,8 @@ builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
+Custodian.Shared.Messaging.AuditTransport.LogSelection(app.Logger, builder.Configuration, auditTransport);
+
 if (app.Environment.IsDevelopment())
 {
     app.MapScalarApiReference();
@@ -114,6 +117,7 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
+app.LogCustodianCors();
 app.UseCors();
 // app.UseHttpsRedirection();
 app.UseAuthentication();

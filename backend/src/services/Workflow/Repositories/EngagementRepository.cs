@@ -53,7 +53,19 @@ public class EngagementRepository : IEngagementRepository
             return false;
         }
 
+        // Remove everything that belongs to the engagement in the same save (one transaction), so a
+        // deleted draft leaves no orphaned tasks, requirements, conditions or stall records behind.
+        // The tables have no foreign keys to cascade from, hence the explicit removal.
+        _dbContext.ClientActions.RemoveRange(
+            await _dbContext.ClientActions.Where(a => a.EngagementId == id && a.TenantId == tenantId).ToListAsync());
+        _dbContext.Requirements.RemoveRange(
+            await _dbContext.Requirements.Where(r => r.EngagementId == id && r.TenantId == tenantId).ToListAsync());
+        _dbContext.EngagementConditions.RemoveRange(
+            await _dbContext.EngagementConditions.Where(c => c.EngagementId == id && c.TenantId == tenantId).ToListAsync());
+        _dbContext.StallRecords.RemoveRange(
+            await _dbContext.StallRecords.Where(s => s.EngagementId == id && s.TenantId == tenantId).ToListAsync());
         _dbContext.Engagements.Remove(engagement);
+
         await _dbContext.SaveChangesAsync();
         return true;
     }

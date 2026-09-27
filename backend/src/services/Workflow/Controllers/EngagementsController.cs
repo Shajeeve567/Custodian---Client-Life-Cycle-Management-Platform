@@ -2,6 +2,7 @@ using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Stall;
 using Custodian.Workflow.Services.Gates;
 using Custodian.Workflow.Services.NextAction;
 using Microsoft.AspNetCore.Authorization;
@@ -19,19 +20,22 @@ public class EngagementsController : ControllerBase
     private readonly IGateEvaluator _gateEvaluator;
     private readonly IClientActionService? _actionService;
     private readonly INextActionService? _nextActionService;
+    private readonly IStallRecorder? _stallRecorder;
 
     public EngagementsController(
         IEngagementRepository repository,
         IAuditPublisher auditPublisher,
         IGateEvaluator gateEvaluator,
         IClientActionService? actionService = null,
-        INextActionService? nextActionService = null)
+        INextActionService? nextActionService = null,
+        IStallRecorder? stallRecorder = null)
     {
         _repository = repository;
         _auditPublisher = auditPublisher;
         _gateEvaluator = gateEvaluator;
         _actionService = actionService;
         _nextActionService = nextActionService;
+        _stallRecorder = stallRecorder;
     }
 
     [HttpPost]
@@ -219,6 +223,12 @@ public class EngagementsController : ControllerBase
         }
 
         var updated = await _repository.UpdateAsync(engagement);
+
+        // CSTD-33: a closed or cancelled engagement is no longer stalled.
+        if (_stallRecorder != null && (newStatus == EngagementStatus.Closed || newStatus == EngagementStatus.Cancelled))
+        {
+            await _stallRecorder.ResolveForEngagementAsync(updated.EngagementId, effectiveTenantId, StallResolution.EngagementClosed);
+        }
 
         // Audit expects StatusChange events; Identity welcomes the client when an engagement starts.
         if (previousStatus != newStatus)

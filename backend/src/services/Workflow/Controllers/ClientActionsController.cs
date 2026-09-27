@@ -1,5 +1,6 @@
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Stall;
 using Custodian.Workflow.Services.Gates;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,27 +15,21 @@ public class ClientActionsController : ControllerBase
 {
     private readonly IClientActionService _actionService;
     private readonly ILogger<ClientActionsController> _logger;
-    private readonly IStallDetectionService _stall;
     private readonly IStallActionsProvider _stallActionsProvider;
-    private readonly IStallEventDeduplicator _stallDeduplicator;
-    private readonly IAuditPublisher _auditPublisher;
+    private readonly IStallRecorder _stallRecorder;
     private readonly IDocumentComplianceClient _documentClient;
 
     public ClientActionsController(
         IClientActionService actionService,
-        IStallDetectionService stall,
         IStallActionsProvider stallActionsProvider,
-        IStallEventDeduplicator stallDeduplicator,
-        IAuditPublisher auditPublisher,
+        IStallRecorder stallRecorder,
         IDocumentComplianceClient documentClient,
         ILogger<ClientActionsController> logger)
     {
         _documentClient = documentClient;
         _actionService = actionService;
-        _stall = stall;
         _stallActionsProvider = stallActionsProvider;
-        _stallDeduplicator = stallDeduplicator;
-        _auditPublisher = auditPublisher;
+        _stallRecorder = stallRecorder;
         _logger = logger;
     }
 
@@ -729,33 +724,12 @@ public class ClientActionsController : ControllerBase
         if (result is null)
             return NotFound(new { message = $"Engagement '{engagementId}' was not found." });
 
-        var status = _stall.EvaluateForEngagement(
-            engagementId, result.Actions, DateTime.UtcNow);
-
-        // Fire the overdue event only the first time we observe this stall. Dedup key
-        // includes the deadline so extending the deadline allows a future fire.
-        if (status.IsStalled
-            && status.ActionId.HasValue
-            && status.DeadlineUtc.HasValue
-            && !_stallDeduplicator.HasFired(engagementId, status.ActionId.Value, status.DeadlineUtc.Value))
-        {
-            _stallDeduplicator.MarkFired(engagementId, status.ActionId.Value, status.DeadlineUtc.Value);
-
-            await _auditPublisher.PublishEventAsync(
-                engagementId,
-                effectiveTenantId,
-                "System",
-                "action.overdue",
-                new
-                {
-                    clientId = result.ClientId,
-                    actionId = status.ActionId,
-                    actionTitle = status.ActionTitle,
-                    stageNumber = status.StageNumber,
-                    deadlineUtc = status.DeadlineUtc,
-                    hoursOverdue = status.HoursOverdue
-                });
-        }
+        // Compute-on-read (CSTD-33): records a new stall episode and publishes action.overdue once for
+        // it (persisted, so restarts and other instances never re-send), and resolves stalls that ended.
+        var snapshots = await _stallRecorder.SyncAsync(
+            effectiveTenantId,
+            new[] { new StallSyncInput(engagementId, result.ClientId, result.Actions) });
+        var status = snapshots[engagementId].Status;
 
         return Ok(status);
     }

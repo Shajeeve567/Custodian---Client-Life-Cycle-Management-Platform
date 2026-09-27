@@ -30,7 +30,8 @@ public static class WorkflowServiceRegistration
         services.Configure<SlaOptions>(configuration.GetSection(SlaOptions.SectionName));
         services.AddScoped<IStallDetectionService, StallDetectionService>();
         services.AddScoped<IStallActionsProvider, StallActionsProvider>();
-        services.AddSingleton<IStallEventDeduplicator, StallEventDeduplicator>();
+        // CSTD-33 (33-N1): persisted stall episodes replace the in-memory overdue-event de-duplication.
+        services.AddScoped<IStallRecorder, StallRecorder>();
 
         // CSTD-34: staff stall queue
         services.AddScoped<IStallQueueProvider, StallQueueProvider>();

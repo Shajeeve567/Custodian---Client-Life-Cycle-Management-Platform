@@ -33,6 +33,9 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
         // CSTD-33 (Action SLA & Stall Detection). Dot-case to match what Workflow publishes
         // and what Identity's notification mapper expects.
         "action.overdue",
+        // Published once when a persisted stall ends (action completed/cancelled/submitted, deadline
+        // extended, engagement closed); pairs with action.overdue via stallId.
+        "StallResolved",
         // CSTD-24 (Engagement Condition Management)
         "ConditionAttached",
         "ConditionUpdated",

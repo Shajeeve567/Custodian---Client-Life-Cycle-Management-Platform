@@ -13,7 +13,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add controllers & services
 builder.Services.AddControllers();
-builder.Services.AddCustodianCors(builder.Configuration);
+builder.Services.AddCustodianCors(builder.Configuration, builder.Environment);
 builder.Services.AddTenantContext();
 builder.Services.AddJwtAuthentication(builder.Configuration, builder.Environment);
 // Tenant APIs require a workspace token (tenant_id claim); see TenantAuthorizationExtensions.
@@ -111,6 +111,8 @@ builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
+Custodian.Shared.Messaging.AuditTransport.LogSelection(app.Logger, builder.Configuration, auditTransport);
+
 if (app.Environment.IsDevelopment())
 {
     app.MapScalarApiReference();
@@ -123,6 +125,7 @@ using (var scope = app.Services.CreateScope())
     dbContext?.Database.Migrate();
 }
 
+app.LogCustodianCors();
 app.UseCors();
 // app.UseHttpsRedirection();
 app.UseAuthentication();

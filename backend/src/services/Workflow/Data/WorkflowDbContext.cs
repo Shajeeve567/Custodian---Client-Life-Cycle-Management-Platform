@@ -13,6 +13,7 @@ public class WorkflowDbContext : DbContext
     public DbSet<ClientAction> ClientActions => Set<ClientAction>();
     public DbSet<Requirement> Requirements => Set<Requirement>();
     public DbSet<EngagementCondition> EngagementConditions => Set<EngagementCondition>();
+    public DbSet<StallRecord> StallRecords => Set<StallRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -179,6 +180,32 @@ public class WorkflowDbContext : DbContext
             entity.HasIndex(c => c.EngagementId).HasDatabaseName("idx_condition_engagement_id");
             entity.HasIndex(c => new { c.TenantId, c.EngagementId }).HasDatabaseName("idx_condition_tenant_engagement");
             entity.HasIndex(c => new { c.TenantId, c.EngagementId, c.Type, c.IsActive }).HasDatabaseName("idx_condition_tenant_eng_type_active");
+        });
+
+        // CSTD-33 (33-N1): persisted stall episodes (de-duplication anchor for action.overdue).
+        modelBuilder.Entity<StallRecord>(entity =>
+        {
+            entity.ToTable("stall_records");
+
+            entity.HasKey(s => s.StallId);
+
+            entity.Property(s => s.StallId).HasColumnName("stall_id");
+            entity.Property(s => s.TenantId).HasColumnName("tenant_id").HasMaxLength(36).IsRequired();
+            entity.Property(s => s.EngagementId).HasColumnName("engagement_id").IsRequired();
+            entity.Property(s => s.ActionId).HasColumnName("action_id").IsRequired();
+            entity.Property(s => s.OpenActionId).HasColumnName("open_action_id");
+            entity.Property(s => s.DueAtUtc).HasColumnName("due_at_utc").IsRequired();
+            entity.Property(s => s.DetectedAtUtc).HasColumnName("detected_at_utc").IsRequired();
+            entity.Property(s => s.OverdueEventPublishedAt).HasColumnName("overdue_event_published_at");
+            entity.Property(s => s.ResolvedAtUtc).HasColumnName("resolved_at_utc");
+            entity.Property(s => s.Resolution).HasColumnName("resolution").HasMaxLength(40);
+            entity.Ignore(s => s.IsOpen);
+
+            // At most one open stall per action (NULLs, i.e. resolved stalls, don't collide).
+            entity.HasIndex(s => s.OpenActionId).IsUnique().HasDatabaseName("ux_stall_open_action");
+            entity.HasIndex(s => new { s.TenantId, s.ResolvedAtUtc }).HasDatabaseName("idx_stall_tenant_resolved");
+            entity.HasIndex(s => new { s.ActionId, s.ResolvedAtUtc }).HasDatabaseName("idx_stall_action_resolved");
+            entity.HasIndex(s => s.EngagementId).HasDatabaseName("idx_stall_engagement");
         });
     }
 }

@@ -47,7 +47,7 @@ builder.Services.Configure<ResendOptions>(builder.Configuration.GetSection(Resen
 builder.Services.Configure<KafkaOptions>(builder.Configuration.GetSection(KafkaOptions.SectionName));
 builder.Services.AddHostedService<KafkaNotificationConsumer>();
 
-builder.Services.AddCustodianCors(builder.Configuration);
+builder.Services.AddCustodianCors(builder.Configuration, builder.Environment);
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -69,6 +69,7 @@ if (app.Environment.IsDevelopment())
 }
 
 // app.UseHttpsRedirection();
+app.LogCustodianCors();
 app.UseCors();
 
 app.UseAuthentication();
