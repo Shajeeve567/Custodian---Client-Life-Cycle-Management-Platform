@@ -29,6 +29,7 @@ import {
     ReviewRequirementRequest,
     RequirementResponse,
     StallQueueItem,
+    ChainVerificationResult,
     StallQueueFilters,
     StallQueueResult,
     EngagementCondition,
@@ -335,6 +336,16 @@ export const WorkflowApi = {
         });
     },
 
+    // What the standard checklist would add right now (nothing is saved) — shown for review before applying.
+    async previewStandardChecklist(engagementId: string, tenantId: string): Promise<ClientAction[]> {
+        return request<ClientAction[]>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/standard-checklist/preview?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'GET',
+                headers: { 'X-Tenant-ID': tenantId },
+            });
+    },
+
     // Staff-defined stage tasks: opt-in standard checklist (idempotent). Returns only the tasks it added.
     async applyStandardChecklist(engagementId: string, tenantId: string): Promise<ClientAction[]> {
         return request<ClientAction[]>(
@@ -590,21 +601,20 @@ export const PortalApi = {
    ========================================================================== */
 
 export const AuditApi = {
+    // The Audit API lives under /api (previously called without it, so every request returned 404).
     async getEvents(tenantId?: string, engagementId?: string): Promise<AuditEvent[]> {
-        let url = `${API_BASE.AUDIT}/events`;
-        const params = new URLSearchParams();
-        if (tenantId) params.append('tenantId', tenantId);
-        if (engagementId) params.append('engagementId', engagementId);
-        const query = params.toString();
-        if (query) url += `?${query}`;
+        const base = engagementId
+            ? `${API_BASE.AUDIT}/api/audit-events/engagement/${encodeURIComponent(engagementId)}`
+            : `${API_BASE.AUDIT}/api/audit-events`;
+        const url = tenantId ? `${base}?tenantId=${encodeURIComponent(tenantId)}` : base;
         return request<AuditEvent[]>(url);
     },
 
-    async verifyChain(tenantId?: string): Promise<{ isVerified: boolean; count: number }> {
-        const url = tenantId
-            ? `${API_BASE.AUDIT}/events/verify?tenantId=${encodeURIComponent(tenantId)}`
-            : `${API_BASE.AUDIT}/events/verify`;
-        return request<{ isVerified: boolean; count: number }>(url);
+    // Hash chains are per engagement (CSTD-40), so verification takes one engagement at a time.
+    async verifyChain(engagementId: string, tenantId?: string): Promise<ChainVerificationResult> {
+        const params = new URLSearchParams({ engagementId });
+        if (tenantId) params.append('tenantId', tenantId);
+        return request<ChainVerificationResult>(`${API_BASE.AUDIT}/api/audit-events/verify?${params.toString()}`);
     },
 };
 

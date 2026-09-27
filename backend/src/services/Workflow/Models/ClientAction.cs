@@ -55,6 +55,22 @@ public static class ClientActionType
         ProofOfAddress
     };
 
+    /// <summary>
+    /// Edit Task form value that converts a plain task into a question for the client (a requirement).
+    /// Never stored: the converted task's Type becomes <see cref="Requirement"/>.
+    /// </summary>
+    public const string RequestInformation = "RequestInformation";
+
+    /// <summary>Types staff can pick in the Add/Edit Task form (plain task + the evidence types).</summary>
+    public static readonly IReadOnlySet<string> StaffSelectableTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        CustomTask,
+        DocumentUpload,
+        KycDocument,
+        SignAgreement,
+        ProofOfAddress
+    };
+
     public static bool IsEvidence(ClientAction action) =>
         action.LinkedDocumentId.HasValue || EvidenceTypes.Contains(action.Type ?? string.Empty);
 }

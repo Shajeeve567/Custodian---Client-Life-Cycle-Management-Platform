@@ -152,6 +152,8 @@ export interface UpdateClientActionRequest {
     stageNumber?: number;
     assignedToRole?: 'Client' | 'Staff';
     isInternalOnly?: boolean;
+    // Only while Pending and nothing has been uploaded (the API returns 409 otherwise).
+    type?: string;
 }
 
 export interface CreateClientActionRequest {
@@ -382,6 +384,16 @@ export interface AuditEvent {
     payload: string;
     sequenceNumber: number;
     hash: string;
+    previousHash?: string | null;
+}
+
+// CSTD-40: result of verifying one engagement's hash chain (GET /api/audit-events/verify).
+export interface ChainVerificationResult {
+    engagementId?: string | null;
+    isVerified: boolean;
+    count: number;
+    brokenAtEventId?: string | null;
+    reason?: string | null;
 }
 
 export interface DocumentMetadata {

@@ -2095,6 +2095,73 @@ public class ClientActionServiceTests
     }
 
     [Theory]
+    [InlineData("CustomTask", "KycDocument")]
+    [InlineData("DocumentUpload", "CustomTask")]
+    public async Task UpdateActionAsync_TypeChangeOnAnUntouchedPendingTask_IsApplied(string from, string to)
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001");
+        task.Type = from;
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        var audit = new Mock<IAuditPublisher>();
+        object? payload = null;
+        audit.Setup(a => a.PublishEventAsync(engagementId, "tenant-001", "staff-1", "ClientActionUpdated", It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, _, p) => payload = p)
+            .Returns(Task.CompletedTask);
+
+        var result = await new ClientActionService(db, audit.Object).UpdateActionAsync(
+            engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { Type = to.ToLowerInvariant() }, "staff-1");
+
+        Assert.Equal(to, result!.Type); // canonical casing
+        Assert.Contains("type", System.Text.Json.JsonSerializer.Serialize(payload));
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_TypeChangeAfterADocumentWasUploaded_IsRefused()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var linked = MakePendingTask(engagementId, "tenant-001");
+        linked.Type = "KycDocument";
+        linked.LinkedDocumentId = Guid.NewGuid();
+        linked.SourceType = ClientActionSourceType.Document;
+        var rejectedBefore = MakePendingTask(engagementId, "tenant-001"); // back to Pending after a rejected upload
+        rejectedBefore.Type = "KycDocument";
+        rejectedBefore.SourceMetadata = $"{{\"documentId\":\"{Guid.NewGuid()}\",\"verificationStatus\":\"Rejected\"}}";
+        db.ClientActions.AddRange(linked, rejectedBefore);
+        await db.SaveChangesAsync();
+        var service = CreateService(db);
+
+        foreach (var task in new[] { linked, rejectedBefore })
+        {
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.UpdateActionAsync(engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { Type = "CustomTask" }, "staff-1"));
+            Assert.Contains("uploaded", ex.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData("Requirement")]  // requirement tasks are created through the Requirements API
+    [InlineData("Approval")]     // condition tasks are created through the Conditions API
+    [InlineData("Banana")]
+    public async Task UpdateActionAsync_TypeOutsideTheStaffSelectableList_IsRejected(string type)
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001");
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            CreateService(db).UpdateActionAsync(engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { Type = type }, "staff-1"));
+    }
+
+    [Theory]
     [InlineData(ClientActionStatus.Uploaded)]
     [InlineData(ClientActionStatus.Completed)]
     [InlineData(ClientActionStatus.Cancelled)]
@@ -2127,6 +2194,156 @@ public class ClientActionServiceTests
         await Assert.ThrowsAsync<ArgumentException>(() =>
             service.UpdateActionAsync(engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { StageNumber = 1 }, "staff-1"));
         Assert.Null(await service.UpdateActionAsync(engagementId, task.ActionId, "tenant-other", new UpdateClientActionDto { Title = "x" }, "staff-1"));
+    }
+
+    [Fact]
+    public async Task PreviewStandardChecklist_SavesNothing_AndMatchesWhatApplyAdds()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001", EngagementStage.DocumentCollection);
+        var audit = new Mock<IAuditPublisher>();
+        var service = new ClientActionService(db, audit.Object);
+
+        var preview = await service.PreviewStandardChecklistAsync(engagementId, "tenant-001");
+
+        Assert.NotEmpty(preview!);
+        Assert.All(preview!, t => Assert.True(t.StageNumber >= 2)); // current (2) and later stages only
+        Assert.Empty(db.ClientActions);
+        audit.Verify(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()), Times.Never());
+
+        var added = await service.ApplyStandardChecklistAsync(engagementId, "tenant-001", "staff-1");
+        Assert.Equal(preview!.Select(t => (t.StageNumber, t.Title)), added!.Select(t => (t.StageNumber, t.Title)));
+        Assert.Empty((await service.PreviewStandardChecklistAsync(engagementId, "tenant-001"))!); // nothing left to add
+    }
+
+    // =========================================================================
+    // Request Information: edit while unanswered, and convert a plain task into a question
+    // =========================================================================
+
+    private static async Task<(ClientAction Task, Requirement Requirement)> SeedQuestionAsync(
+        WorkflowDbContext db, Guid engagementId, string requirementStatus = RequirementStatus.Requested)
+    {
+        var requirement = new Requirement
+        {
+            RequirementId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = "tenant-001",
+            Type = ClientActionService.RequestedInformationRequirementType,
+            Status = requirementStatus,
+            StageNumber = 1
+        };
+        var task = MakePendingTask(engagementId, "tenant-001", sourceType: ClientActionSourceType.Requirement);
+        task.Type = ClientActionType.Requirement;
+        task.LinkedRequirementId = requirement.RequirementId;
+        db.Requirements.Add(requirement);
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        return (task, requirement);
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_UnansweredQuestion_CanBeEdited_AndItsStageIsKeptInSync()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var (task, requirement) = await SeedQuestionAsync(db, engagementId);
+
+        var result = await CreateService(db).UpdateActionAsync(engagementId, task.ActionId, "tenant-001",
+            new UpdateClientActionDto { Title = "What is your source of funds?", Description = "Salary, savings, ...", StageNumber = 2 }, "staff-1");
+
+        Assert.Equal("What is your source of funds?", result!.Title);
+        Assert.Equal(2, result.StageNumber);
+        Assert.Equal(2, (await db.Requirements.SingleAsync(r => r.RequirementId == requirement.RequirementId)).StageNumber);
+    }
+
+    [Theory]
+    [InlineData(RequirementStatus.Submitted)]
+    [InlineData(RequirementStatus.Approved)]
+    public async Task UpdateActionAsync_AnsweredQuestion_IsLocked(string requirementStatus)
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var (task, _) = await SeedQuestionAsync(db, engagementId, requirementStatus);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => CreateService(db).UpdateActionAsync(
+            engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { Title = "x" }, "staff-1"));
+        Assert.Contains("already answered", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_Question_CannotBeReassignedOrRetyped()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var (task, _) = await SeedQuestionAsync(db, engagementId);
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UpdateActionAsync(
+            engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { AssignedToRole = "Staff" }, "staff-1"));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UpdateActionAsync(
+            engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { Type = "CustomTask" }, "staff-1"));
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_ConvertToRequestInformation_CreatesTheQuestion_NotifiesTheClient_AndCanBeAnswered()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001");
+        task.AssignedToRole = "Staff";
+        task.IsInternalOnly = true;
+        task.ActivatedAt = DateTime.UtcNow;
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        var audit = new Mock<IAuditPublisher>();
+        object? requested = null;
+        audit.Setup(a => a.PublishEventAsync(engagementId, "tenant-001", "staff-1", "RequirementRequested", It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, _, p) => requested = p)
+            .Returns(Task.CompletedTask);
+
+        var result = await new ClientActionService(db, audit.Object).UpdateActionAsync(engagementId, task.ActionId, "tenant-001",
+            new UpdateClientActionDto { Type = ClientActionType.RequestInformation }, "staff-1");
+
+        var requirement = await db.Requirements.SingleAsync();
+        Assert.Equal(RequirementStatus.Requested, requirement.Status);
+        Assert.Equal(task.StageNumber, requirement.StageNumber);
+        Assert.Equal(requirement.RequirementId, result!.LinkedRequirementId);
+        Assert.Equal(ClientActionType.Requirement, result.Type);
+        Assert.Equal("Client", result.AssignedToRole); // a question is always the client's
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(requested);
+        Assert.Equal("client-1", json.GetProperty("clientId").GetString());
+
+        // The client answers it through the normal requirement flow; the task completes.
+        var answered = await new RequirementService(db, audit.Object).SubmitRequirementAsync(
+            engagementId, requirement.RequirementId, "tenant-001", new SubmitRequirementDto { Value = "Salary" }, callerClientId: "client-1");
+        Assert.Equal(RequirementStatus.Submitted, answered!.Status);
+        Assert.Equal(ClientActionStatus.Completed, (await db.ClientActions.AsNoTracking().SingleAsync(a => a.ActionId == task.ActionId)).Status);
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_ConvertToRequestInformation_IsRefusedAfterAnUpload_OrForStaff()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var uploaded = MakePendingTask(engagementId, "tenant-001");
+        uploaded.SourceMetadata = $"{{\"documentId\":\"{Guid.NewGuid()}\"}}";
+        var plain = MakePendingTask(engagementId, "tenant-001");
+        db.ClientActions.AddRange(uploaded, plain);
+        await db.SaveChangesAsync();
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateActionAsync(
+            engagementId, uploaded.ActionId, "tenant-001", new UpdateClientActionDto { Type = ClientActionType.RequestInformation }, "staff-1"));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UpdateActionAsync(
+            engagementId, plain.ActionId, "tenant-001",
+            new UpdateClientActionDto { Type = ClientActionType.RequestInformation, AssignedToRole = "Staff" }, "staff-1"));
+        Assert.Empty(db.Requirements);
     }
 
     [Theory]

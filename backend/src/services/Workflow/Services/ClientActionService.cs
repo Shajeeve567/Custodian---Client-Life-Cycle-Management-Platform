@@ -843,45 +843,18 @@ public class ClientActionService : IClientActionService
     /// only adds tasks for the current stage or later, so a completed stage never gains new blockers.
     /// Returns null when the engagement does not exist in the tenant.
     /// </summary>
+    public async Task<List<ClientActionResponseDto>?> PreviewStandardChecklistAsync(Guid engagementId, string tenantId)
+    {
+        var toAdd = await BuildStandardChecklistAdditionsAsync(engagementId, tenantId);
+        return toAdd?.Select(a => MapToResponseDto(a, isClientView: false)).ToList();
+    }
+
     public async Task<List<ClientActionResponseDto>?> ApplyStandardChecklistAsync(Guid engagementId, string tenantId, string actor)
     {
-        if (string.IsNullOrWhiteSpace(tenantId) || engagementId == Guid.Empty)
+        var toAdd = await BuildStandardChecklistAdditionsAsync(engagementId, tenantId);
+        if (toAdd == null)
         {
             return null;
-        }
-
-        var engagement = await _dbContext.Engagements
-            .AsNoTracking()
-            .FirstOrDefaultAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId);
-
-        if (engagement == null)
-        {
-            return null;
-        }
-
-        if (engagement.Status == EngagementStatus.Closed || engagement.Status == EngagementStatus.Cancelled)
-        {
-            throw new InvalidOperationException($"Cannot apply the standard checklist to an engagement with status '{engagement.Status}'.");
-        }
-
-        var currentStageNumber = (int)engagement.Stage + 1;
-        var existingDefaults = await _dbContext.ClientActions
-            .Where(a => a.EngagementId == engagementId &&
-                        a.TenantId == tenantId &&
-                        a.SourceType == ClientActionSourceType.Lifecycle)
-            .Select(a => new { a.Title, a.StageNumber })
-            .ToListAsync();
-
-        var toAdd = GenerateDefaultLifecycleActions(engagementId, tenantId)
-            .Where(a => a.StageNumber >= currentStageNumber)
-            .Where(a => !existingDefaults.Any(e => e.StageNumber == a.StageNumber &&
-                                                   string.Equals(e.Title, a.Title, StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-
-        var now = DateTime.UtcNow;
-        foreach (var action in toAdd)
-        {
-            action.ActivatedAt = StageActivation.ActivatedAtFor(engagement, action.StageNumber, now);
         }
 
         if (toAdd.Count > 0)
@@ -933,7 +906,32 @@ public class ClientActionService : IClientActionService
             throw new InvalidOperationException($"Cannot modify actions for an engagement with status '{engagement.Status}'.");
         }
 
-        EnsureStaffManaged(action);
+        // A Request Information task (mirrors a requirement) can be edited while the client has not answered
+        // yet: its question, description, deadline and stage. Condition tasks stay managed by the condition.
+        Requirement? linkedRequirement = null;
+        if (IsRequirementTask(action))
+        {
+            linkedRequirement = await _dbContext.Requirements
+                .FirstOrDefaultAsync(r => r.RequirementId == action.LinkedRequirementId && r.EngagementId == engagementId && r.TenantId == tenantId);
+            if (linkedRequirement == null ||
+                !string.Equals(linkedRequirement.Status, RequirementStatus.Requested, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("The client has already answered this question; review the answer instead of editing the question.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(dto.Type) ||
+                (dto.AssignedToRole != null && !string.Equals(dto.AssignedToRole, "Client", StringComparison.OrdinalIgnoreCase)) ||
+                dto.IsInternalOnly == true)
+            {
+                throw new ArgumentException(
+                    "A Request Information task is always answered by the client: only its question, description, deadline and stage can change.",
+                    nameof(dto));
+            }
+        }
+        else
+        {
+            EnsureStaffManaged(action);
+        }
 
         if (!string.Equals(action.Status, ClientActionStatus.Pending, StringComparison.OrdinalIgnoreCase))
         {
@@ -941,6 +939,7 @@ public class ClientActionService : IClientActionService
         }
 
         var changedFields = new List<string>();
+        Requirement? createdRequirement = null;
 
         if (dto.Title != null)
         {
@@ -983,6 +982,10 @@ public class ClientActionService : IClientActionService
             // A task moved into the current stage of a started engagement becomes actionable now; moved later
             // (or while the engagement is still Draft), it waits for its stage.
             action.ActivatedAt = StageActivation.ActivatedAtFor(engagement, action.StageNumber, DateTime.UtcNow, action.ActivatedAt);
+            if (linkedRequirement != null)
+            {
+                linkedRequirement.StageNumber = action.StageNumber;
+            }
             changedFields.Add("stageNumber");
         }
 
@@ -1003,6 +1006,68 @@ public class ClientActionService : IClientActionService
             changedFields.Add("isInternalOnly");
         }
 
+        if (string.Equals(dto.Type?.Trim(), ClientActionType.RequestInformation, StringComparison.OrdinalIgnoreCase))
+        {
+            // Convert a plain task into a question for the client: create the requirement and link this task to
+            // it, so the client gets "Submit Information" instead of "Mark as done". Only for an untouched task.
+            var (uploadedDocumentId, _, _, _) = ParseSourceMetadata(action.SourceMetadata);
+            if (action.LinkedDocumentId.HasValue || !string.IsNullOrWhiteSpace(uploadedDocumentId))
+            {
+                throw new InvalidOperationException("The type can't change after a document was uploaded for this task.");
+            }
+
+            if ((dto.AssignedToRole != null && !string.Equals(dto.AssignedToRole, "Client", StringComparison.OrdinalIgnoreCase)) ||
+                dto.IsInternalOnly == true)
+            {
+                throw new ArgumentException("Request Information is always answered by the client.", nameof(dto));
+            }
+
+            var now = DateTime.UtcNow;
+            createdRequirement = new Requirement
+            {
+                RequirementId = Guid.NewGuid(),
+                EngagementId = engagementId,
+                TenantId = tenantId,
+                Type = RequestedInformationRequirementType,
+                Status = RequirementStatus.Requested,
+                AssignedToRole = "Client",
+                StageNumber = action.StageNumber,
+                RequestedBy = actor,
+                RequestedAt = now,
+                CreatedAt = now
+            };
+            _dbContext.Requirements.Add(createdRequirement);
+
+            action.Type = ClientActionType.Requirement;
+            action.SourceType = ClientActionSourceType.Requirement;
+            action.Source = "RequirementSync";
+            action.LinkedRequirementId = createdRequirement.RequirementId;
+            if (!string.Equals(action.AssignedToRole, "Client", StringComparison.OrdinalIgnoreCase) || action.IsInternalOnly)
+            {
+                action.AssignedToRole = "Client";
+                action.IsInternalOnly = false;
+                changedFields.Add("assignedToRole");
+            }
+            changedFields.Add("type");
+        }
+        else if (!string.IsNullOrWhiteSpace(dto.Type) && !string.Equals(dto.Type.Trim(), action.Type, StringComparison.OrdinalIgnoreCase))
+        {
+            var newType = ClientActionType.StaffSelectableTypes.FirstOrDefault(t => string.Equals(t, dto.Type.Trim(), StringComparison.OrdinalIgnoreCase))
+                ?? throw new ArgumentException(
+                    $"Type must be one of: {string.Join(", ", ClientActionType.StaffSelectableTypes)}.", nameof(dto));
+
+            // The type decides how the task is completed; once a document exists for it, switching would
+            // orphan the document or let an evidence task be ticked off without verification.
+            var (uploadedDocumentId, _, _, _) = ParseSourceMetadata(action.SourceMetadata);
+            if (action.LinkedDocumentId.HasValue || !string.IsNullOrWhiteSpace(uploadedDocumentId))
+            {
+                throw new InvalidOperationException("The type can't change after a document was uploaded for this task.");
+            }
+
+            action.Type = newType;
+            changedFields.Add("type");
+        }
+
         if (changedFields.Count == 0)
         {
             return MapToResponseDto(action, isClientView: false);
@@ -1010,6 +1075,28 @@ public class ClientActionService : IClientActionService
 
         action.UpdatedAt = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync();
+
+        if (createdRequirement != null)
+        {
+            // Same event (and payload shape) as RequirementService.RequestRequirementAsync: audited, and Identity
+            // notifies the client that information was requested.
+            await _auditPublisher.PublishEventAsync(
+                action.EngagementId,
+                action.TenantId,
+                actor,
+                "RequirementRequested",
+                new
+                {
+                    requirementId = createdRequirement.RequirementId,
+                    clientId = engagement.ClientId,
+                    title = action.Title,
+                    assignedToRole = createdRequirement.AssignedToRole,
+                    requirementType = createdRequirement.Type,
+                    stageNumber = createdRequirement.StageNumber,
+                    requestedBy = createdRequirement.RequestedBy,
+                    requestedAt = createdRequirement.RequestedAt
+                });
+        }
 
         await _auditPublisher.PublishEventAsync(
             action.EngagementId,
@@ -1053,6 +1140,13 @@ public class ClientActionService : IClientActionService
         return MapToResponseDto(action, isClientView: false);
     }
 
+    /// <summary>Requirement type recorded for questions staff ask through Request Information.</summary>
+    public const string RequestedInformationRequirementType = "ClientInformation";
+
+    private static bool IsRequirementTask(ClientAction action) =>
+        action.LinkedRequirementId.HasValue ||
+        string.Equals(action.SourceType, ClientActionSourceType.Requirement, StringComparison.OrdinalIgnoreCase);
+
     private static void EnsureStaffManaged(ClientAction action)
     {
         if (action.LinkedRequirementId.HasValue ||
@@ -1078,6 +1172,55 @@ public class ClientActionService : IClientActionService
             throw new ArgumentException(
                 $"Tasks can only be added to the current stage ({currentStageNumber}) or a later one; stage {stageNumber} is already complete.");
         }
+    }
+
+    /// <summary>
+    /// The default tasks the standard checklist would add: current and later stages only, skipping any
+    /// already present (idempotent). Null when the engagement does not exist. Nothing is saved here, so
+    /// the preview and the apply always agree.
+    /// </summary>
+    private async Task<List<ClientAction>?> BuildStandardChecklistAdditionsAsync(Guid engagementId, string tenantId)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId) || engagementId == Guid.Empty)
+        {
+            return null;
+        }
+
+        var engagement = await _dbContext.Engagements
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId);
+
+        if (engagement == null)
+        {
+            return null;
+        }
+
+        if (engagement.Status == EngagementStatus.Closed || engagement.Status == EngagementStatus.Cancelled)
+        {
+            throw new InvalidOperationException($"Cannot apply the standard checklist to an engagement with status '{engagement.Status}'.");
+        }
+
+        var currentStageNumber = (int)engagement.Stage + 1;
+        var existingDefaults = await _dbContext.ClientActions
+            .Where(a => a.EngagementId == engagementId &&
+                        a.TenantId == tenantId &&
+                        a.SourceType == ClientActionSourceType.Lifecycle)
+            .Select(a => new { a.Title, a.StageNumber })
+            .ToListAsync();
+
+        var toAdd = GenerateDefaultLifecycleActions(engagementId, tenantId)
+            .Where(a => a.StageNumber >= currentStageNumber)
+            .Where(a => !existingDefaults.Any(e => e.StageNumber == a.StageNumber &&
+                                                   string.Equals(e.Title, a.Title, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        var now = DateTime.UtcNow;
+        foreach (var action in toAdd)
+        {
+            action.ActivatedAt = StageActivation.ActivatedAtFor(engagement, action.StageNumber, now);
+        }
+
+        return toAdd;
     }
 
     public static List<ClientAction> GenerateDefaultLifecycleActions(Guid engagementId, string tenantId)

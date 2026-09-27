@@ -92,6 +92,13 @@ public class UpdateClientActionDto
     public string? AssignedToRole { get; set; }
 
     public bool? IsInternalOnly { get; set; }
+
+    /// <summary>
+    /// New task type (CustomTask or an evidence type). Only while the task is Pending and nothing has been
+    /// uploaded for it: the type decides how it is completed (mark done vs upload + staff verification).
+    /// </summary>
+    [MaxLength(50)]
+    public string? Type { get; set; }
 }
 
 public class CancelClientActionDto

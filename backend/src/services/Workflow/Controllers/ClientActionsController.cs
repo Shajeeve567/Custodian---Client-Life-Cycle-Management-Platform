@@ -166,6 +166,40 @@ public class ClientActionsController : ControllerBase
     /// Opt-in standard checklist: applies the default lifecycle tasks for the current stage and later.
     /// Idempotent — tasks already applied are not duplicated. Owner/Staff only.
     /// </summary>
+    /// <summary>
+    /// Lists the tasks the standard checklist would add (current and later stages, skipping ones already
+    /// present) without adding anything, so staff can review them before applying.
+    /// </summary>
+    [HttpGet("standard-checklist/preview")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<IEnumerable<ClientActionResponseDto>>> PreviewStandardChecklist(
+        [FromRoute] Guid engagementId,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        try
+        {
+            var preview = await _actionService.PreviewStandardChecklistAsync(engagementId, effectiveTenantId);
+            return preview == null
+                ? NotFound(new { message = $"Engagement '{engagementId}' was not found for tenant '{effectiveTenantId}'." })
+                : Ok(preview);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
     [HttpPost("standard-checklist")]
     [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<IEnumerable<ClientActionResponseDto>>> ApplyStandardChecklist(

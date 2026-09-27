@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { AuditEvent } from '../types';
+import { AuditEvent, ChainVerificationResult } from '../types';
 import { AuditApi } from '../services/api';
 
 export const AuditLogView: React.FC = () => {
@@ -9,7 +9,12 @@ export const AuditLogView: React.FC = () => {
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
     const [verifying, setVerifying] = useState<boolean>(false);
-    const [verificationResult, setVerificationResult] = useState<{ isVerified: boolean; count: number } | null>(null);
+    const [verificationResult, setVerificationResult] = useState<{
+        isVerified: boolean;
+        count: number;
+        engagementsChecked: number;
+        failures: ChainVerificationResult[];
+    } | null>(null);
 
     const fetchEvents = async () => {
         setLoading(true);
@@ -28,11 +33,19 @@ export const AuditLogView: React.FC = () => {
         fetchEvents();
     }, [tenantId]);
 
+    // Each engagement has its own hash chain: verify every engagement that appears in the log.
     const handleVerifyChain = async () => {
         setVerifying(true);
         try {
-            const result = await AuditApi.verifyChain(tenantId);
-            setVerificationResult(result);
+            const engagementIds = Array.from(new Set(events.map((e) => e.engagementId)));
+            const results = await Promise.all(engagementIds.map((id) => AuditApi.verifyChain(id, tenantId)));
+            const failures = results.filter((r) => !r.isVerified);
+            setVerificationResult({
+                isVerified: failures.length === 0,
+                count: results.reduce((sum, r) => sum + r.count, 0),
+                engagementsChecked: results.length,
+                failures,
+            });
         } catch (err: any) {
             alert('Verification Error: ' + err.message);
         } finally {
@@ -50,7 +63,7 @@ export const AuditLogView: React.FC = () => {
                 <button
                     className="btn btn-success"
                     onClick={handleVerifyChain}
-                    disabled={verifying}
+                    disabled={verifying || events.length === 0}
                 >
                     {verifying ? 'Verifying Hashes...' : '🔐 Verify Cryptographic Chain'}
                 </button>
@@ -59,13 +72,21 @@ export const AuditLogView: React.FC = () => {
             {verificationResult && (
                 <div className={`alert ${verificationResult.isVerified ? 'alert-success' : 'alert-danger'} mb-4`}>
                     <strong>{verificationResult.isVerified ? '✅ Hash Chain Verified Intact!' : '❌ Cryptographic Tampering Detected!'}</strong>
-                    <p className="text-sm mt-1">Verified {verificationResult.count} sequential audit events for tenant <strong>{tenantId}</strong>.</p>
+                    <p className="text-sm mt-1">
+                        Checked {verificationResult.count} audit events across {verificationResult.engagementsChecked} engagement chain
+                        {verificationResult.engagementsChecked === 1 ? '' : 's'}.
+                    </p>
+                    {verificationResult.failures.map((f) => (
+                        <p key={f.engagementId ?? f.brokenAtEventId} className="text-sm mt-1 font-mono">
+                            Engagement {f.engagementId}: {f.reason} (event {f.brokenAtEventId})
+                        </p>
+                    ))}
                 </div>
             )}
 
             {error && (
                 <div className="alert alert-warning">
-                    <strong>Notice:</strong> {error}. Showing demonstration log state.
+                    <strong>Could not load the audit log:</strong> {error}
                 </div>
             )}
 

@@ -5,7 +5,7 @@ import { WorkflowApi, IdentityApi, DocumentsApi } from '../services/api';
 import { Engagement, ClientProfile, UserAccountResponse, ClientAction, DocumentMetadata, EngagementStage, EngagementCondition, ConditionType, ConditionPaymentType, AttachConditionRequest, UpdateConditionRequest, NextActionResult, RequirementResponse } from '../types';
 import { NextActionPanel } from './NextActionPanel';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
-import { EditTaskModal, CancelTaskModal, isStaffManagedTask } from './StageTaskModals';
+import { EditTaskModal, CancelTaskModal, ApplyChecklistModal, isStaffManagedTask, REQUEST_INFORMATION_OPTION } from './StageTaskModals';
 import { ENGAGEMENT_STAGES, getStageDefinition, getStageIndex, getNextStage, computeClientVisibleStageNumber } from '../constants/engagementStages';
 import { ACTION_TYPE_TO_DOCUMENT_TYPE } from '../constants/documentTypes';
 import {
@@ -52,7 +52,7 @@ interface WorkspaceStageViewProps {
 }
 
 // Add Task form value for "Request Information": creates a requirement (question) instead of a plain task.
-const REQUEST_INFORMATION_TYPE = 'RequestInformation';
+const REQUEST_INFORMATION_TYPE = REQUEST_INFORMATION_OPTION;
 
 export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     engagementId,
@@ -99,7 +99,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     // Staff-defined stage tasks: edit / cancel / opt-in standard checklist
     const [taskToEdit, setTaskToEdit] = useState<ClientAction | null>(null);
     const [taskToCancel, setTaskToCancel] = useState<ClientAction | null>(null);
-    const [isApplyingChecklist, setIsApplyingChecklist] = useState(false);
+    const [isChecklistModalOpen, setIsChecklistModalOpen] = useState(false);
     const [checklistMessage, setChecklistMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
 
     // CSTD-24: Conditions Modals State
@@ -612,25 +612,16 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
         }
     };
 
-    // Opt-in standard checklist: adds the default tasks for the current stage and later (idempotent).
-    const handleApplyStandardChecklist = async () => {
-        if (!tenantId || !engagementId) return;
-        setIsApplyingChecklist(true);
-        setChecklistMessage(null);
-        try {
-            const added = await WorkflowApi.applyStandardChecklist(engagementId, tenantId);
-            setChecklistMessage(
-                added.length > 0
-                    ? { tone: 'success', text: `Added ${added.length} standard task${added.length === 1 ? '' : 's'} for the current and later stages.` }
-                    : { tone: 'success', text: 'The standard checklist is already applied; nothing was added.' }
-            );
-            await loadWorkspaceData();
-        } catch (err: any) {
-            setChecklistMessage({ tone: 'error', text: err?.message || 'Failed to apply the standard checklist.' });
-        } finally {
-            setIsApplyingChecklist(false);
-            setTimeout(() => setChecklistMessage(null), 5000);
-        }
+    // Opt-in standard checklist: reviewed in ApplyChecklistModal (preview + explicit confirmation) before
+    // anything is added. Adds the default tasks for the current stage and later (idempotent).
+    const handleChecklistApplied = async (addedCount: number) => {
+        setChecklistMessage(
+            addedCount > 0
+                ? { tone: 'success', text: `Added ${addedCount} standard task${addedCount === 1 ? '' : 's'} for the current and later stages.` }
+                : { tone: 'success', text: 'The standard checklist is already applied; nothing was added.' }
+        );
+        setTimeout(() => setChecklistMessage(null), 5000);
+        await loadWorkspaceData();
     };
 
     // Approve the client's answer, or reject it with a reason so they can answer again.
@@ -827,6 +818,18 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
+                    {/* Engagement-wide template: kept away from "Add Task" and reviewed in a dialog before applying */}
+                    {!isTerminalStatus && (
+                        <button
+                            type="button"
+                            onClick={() => setIsChecklistModalOpen(true)}
+                            className="p-3 rounded-xl border border-dashed border-slate-300 bg-white hover:bg-slate-50 text-xs text-slate-600 font-semibold flex items-center gap-1.5 transition"
+                            title="Review and add the default template tasks for the current and later stages"
+                        >
+                            <CheckSquare className="w-4 h-4 text-slate-500" />
+                            Standard checklist…
+                        </button>
+                    )}
                     <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200/80 text-xs">
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                             STAFF CUSTODIAN
@@ -1405,16 +1408,6 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                         </div>
                                         <button
                                             type="button"
-                                            onClick={handleApplyStandardChecklist}
-                                            disabled={isApplyingChecklist || isTerminalStatus}
-                                            className="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold flex items-center gap-1 transition shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
-                                            title="Add the default lifecycle tasks for the current and later stages (safe to run again)"
-                                        >
-                                            {isApplyingChecklist ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckSquare className="w-3.5 h-3.5" />}
-                                            <span>Standard Checklist</span>
-                                        </button>
-                                        <button
-                                            type="button"
                                             onClick={() => {
                                                 setNewTaskStage(Math.max(selectedStageDef.order, currentStageOrder || 1));
                                                 setIsAddTaskOpen(true);
@@ -1732,8 +1725,21 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                 </div>
                                             )}
 
-                                            {/* General Task: Mark Complete button */}
-                                            {!act.isCompleted && act.status !== 'Completed' && !isActionCancelled && !linkedDoc && (
+                                            {/* Request Information: the question can be edited until the client answers */}
+                                            {act.linkedRequirementId && act.status === 'Pending' && !isTerminalStatus &&
+                                                requirements.find((r) => r.requirementId === act.linkedRequirementId)?.status === 'Requested' && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setTaskToEdit(act)}
+                                                    className="w-full py-1 px-2 rounded-lg text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 flex items-center justify-center gap-1 transition"
+                                                >
+                                                    <Edit3 className="w-3 h-3" />
+                                                    Edit question
+                                                </button>
+                                            )}
+
+                                            {/* General Task: Mark Complete button (a question completes when the client answers and staff approve) */}
+                                            {!act.isCompleted && act.status !== 'Completed' && !isActionCancelled && !linkedDoc && !act.linkedRequirementId && (
                                                 <button
                                                     onClick={() => handleCompleteAction(act.actionId)}
                                                     disabled={completingActionId === act.actionId}
@@ -1955,6 +1961,15 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                     minStage={currentStageOrder || 1}
                     onClose={() => setTaskToEdit(null)}
                     onSaved={loadWorkspaceData}
+                />
+            )}
+
+            {isChecklistModalOpen && tenantId && (
+                <ApplyChecklistModal
+                    engagementId={engagementId}
+                    tenantId={tenantId}
+                    onClose={() => setIsChecklistModalOpen(false)}
+                    onApplied={handleChecklistApplied}
                 />
             )}
 

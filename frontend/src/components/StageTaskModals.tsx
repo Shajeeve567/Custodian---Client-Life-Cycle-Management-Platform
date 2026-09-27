@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { WorkflowApi } from '../services/api';
 import { ClientAction, UpdateClientActionRequest } from '../types';
 import { ENGAGEMENT_STAGES } from '../constants/engagementStages';
-import { AlertTriangle, Ban, Edit3, Loader2, X } from 'lucide-react';
+import { AlertTriangle, Ban, CheckSquare, Edit3, Loader2, X } from 'lucide-react';
 
 /**
  * Staff-defined stage tasks: tasks staff own (Manual / Lifecycle source). Tasks mirroring a
@@ -13,6 +13,18 @@ export const isStaffManagedTask = (action: ClientAction): boolean =>
     !action.linkedConditionId &&
     action.sourceType !== 'Requirement' &&
     action.sourceType !== 'Condition';
+
+/** Edit/Add Task form value for "Request Information" (a question the client answers). */
+export const REQUEST_INFORMATION_OPTION = 'RequestInformation';
+
+/** The plain and document task types staff can choose (Request Information is offered separately). */
+export const TASK_TYPE_OPTIONS: { value: string; label: string }[] = [
+    { value: 'CustomTask', label: 'Custom Task (General)' },
+    { value: 'KycDocument', label: 'KYC Document' },
+    { value: 'SignAgreement', label: 'Sign Agreement / Contract' },
+    { value: 'ProofOfAddress', label: 'Proof of Address' },
+    { value: 'DocumentUpload', label: 'Document Upload' },
+];
 
 const inputClass =
     'w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500';
@@ -73,6 +85,14 @@ export const EditTaskModal: React.FC<EditTaskModalProps> = ({ action, engagement
     const [stage, setStage] = useState<number>(action.stageNumber ?? minStage);
     const [role, setRole] = useState<'Client' | 'Staff'>(resolveRole(action));
     const [deadline, setDeadline] = useState(initialDeadline);
+    // A Request Information task (question to the client) keeps its type and role; only the question,
+    // description, stage and deadline can be edited, and only until the client answers.
+    const isQuestion = Boolean(action.linkedRequirementId);
+    const [type, setType] = useState(isQuestion ? REQUEST_INFORMATION_OPTION : action.type);
+    // The type decides how the task is completed; once a document is attached it can no longer change.
+    const typeLocked = isQuestion || Boolean(action.linkedDocumentId);
+    const becomesQuestion = !isQuestion && type === REQUEST_INFORMATION_OPTION;
+    const roleLocked = isQuestion || becomesQuestion;
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -87,7 +107,8 @@ export const EditTaskModal: React.FC<EditTaskModalProps> = ({ action, engagement
         if (title.trim() !== action.title) req.title = title.trim();
         if (description !== (action.description ?? '')) req.description = description;
         if (stage !== action.stageNumber) req.stageNumber = stage;
-        if (role !== resolveRole(action)) {
+        if (!isQuestion && type !== action.type) req.type = type;
+        if (!roleLocked && role !== resolveRole(action)) {
             req.assignedToRole = role;
             // Same convention as task creation: staff tasks are internal-only.
             req.isInternalOnly = role === 'Staff';
@@ -134,6 +155,37 @@ export const EditTaskModal: React.FC<EditTaskModalProps> = ({ action, engagement
                     <label className="block text-xs font-bold text-slate-700 mb-1">Description / Instructions</label>
                     <textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} className={inputClass} />
                 </div>
+                <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">Task Type</label>
+                    <select
+                        value={type}
+                        onChange={(e) => setType(e.target.value)}
+                        disabled={typeLocked}
+                        title={
+                            isQuestion
+                                ? 'A question stays a question; cancel it and add a new task to change its type.'
+                                : typeLocked
+                                ? "The type can't change after a document was uploaded for this task."
+                                : undefined
+                        }
+                        className={inputClass}
+                    >
+                        {!isQuestion && !TASK_TYPE_OPTIONS.some((o) => o.value === action.type) && (
+                            <option value={action.type}>{action.type}</option>
+                        )}
+                        {TASK_TYPE_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                        <option value={REQUEST_INFORMATION_OPTION}>Request Information (client answers)</option>
+                    </select>
+                    {isQuestion ? (
+                        <p className="text-[11px] text-slate-500 mt-1">Question to the client: editable until they answer.</p>
+                    ) : typeLocked ? (
+                        <p className="text-[11px] text-slate-500 mt-1">Locked: a document was already uploaded for this task.</p>
+                    ) : becomesQuestion ? (
+                        <p className="text-[11px] text-indigo-600 mt-1">The client will answer this in their portal; staff then approve or reject the answer.</p>
+                    ) : null}
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                         <label className="block text-xs font-bold text-slate-700 mb-1">Stage</label>
@@ -147,7 +199,12 @@ export const EditTaskModal: React.FC<EditTaskModalProps> = ({ action, engagement
                     </div>
                     <div>
                         <label className="block text-xs font-bold text-slate-700 mb-1">Assigned Role</label>
-                        <select value={role} onChange={(e) => setRole(e.target.value as 'Client' | 'Staff')} className={inputClass}>
+                        <select
+                            value={roleLocked ? 'Client' : role}
+                            disabled={roleLocked}
+                            onChange={(e) => setRole(e.target.value as 'Client' | 'Staff')}
+                            className={inputClass}
+                        >
                             <option value="Client">Client</option>
                             <option value="Staff">Staff (internal)</option>
                         </select>
@@ -245,6 +302,123 @@ export const CancelTaskModal: React.FC<CancelTaskModalProps> = ({ action, engage
                     </button>
                 </div>
             </form>
+        </ModalShell>
+    );
+};
+
+interface ApplyChecklistModalProps {
+    engagementId: string;
+    tenantId: string;
+    onClose: () => void;
+    /** Called with the number of tasks added. */
+    onApplied: (addedCount: number) => void | Promise<void>;
+}
+
+/**
+ * Standard checklist, reviewed before it is applied: lists exactly the default tasks that would be added
+ * (current and later stages, skipping ones already present) and asks for an explicit confirmation, so the
+ * generic template isn't added to an engagement by a misclick.
+ */
+export const ApplyChecklistModal: React.FC<ApplyChecklistModalProps> = ({ engagementId, tenantId, onClose, onApplied }) => {
+    const [preview, setPreview] = useState<ClientAction[] | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [confirmed, setConfirmed] = useState(false);
+    const [isApplying, setIsApplying] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        WorkflowApi.previewStandardChecklist(engagementId, tenantId)
+            .then((tasks) => !cancelled && setPreview(tasks))
+            .catch((err: any) => !cancelled && setError(err?.message || 'Could not load the checklist preview.'));
+        return () => {
+            cancelled = true;
+        };
+    }, [engagementId, tenantId]);
+
+    const stages = preview ? Array.from(new Set(preview.map((t) => t.stageNumber))).sort((a, b) => a - b) : [];
+
+    const handleApply = async () => {
+        setIsApplying(true);
+        setError(null);
+        try {
+            const added = await WorkflowApi.applyStandardChecklist(engagementId, tenantId);
+            await onApplied(added.length);
+            onClose();
+        } catch (err: any) {
+            setError(err?.message || 'Failed to apply the standard checklist.');
+        } finally {
+            setIsApplying(false);
+        }
+    };
+
+    return (
+        <ModalShell
+            icon={<div className="p-2 rounded-xl bg-amber-50 text-amber-600"><CheckSquare className="w-5 h-5" /></div>}
+            title="Apply Standard Checklist"
+            subtitle="Review the default tasks before adding them to this engagement."
+            error={error}
+            onClose={onClose}
+        >
+            {preview === null && !error ? (
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Loading the tasks it would add...
+                </div>
+            ) : preview && preview.length === 0 ? (
+                <p className="text-xs text-slate-600">
+                    The standard checklist is already applied to this engagement's current and later stages — nothing would be added.
+                </p>
+            ) : preview ? (
+                <div className="space-y-3">
+                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 space-y-1">
+                        <p className="font-bold flex items-center gap-1.5">
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                            This adds {preview.length} generic template task{preview.length === 1 ? '' : 's'} to stage{stages.length === 1 ? '' : 's'} {stages.join(', ')}.
+                        </p>
+                        <p>Their deadlines are fixed from today, not from when each stage starts.</p>
+                        <p>Client tasks appear in the client's portal (as a preview until their stage opens).</p>
+                        <p>They are not removed as a group: you would have to edit or cancel each one individually.</p>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                        {stages.map((stage) => (
+                            <div key={stage}>
+                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Stage {stage}</div>
+                                <ul className="space-y-1">
+                                    {preview.filter((t) => t.stageNumber === stage).map((t) => (
+                                        <li key={t.actionId} className="p-2 rounded-lg bg-slate-50 border border-slate-200 text-[11px] flex items-start justify-between gap-2">
+                                            <span className="font-semibold text-slate-800">{t.title}</span>
+                                            <span className="text-slate-500 shrink-0">
+                                                {resolveRole(t)} · {t.type}
+                                                {t.deadlineUtc ? ` · due ${new Date(t.deadlineUtc).toLocaleDateString()}` : ''}
+                                            </span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        ))}
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer select-none">
+                        <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+                        I've reviewed these tasks and want to add them to this engagement.
+                    </label>
+                </div>
+            ) : null}
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                <button type="button" onClick={onClose} className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 transition">
+                    {preview && preview.length === 0 ? 'Close' : 'Cancel'}
+                </button>
+                {preview && preview.length > 0 && (
+                    <button
+                        type="button"
+                        onClick={handleApply}
+                        disabled={!confirmed || isApplying}
+                        className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                        {isApplying ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckSquare className="w-4 h-4" />}
+                        Add {preview.length} task{preview.length === 1 ? '' : 's'}
+                    </button>
+                )}
+            </div>
         </ModalShell>
     );
 };
