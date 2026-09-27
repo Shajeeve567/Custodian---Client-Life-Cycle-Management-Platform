@@ -23,6 +23,9 @@ interface NextActionPanelProps {
     isAdvancing: boolean;
     onAdvance: () => void;
     onRefresh: () => void;
+    /** Draft engagements: starts the engagement (Draft -> Started). */
+    onStart?: () => void;
+    isStarting?: boolean;
 }
 
 const STATE_STYLES: Record<string, { label: string; className: string }> = {
@@ -111,10 +114,14 @@ export const NextActionPanel: React.FC<NextActionPanelProps> = ({
     isAdvancing,
     onAdvance,
     onRefresh,
+    isStarting = false,
+    onStart,
 }) => {
     const state = result ? STATE_STYLES[result.overallState] ?? { label: result.overallState, className: 'bg-slate-100 text-slate-700 border-slate-200' } : null;
     const primary = result?.primaryAction ?? null;
     const canAdvance = primary?.kind === 'AdvanceStage';
+    // Draft: the engine's primary action is "Activate engagement"; offer it here as well as in the header.
+    const canStart = result?.engagementStatus === 'Draft' && Boolean(onStart);
     const showAdvance = result && result.overallState !== 'Closed' && result.overallState !== 'AllComplete' && result.overallState !== 'NotStarted';
     const gateReasons = result?.nextStageGate && !result.nextStageGate.isSatisfied ? result.nextStageGate.reasons : [];
 
@@ -174,6 +181,17 @@ export const NextActionPanel: React.FC<NextActionPanelProps> = ({
                             </div>
                             <div className="text-sm font-bold text-slate-900">{primary.title}</div>
                             <p className="text-xs text-slate-600 mt-1">{primary.reason}</p>
+                            {canStart && (
+                                <button
+                                    type="button"
+                                    onClick={onStart}
+                                    disabled={isStarting}
+                                    className="mt-3 px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-sm bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white disabled:opacity-40"
+                                >
+                                    {isStarting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronRight className="w-4 h-4" />}
+                                    Start engagement
+                                </button>
+                            )}
                         </div>
                     ) : (
                         <div className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">

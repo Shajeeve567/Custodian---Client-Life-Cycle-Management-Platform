@@ -1320,4 +1320,50 @@ public class ClientActionsControllerTests
 
         Assert.Equal("staff-user-1", sent!.ReviewerActor);
     }
+
+    // =========================================================================
+    // Clients act only on tasks whose stage has started (409 "not yet")
+    // =========================================================================
+
+    private (Guid EngagementId, Guid ActionId) SetupOwningClientWithNotYetAvailableTask()
+    {
+        var httpContext = new DefaultHttpContext();
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", "tenant-001"),
+            new Claim(ClaimTypes.Role, "Client"),
+            new Claim("client_id", "client-1")
+        }, "TestAuth"));
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, "tenant-001", "client-1")).ReturnsAsync(true);
+        _mockService.Setup(s => s.GetClientAvailabilityBlockReasonAsync(engagementId, actionId, "tenant-001"))
+            .ReturnsAsync("This task opens in Stage 3.");
+        return (engagementId, actionId);
+    }
+
+    [Fact]
+    public async Task CompleteAction_ClientOnATaskWhoseStageHasNotStarted_Returns409()
+    {
+        var (engagementId, actionId) = SetupOwningClientWithNotYetAvailableTask();
+
+        var result = await _controller.CompleteAction(engagementId, actionId, new CompleteClientActionDto { CompletedByActor = "client-1" }, tenantId: null);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Contains("Stage 3", conflict.Value!.ToString());
+        _mockService.Verify(s => s.CompleteActionAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CompleteClientActionDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UploadEvidence_ClientOnATaskWhoseStageHasNotStarted_Returns409()
+    {
+        var (engagementId, actionId) = SetupOwningClientWithNotYetAvailableTask();
+
+        var result = await _controller.UploadEvidence(engagementId, actionId, new UploadActionEvidenceDto { UploaderActor = "client-1", DocumentId = Guid.NewGuid() }, tenantId: null);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        _mockService.Verify(s => s.UploadEvidenceAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UploadActionEvidenceDto>()), Times.Never);
+    }
 }

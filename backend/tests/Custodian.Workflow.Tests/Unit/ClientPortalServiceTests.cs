@@ -1128,4 +1128,65 @@ public class ClientPortalServiceTests
         Assert.Null(dashboard!.PrimaryNextAction);
         Assert.DoesNotContain(dashboard.PendingActions, a => a.Title == "Scope approval");
     }
+
+    // =========================================================================
+    // Engagement start & portal lifecycle: Draft state and stage availability
+    // =========================================================================
+
+    private static ClientAction ClientTask(Guid engagementId, string tenantId, int stage, DateTime? activatedAt) => new()
+    {
+        ActionId = Guid.NewGuid(),
+        EngagementId = engagementId,
+        TenantId = tenantId,
+        Title = $"Stage {stage} task",
+        Type = ClientActionType.CustomTask,
+        Source = "Test",
+        SourceType = ClientActionSourceType.Manual,
+        Status = ClientActionStatus.Pending,
+        StageNumber = stage,
+        AssignedToRole = "Client",
+        CreatedAt = DateTime.UtcNow,
+        ActivatedAt = activatedAt
+    };
+
+    [Fact]
+    public async Task DraftEngagement_ShowsNotStarted_NotAllCaughtUp_AndItsTasksAreNotAvailable()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        const string tenantId = "tenant-001";
+        db.Engagements.Add(new Engagement { EngagementId = engagementId, TenantId = tenantId, ClientId = "client-1", StaffId = "s1", Status = EngagementStatus.Draft, Stage = EngagementStage.Onboarding });
+        db.ClientActions.Add(ClientTask(engagementId, tenantId, 1, activatedAt: null));
+        await db.SaveChangesAsync();
+
+        var dashboard = await CreatePortalService(db).GetDashboardForEngagementAsync(engagementId, tenantId);
+
+        Assert.Equal(ClientPortalService.NotStartedStatus, dashboard!.ConditionStatus);
+        Assert.Null(dashboard.PrimaryNextAction);
+        Assert.All(dashboard.Stages, st => Assert.Equal("Upcoming", st.Status));
+        var task = Assert.Single(dashboard.PendingActions);
+        Assert.False(task.IsAvailable);
+        Assert.Equal(1, task.AvailableFromStage);
+    }
+
+    [Fact]
+    public async Task StartedEngagement_CurrentStageTaskIsAvailable_FutureStageTaskIsAPreview()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        const string tenantId = "tenant-001";
+        db.Engagements.Add(new Engagement { EngagementId = engagementId, TenantId = tenantId, ClientId = "client-1", StaffId = "s1", Status = EngagementStatus.Started, Stage = EngagementStage.Onboarding });
+        var current = ClientTask(engagementId, tenantId, 1, activatedAt: DateTime.UtcNow);
+        var future = ClientTask(engagementId, tenantId, 3, activatedAt: null);
+        db.ClientActions.AddRange(current, future);
+        await db.SaveChangesAsync();
+
+        var dashboard = await CreatePortalService(db).GetDashboardForEngagementAsync(engagementId, tenantId);
+
+        Assert.Equal(current.ActionId, dashboard!.PrimaryNextAction!.ActionId);
+        Assert.True(dashboard.PrimaryNextAction.IsAvailable);
+        var preview = Assert.Single(dashboard.PendingActions, a => a.ActionId == future.ActionId);
+        Assert.False(preview.IsAvailable);
+        Assert.Equal(3, preview.AvailableFromStage);
+    }
 }

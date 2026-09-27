@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { WorkflowApi, IdentityApi, DocumentsApi } from '../services/api';
-import { Engagement, ClientProfile, UserAccountResponse, ClientAction, DocumentMetadata, EngagementStage, EngagementCondition, ConditionType, ConditionPaymentType, AttachConditionRequest, UpdateConditionRequest, NextActionResult } from '../types';
+import { Engagement, ClientProfile, UserAccountResponse, ClientAction, DocumentMetadata, EngagementStage, EngagementCondition, ConditionType, ConditionPaymentType, AttachConditionRequest, UpdateConditionRequest, NextActionResult, RequirementResponse } from '../types';
 import { NextActionPanel } from './NextActionPanel';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import { EditTaskModal, CancelTaskModal, isStaffManagedTask } from './StageTaskModals';
 import { ENGAGEMENT_STAGES, getStageDefinition, getStageIndex, getNextStage, computeClientVisibleStageNumber } from '../constants/engagementStages';
 import { ACTION_TYPE_TO_DOCUMENT_TYPE } from '../constants/documentTypes';
@@ -16,6 +17,7 @@ import {
     ChevronRight,
     ExternalLink,
     Loader2,
+    PlayCircle,
     CheckCircle,
     AlertTriangle,
     Layers,
@@ -29,6 +31,7 @@ import {
     Download,
     Check,
     X,
+    MessageSquare,
     Clock,
     RefreshCw,
     Plus,
@@ -47,6 +50,9 @@ interface WorkspaceStageViewProps {
     engagementId: string;
     onBack?: () => void;
 }
+
+// Add Task form value for "Request Information": creates a requirement (question) instead of a plain task.
+const REQUEST_INFORMATION_TYPE = 'RequestInformation';
 
 export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     engagementId,
@@ -74,6 +80,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
 
     const [completingActionId, setCompletingActionId] = useState<string | null>(null);
     const [isAdvancingStage, setIsAdvancingStage] = useState(false);
+    const [isStartingEngagement, setIsStartingEngagement] = useState(false);
     const [stageAdvanceSuccess, setStageAdvanceSuccess] = useState<string | null>(null);
     const [stageAdvanceError, setStageAdvanceError] = useState<string | null>(null);
     const [stageFilterMode, setStageFilterMode] = useState<'stage' | 'all'>('stage');
@@ -82,6 +89,9 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [newTaskDesc, setNewTaskDesc] = useState('');
     const [newTaskStage, setNewTaskStage] = useState<number>(1);
     const [newTaskType, setNewTaskType] = useState<string>('CustomTask');
+    // CSTD-16: staff questions to the client (requirements), keyed by requirementId for the task cards.
+    const [requirements, setRequirements] = useState<RequirementResponse[]>([]);
+    const [reviewingRequirementId, setReviewingRequirementId] = useState<string | null>(null);
     const [newTaskRole, setNewTaskRole] = useState<'Client' | 'Staff'>('Client');
     const [newTaskDeadline, setNewTaskDeadline] = useState<string>('');
     const [isCreatingTask, setIsCreatingTask] = useState(false);
@@ -246,6 +256,13 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             }
 
             try {
+                const reqList = await WorkflowApi.getRequirements(engagementId, tenantId);
+                setRequirements(reqList || []);
+            } catch (rErr) {
+                console.warn('Failed to load requirements:', rErr);
+            }
+
+            try {
                 const condList = await WorkflowApi.getConditions(engagementId, tenantId, true);
                 setConditions(condList || []);
             } catch (cErr) {
@@ -263,6 +280,10 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     useEffect(() => {
         loadWorkspaceData();
     }, [loadWorkspaceData]);
+
+    // Staff see client uploads and completions without reloading: refresh on returning to the tab and
+    // every 60s while it is visible.
+    useAutoRefresh(loadWorkspaceData, 60_000, Boolean(tenantId && engagementId));
 
     const handleCompleteAction = async (actionId: string) => {
         if (!tenantId) return;
@@ -387,7 +408,21 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
         setIsCreatingTask(true);
         setCreateTaskError(null);
         try {
-            await WorkflowApi.createAction(
+            if (newTaskType === REQUEST_INFORMATION_TYPE) {
+                // A question the client answers in their portal; staff then approve or reject the answer.
+                await WorkflowApi.requestRequirement(
+                    engagementId,
+                    {
+                        type: 'ClientInformation',
+                        title: newTaskTitle.trim(),
+                        description: newTaskDesc.trim() || undefined,
+                        stageNumber: newTaskStage,
+                        deadlineUtc: newTaskDeadline ? new Date(newTaskDeadline).toISOString() : undefined,
+                        assignedToRole: 'Client',
+                    },
+                    tenantId
+                );
+            } else await WorkflowApi.createAction(
                 {
                     engagementId,
                     title: newTaskTitle.trim(),
@@ -598,6 +633,59 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
         }
     };
 
+    // Approve the client's answer, or reject it with a reason so they can answer again.
+    const handleReviewRequirement = async (requirement: RequirementResponse, approve: boolean) => {
+        if (!tenantId) return;
+        let rejectionReason: string | undefined;
+        if (!approve) {
+            const reason = window.prompt('Why is this answer being rejected? The client will see this reason.');
+            if (reason === null) return;
+            if (!reason.trim()) {
+                alert('A rejection reason is required.');
+                return;
+            }
+            rejectionReason = reason.trim();
+        }
+
+        setReviewingRequirementId(requirement.requirementId);
+        try {
+            await WorkflowApi.reviewRequirement(
+                engagementId,
+                requirement.requirementId,
+                { status: approve ? 'Approved' : 'Rejected', reviewerActor: userId || 'staff', rejectionReason },
+                tenantId
+            );
+            await loadWorkspaceData();
+        } catch (err: any) {
+            alert('Review failed: ' + (err?.message || 'Server error'));
+        } finally {
+            setReviewingRequirementId(null);
+        }
+    };
+
+    // Draft -> Started. Opens the current stage: its tasks become actionable for the client, their
+    // deadlines start counting, and the client gets the welcome notification.
+    const handleStartEngagement = async () => {
+        if (!engagement || !tenantId || engagement.status !== 'Draft') return;
+        const confirmed = window.confirm(
+            'Start this engagement?\n\nThe client will be notified, Stage 1 tasks open in their portal and task deadlines start counting.'
+        );
+        if (!confirmed) return;
+
+        setIsStartingEngagement(true);
+        setStageAdvanceError(null);
+        try {
+            await WorkflowApi.updateStatus(engagement.engagementId, 'Started', tenantId);
+            setStageAdvanceSuccess('Engagement started. Stage 1 is now open to the client.');
+            setTimeout(() => setStageAdvanceSuccess(null), 4000);
+            await loadWorkspaceData();
+        } catch (err: any) {
+            setStageAdvanceError(err?.message || 'Failed to start the engagement.');
+        } finally {
+            setIsStartingEngagement(false);
+        }
+    };
+
     const handleAdvanceStage = async () => {
         if (!engagement || !tenantId) return;
         const next = getNextStage(engagement.stage);
@@ -647,6 +735,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const selectedStageDef = getStageDefinition(selectedStageKey ?? engagement?.stage);
     const progressPercent = engagement?.stageProgressPercentage ?? 0;
     const isTerminalStatus = engagement?.status === 'Closed' || engagement?.status === 'Cancelled';
+    const isDraft = engagement?.status === 'Draft';
     const nextStage = engagement ? getNextStage(engagement.stage) : null;
     const isViewingCurrentStage = selectedStageDef.key === engagement?.stage;
     // Every Advance button follows the engine: enabled only when its primary action is AdvanceStage.
@@ -712,11 +801,24 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
                                 isTerminalStatus
                                     ? 'bg-slate-100 text-slate-600 border-slate-200'
+                                    : isDraft
+                                    ? 'bg-amber-50 text-amber-800 border-amber-200'
                                     : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                             }`}>
-                                <span className={`w-1.5 h-1.5 rounded-full ${isTerminalStatus ? 'bg-slate-400' : 'bg-emerald-500'}`} />
-                                {engagement?.status || 'Active Pipeline'}
+                                <span className={`w-1.5 h-1.5 rounded-full ${isTerminalStatus ? 'bg-slate-400' : isDraft ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                                {isDraft ? 'Draft — not started' : engagement?.status || 'Active Pipeline'}
                             </span>
+                            {isDraft && (
+                                <button
+                                    type="button"
+                                    onClick={handleStartEngagement}
+                                    disabled={isStartingEngagement}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white text-xs font-bold shadow-sm transition disabled:opacity-50"
+                                >
+                                    {isStartingEngagement ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />}
+                                    Start engagement
+                                </button>
+                            )}
                         </div>
                         <p className="text-xs text-slate-500 mt-1">
                             Tenant Scoped Isolation: <code className="font-mono text-slate-700">{tenantId || 'Main Tenant'}</code> • Deterministic State Engine Active
@@ -753,6 +855,8 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                 isAdvancing={isAdvancingStage}
                 onAdvance={handleAdvanceStage}
                 onRefresh={loadNextAction}
+                isStarting={isStartingEngagement}
+                onStart={handleStartEngagement}
             />
 
             {/* 5-Stage Pipeline Stepper */}
@@ -771,7 +875,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                         className="px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
                         title="Matches the stage shown in this client's Client Portal view"
                     >
-                        Client Portal shows: Stage {clientVisibleStageOrder} of 5
+                        {isDraft ? 'Client Portal shows: Not started' : `Client Portal shows: Stage ${clientVisibleStageOrder} of 5`}
                     </span>
                 </div>
 
@@ -782,8 +886,9 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                     here as current, since that's what the Advance Stage action operates on. */}
                 <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                     {ENGAGEMENT_STAGES.map((st) => {
-                        const isPassed = st.order < clientVisibleStageOrder;
-                        const isCurrent = st.order === clientVisibleStageOrder;
+                        // A draft has not started: no stage is passed or active yet.
+                        const isPassed = !isDraft && st.order < clientVisibleStageOrder;
+                        const isCurrent = !isDraft && st.order === clientVisibleStageOrder;
                         const isSelected = st.key === (selectedStageKey ?? engagement?.stage);
 
                         return (
@@ -1439,6 +1544,61 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                 </div>
                                             </div>
 
+                                            {/* CSTD-16: the client's answer to a staff question, with review */}
+                                            {act.linkedRequirementId && (() => {
+                                                const req = requirements.find((r) => r.requirementId === act.linkedRequirementId);
+                                                if (!req) return null;
+                                                return (
+                                                    <div className="bg-white p-2.5 rounded-lg border border-slate-200/80 space-y-2 text-xs">
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <span className="flex items-center gap-1.5 font-semibold text-slate-700">
+                                                                <MessageSquare className="w-3.5 h-3.5 text-indigo-600" />
+                                                                Client answer
+                                                            </span>
+                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                                                req.status === 'Approved'
+                                                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                                    : req.status === 'Rejected'
+                                                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                                                    : req.status === 'Submitted'
+                                                                    ? 'bg-sky-50 text-sky-700 border-sky-200'
+                                                                    : 'bg-slate-50 text-slate-600 border-slate-200'
+                                                            }`}>
+                                                                {req.status === 'Requested' ? 'Awaiting client' : req.status}
+                                                            </span>
+                                                        </div>
+                                                        {req.value ? (
+                                                            <p className="text-slate-800 whitespace-pre-wrap break-words">{req.value}</p>
+                                                        ) : (
+                                                            <p className="text-slate-400 italic">No answer yet.</p>
+                                                        )}
+                                                        {req.status === 'Rejected' && req.rejectionReason && (
+                                                            <p className="text-[11px] text-rose-700">Returned to client: {req.rejectionReason}</p>
+                                                        )}
+                                                        {req.status === 'Submitted' && (
+                                                            <div className="flex items-center gap-2 pt-1">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleReviewRequirement(req, true)}
+                                                                    disabled={reviewingRequirementId === req.requirementId}
+                                                                    className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold transition disabled:opacity-50"
+                                                                >
+                                                                    Approve
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleReviewRequirement(req, false)}
+                                                                    disabled={reviewingRequirementId === req.requirementId}
+                                                                    className="px-2.5 py-1 rounded-lg bg-white hover:bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-bold transition disabled:opacity-50"
+                                                                >
+                                                                    Reject…
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })()}
+
                                             {/* Linked Evidence Document Display */}
                                             {linkedDoc ? (
                                                 <div className="bg-white p-2.5 rounded-lg border border-slate-200/80 space-y-2 text-xs">
@@ -1893,6 +2053,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                         <option value="SignAgreement">Sign Agreement / Contract</option>
                                         <option value="ProofOfAddress">Proof of Address</option>
                                         <option value="DocumentUpload">Document Upload</option>
+                                        <option value={REQUEST_INFORMATION_TYPE}>Request Information (client answers)</option>
                                     </select>
                                 </div>
                             </div>
@@ -1901,7 +2062,9 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                 <div>
                                     <label className="block text-xs font-bold text-slate-700 mb-1">Assigned Role</label>
                                     <select
-                                        value={newTaskRole}
+                                        value={newTaskType === REQUEST_INFORMATION_TYPE ? 'Client' : newTaskRole}
+                                        disabled={newTaskType === REQUEST_INFORMATION_TYPE}
+                                        title={newTaskType === REQUEST_INFORMATION_TYPE ? 'Questions are always answered by the client' : undefined}
                                         onChange={(e) => setNewTaskRole(e.target.value as any)}
                                         className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                                     >

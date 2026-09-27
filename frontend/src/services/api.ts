@@ -25,6 +25,8 @@ import {
     RejectDocumentRequest,
     UpdateDocumentMetadataRequest,
     SubmitRequirementRequest,
+    RequestRequirementRequest,
+    ReviewRequirementRequest,
     RequirementResponse,
     StallQueueItem,
     StallQueueFilters,
@@ -425,6 +427,46 @@ export const WorkflowApi = {
     },
 
     // CSTD-16 (Requirements Collection)
+    // CSTD-16 staff side: ask the client for information (creates the requirement and its task).
+    async requestRequirement(engagementId: string, data: RequestRequirementRequest, tenantId: string): Promise<RequirementResponse> {
+        return request<RequirementResponse>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/requirements?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'POST',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify(data),
+            }
+        );
+    },
+
+    // Staff view (includes the client's answer and review metadata).
+    async getRequirements(engagementId: string, tenantId: string): Promise<RequirementResponse[]> {
+        return request<RequirementResponse[]>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/requirements?tenantId=${encodeURIComponent(tenantId)}&isClientView=false`,
+            {
+                method: 'GET',
+                headers: { 'X-Tenant-ID': tenantId },
+            }
+        );
+    },
+
+    // Approve the client's answer, or reject it with a reason (the client can then resubmit).
+    async reviewRequirement(
+        engagementId: string,
+        requirementId: string,
+        data: ReviewRequirementRequest,
+        tenantId: string
+    ): Promise<RequirementResponse> {
+        return request<RequirementResponse>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/requirements/${requirementId}/review?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'PUT',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify(data),
+            }
+        );
+    },
+
     async submitRequirement(
         engagementId: string,
         requirementId: string,

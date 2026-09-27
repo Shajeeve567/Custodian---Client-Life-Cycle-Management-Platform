@@ -191,6 +191,10 @@ export interface ClientSafeAction {
     // WorkflowApi.submitRequirement(engagementId, linkedRequirementId, ...) rather than the
     // generic complete/upload flow.
     linkedRequirementId?: string | null;
+    // False while the task's stage (or the engagement) hasn't started: shown as a preview, not actionable.
+    // The Workflow API enforces the same rule (409 "This task opens in Stage N").
+    isAvailable?: boolean;
+    availableFromStage?: number | null;
 }
 
 export interface ClientPortalStage {
@@ -305,6 +309,22 @@ export interface ApplyActionVerificationRequest {
 }
 
 // CSTD-16 (Requirements Collection)
+// Staff ask the client a question / for information ("Request Information" in the Add Task form).
+export interface RequestRequirementRequest {
+    type: string;
+    title: string;
+    description?: string;
+    stageNumber: number;
+    deadlineUtc?: string;
+    assignedToRole: 'Client';
+}
+
+export interface ReviewRequirementRequest {
+    status: 'Approved' | 'Rejected';
+    reviewerActor: string;
+    rejectionReason?: string;
+}
+
 export interface SubmitRequirementRequest {
     value: string;
     submittedByActor?: string;

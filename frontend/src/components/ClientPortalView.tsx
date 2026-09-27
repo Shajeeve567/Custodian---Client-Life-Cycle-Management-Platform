@@ -5,6 +5,7 @@ import { ClientPortalDashboard, ClientSafeAction, DocumentMetadata, ClientSafeCo
 import { PortalApi, WorkflowApi, DocumentsApi } from '../services/api';
 import { UploadEvidenceModal } from './UploadEvidenceModal';
 import { SubmitRequirementModal } from './SubmitRequirementModal';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import {
     Shield,
     CheckCircle2,
@@ -26,7 +27,9 @@ import {
     CheckSquare,
     DollarSign,
     XCircle,
-    ShieldCheck
+    ShieldCheck,
+    Lock,
+    Hourglass
 } from 'lucide-react';
 
 interface ClientPortalViewProps {
@@ -38,6 +41,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
     const [dashboard, setDashboard] = useState<ClientPortalDashboard | null>(null);
     const [conditions, setConditions] = useState<ClientSafeCondition[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
+    const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const [loadingConditions, setLoadingConditions] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [actionInProgress, setActionInProgress] = useState<string | null>(null);
@@ -106,10 +110,13 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
         }
     }, [tenantId]);
 
-    const fetchDashboard = useCallback(async () => {
+    // silent: background refresh (no full-page loader, and a failed refresh keeps the current view).
+    const fetchDashboard = useCallback(async (silent = false) => {
         if (!tenantId) return;
-        setLoading(true);
-        setError(null);
+        if (!silent) {
+            setLoading(true);
+            setError(null);
+        }
 
         try {
             let data: ClientPortalDashboard;
@@ -134,16 +141,22 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                     console.warn('Failed to load client conditions:', cErr);
                 }
             }
+            setLastUpdated(new Date());
         } catch (err: any) {
-            setError(err.message || 'Failed to load client onboarding portal');
+            if (!silent) setError(err.message || 'Failed to load client onboarding portal');
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
     }, [tenantId, userId, initialEngagementId, fetchDocuments, role]);
 
     useEffect(() => {
         fetchDashboard();
     }, [fetchDashboard]);
+
+    // Staff changes (new tasks, verifications, stage advances) appear without a manual reload: refresh on
+    // returning to the tab and every 60s while it is visible.
+    const refreshSilently = useCallback(() => fetchDashboard(true), [fetchDashboard]);
+    useAutoRefresh(refreshSilently, 60_000, Boolean(tenantId));
 
     const handleCompleteAction = async (action: ClientSafeAction) => {
         if (!dashboard) return;
@@ -202,6 +215,13 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                         Engagement Delivered & Sealed
                     </span>
                 );
+            case 'NotStarted':
+                return (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-50 text-slate-700 border border-slate-200">
+                        <Hourglass className="w-3.5 h-3.5 text-slate-500" />
+                        Not Started Yet
+                    </span>
+                );
             case 'AllCaughtUp':
             default:
                 return (
@@ -250,7 +270,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                         </Link>
                     ) : (
                         <button
-                            onClick={fetchDashboard}
+                            onClick={() => fetchDashboard()}
                             className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#635bff] to-[#712ae2] text-white text-xs font-semibold hover:opacity-95 transition"
                         >
                             Retry Connection
@@ -327,6 +347,15 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
 
                     <div className="flex items-center gap-3">
                         {renderConditionBadge(conditionStatus)}
+                        <button
+                            type="button"
+                            onClick={() => fetchDashboard(true)}
+                            title="Refresh now (updates automatically every minute)"
+                            className="text-[11px] text-slate-500 hover:text-indigo-700 font-semibold flex items-center gap-1"
+                        >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            {lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Refresh'}
+                        </button>
                     </div>
                 </div>
 
@@ -699,6 +728,16 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                         </div>
                     </div>
                 </div>
+            ) : conditionStatus === 'NotStarted' ? (
+                <div className="bg-slate-50/80 border border-slate-200 p-8 rounded-2xl text-center space-y-3 shadow-xs">
+                    <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto text-slate-600">
+                        <Hourglass className="w-6 h-6" />
+                    </div>
+                    <h3 className="text-lg font-bold text-slate-900">Your onboarding hasn't started yet</h3>
+                    <p className="text-xs text-slate-600 max-w-md mx-auto">
+                        Your Custodian team will start it shortly. The tasks below are a preview; you can act on them once your onboarding begins.
+                    </p>
+                </div>
             ) : conditionStatus === 'UnderReview' ? (
                 <div className="bg-sky-50/70 border border-sky-200 p-8 rounded-2xl text-center space-y-3 shadow-xs">
                     <div className="w-12 h-12 rounded-xl bg-sky-100 flex items-center justify-center mx-auto text-sky-700">
@@ -789,7 +828,13 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                             {new Date(action.deadlineUtc).toLocaleDateString()}
                                         </span>
                                     )}
-                                    {isRequirementAction(action) ? (
+                                    {action.isAvailable === false ? (
+                                        // Future stage (or not started): a preview only; the API refuses early actions.
+                                        <span className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 text-xs font-semibold flex items-center gap-1.5">
+                                            <Lock className="w-3.5 h-3.5" />
+                                            {action.availableFromStage ? `Opens in Stage ${action.availableFromStage}` : 'Not available yet'}
+                                        </span>
+                                    ) : isRequirementAction(action) ? (
                                         <button
                                             onClick={() => setSelectedActionForRequirement(action)}
                                             className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
@@ -958,7 +1003,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                 engagementId={dashboard.engagementId}
                 tenantId={tenantId || ''}
                 userId={userId}
-                onSuccess={fetchDashboard}
+                onSuccess={() => fetchDashboard()}
             />
 
             {/* Action-bound Evidence Upload Modal */}

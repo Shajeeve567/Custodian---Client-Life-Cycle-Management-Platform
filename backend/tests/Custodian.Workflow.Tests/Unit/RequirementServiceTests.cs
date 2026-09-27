@@ -468,7 +468,8 @@ public class RequirementServiceTests
             EngagementId = engagementId,
             TenantId = tenantId,
             ClientId = "client-owner",
-            StaffId = "staff-1"
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started
         });
         await db.SaveChangesAsync();
         var requested = await service.RequestRequirementAsync(engagementId, tenantId, new RequestRequirementDto { Type = "SourceOfFunds" });
@@ -482,6 +483,45 @@ public class RequirementServiceTests
         Assert.NotNull(result);
         Assert.Equal(RequirementStatus.Submitted, result!.Status);
         Assert.Equal("Salary income", result.Value);
+    }
+
+    [Theory]
+    [InlineData(EngagementStatus.Draft, 1)]   // engagement not started
+    [InlineData(EngagementStatus.Started, 3)] // requirement for a later stage
+    public async Task SubmitRequirementAsync_ClientBeforeTheStageStarts_IsRefused(EngagementStatus status, int stage)
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        const string tenantId = "tenant-001";
+        var service = new RequirementService(db, new Mock<IAuditPublisher>().Object);
+        db.Engagements.Add(new Engagement { EngagementId = engagementId, TenantId = tenantId, ClientId = "client-owner", StaffId = "staff-1", Status = status });
+        await db.SaveChangesAsync();
+        var requested = await service.RequestRequirementAsync(engagementId, tenantId, new RequestRequirementDto { Type = "SourceOfFunds", StageNumber = stage });
+
+        await Assert.ThrowsAsync<ClientActionNotAvailableException>(() => service.SubmitRequirementAsync(
+            engagementId, requested.RequirementId, tenantId, new SubmitRequirementDto { Value = "Salary" }, callerClientId: "client-owner"));
+
+        // Staff can still record an answer on the client's behalf.
+        var staffResult = await service.SubmitRequirementAsync(engagementId, requested.RequirementId, tenantId, new SubmitRequirementDto { Value = "Salary" });
+        Assert.NotNull(staffResult);
+    }
+
+    [Theory]
+    [InlineData(EngagementStatus.Draft, 1, false)]
+    [InlineData(EngagementStatus.Started, 1, true)]
+    [InlineData(EngagementStatus.Started, 2, false)]
+    public async Task RequestRequirementAsync_MirroredTaskIsActiveOnlyOnceItsStageHasStarted(EngagementStatus status, int stage, bool expectActive)
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        db.Engagements.Add(new Engagement { EngagementId = engagementId, TenantId = "tenant-001", ClientId = "c1", StaffId = "s1", Status = status, Stage = EngagementStage.Onboarding });
+        await db.SaveChangesAsync();
+
+        var requested = await new RequirementService(db, new Mock<IAuditPublisher>().Object)
+            .RequestRequirementAsync(engagementId, "tenant-001", new RequestRequirementDto { Type = "SourceOfFunds", StageNumber = stage });
+
+        var mirrored = await db.ClientActions.SingleAsync(a => a.LinkedRequirementId == requested.RequirementId);
+        Assert.Equal(expectActive, mirrored.ActivatedAt.HasValue);
     }
 
     [Fact]
