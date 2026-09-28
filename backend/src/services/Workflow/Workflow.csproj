@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\shared\Custodian.Shared\Custodian.Shared.csproj" />
+    <ProjectReference Include="..\..\shared\Custodian.Shared.Reporting\Custodian.Shared.Reporting.csproj" />
   </ItemGroup>
 
 </Project>

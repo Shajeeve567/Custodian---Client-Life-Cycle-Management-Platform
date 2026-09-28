@@ -5,6 +5,7 @@ using Custodian.Workflow.Services;
 using Custodian.Workflow.Services.Kafka;
 using Custodian.Shared.Http;
 using Custodian.Shared.Auth;
+using Custodian.Shared.Reporting;
 using Custodian.Shared.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -36,6 +37,9 @@ if (!string.IsNullOrWhiteSpace(connectionString))
 
 // Register Workflow domain services (repositories, actions, conditions, gate, next action, SLA/stall)
 builder.Services.AddWorkflowDomainServices(builder.Configuration);
+
+// CSTD-36 shared report renderer + CSV exporter (reports are generated from Workflow's own live data).
+builder.Services.AddCustodianReporting();
 
 // Audit transport (Audit:Transport, env Audit__Transport). "Kafka" (appsettings.json) publishes onto the
 // shared "custodian.events" topic, which Audit, Identity (notifications) and Workflow's own consumer

@@ -84,20 +84,45 @@ This university case-study project qualifies. A commercial deployment above that
 
 ## Adding a report
 
-1. In the owning service, query live data for the caller's tenant and compute a plain result object.
-2. Build a `ReportModel` subclass from it (a *model builder*): metadata + sections.
-3. Render it with `IReportRenderer` (PDF), or export a `TableSection` with `ICsvExporter` (CSV).
-4. Return it with `ReportResults.File(...)` from `GET api/reports/{report-slug}`.
+1. **Compute the numbers.** In the owning service, query live data for the caller's tenant (`ReportAuthorization.RequireTenantId(User)`) and compute a plain result object.
+2. **Build the model.** Build a `ReportModel` subclass from it (a *model builder*): metadata + sections. Take `GeneratedBy` from `ReportAuthorization.ResolveActor(User)`.
+3. **Render it.** Use `IReportRenderer` for PDF, or `ICsvExporter` to export a `TableSection` as CSV. Register both once per service with `builder.Services.AddCustodianReporting()`; Workflow already does this.
+4. **Return it** with `ReportResults.File(ReportResults.Output(metadata, format, bytes))`.
+
+A report endpoint looks like this:
+
+```csharp
+[ApiController]
+[Route("api/reports")]
+[Authorize(Roles = "Owner,Staff")]
+[ReportErrors("SLA_PERFORMANCE")]          // error contract below
+public class ReportsController : ControllerBase
+{
+    [HttpGet("sla-performance")]
+    public async Task<IActionResult> SlaPerformance([FromQuery] string? format, ...)
+    {
+        var reportFormat = ReportFormats.Parse(format);                  // 400 on anything but pdf/csv
+        var tenantId = ReportAuthorization.RequireTenantId(User);        // JWT only
+        var model = await _builder.BuildAsync(tenantId, ..., ReportAuthorization.ResolveActor(User));
+        var bytes = reportFormat == ReportFormat.Csv ? _csv.ToCsv(model.Detail) : _renderer.RenderPdf(model);
+        return ReportResults.File(ReportResults.Output(model.Metadata, reportFormat, bytes));
+    }
+}
+```
+
+`tests/Custodian.Workflow.Tests/Integration/ReportPipelineTests.cs` runs exactly this shape, as a test-only endpoint, through the real Workflow pipeline.
 
 ## Endpoint convention
 
 `GET api/reports/{report-slug}?format=pdf|csv&{filters}`
 
 - **Format:** `format` defaults to `pdf`. Any other value → 400.
-- **Download headers:**
-    - file name `custodian-{reportcode-lower}-{yyyyMMdd-HHmm}Z.{ext}`;
-    - `Content-Type` `application/pdf` or `text/csv`;
-    - `Cache-Control: no-store`.
+- **Download headers** (`ReportResults.File`):
+    - `Content-Disposition: attachment; filename="custodian-{reportcode-lower}-{yyyyMMdd-HHmm}Z.{ext}"`, e.g. `custodian-sla_performance-20260928-1030Z.pdf`. The timestamp is the report's own "now".
+    - `Content-Type` `application/pdf` or `text/csv; charset=utf-8`.
+    - `Cache-Control: no-store`, because reports hold client data and must not be cached.
+    - `X-Content-Type-Options: nosniff`.
+- **Cross-origin:** CORS already exposes `Content-Disposition`, so the browser frontend can read the file name.
 - **Roles:** `[Authorize(Roles = "Owner,Staff")]` unless the report is client-facing (below).
 
 ## Tenant and role rules
@@ -108,15 +133,30 @@ This university case-study project qualifies. A commercial deployment above that
 
 ## Errors
 
-Errors are ASP.NET `ProblemDetails` with a `reportCode` extension. Stack traces are never returned.
+Put `[ReportErrors("REPORT_CODE")]` on the report controller or action. Throw `ReportGenerationException` for expected failures:
+
+- `ReportGenerationException.InvalidFilter("from", "…")`
+- `.SubjectNotFound("…")`
+- `.DataSourceUnavailable("…", inner)`
+- `.Forbidden("…")`
+
+Any other exception becomes a 500. The response is ASP.NET `ProblemDetails` (`application/problem+json`) with extensions:
+
+- `reportCode`;
+- `correlationId`;
+- `field`, for filter errors.
+
+The message is shown to the user for every kind except a 500, so keep ids and internals out of it. A 500 never includes the exception text or a stack trace; its detail asks the user to quote the correlation id, which is logged with the exception.
 
 | Situation | Status | Title |
 |---|---|---|
-| Invalid filter (from > to, bad date, unknown stage, unsupported format) | 400 | Invalid report filter (+ field detail) |
-| Role not allowed | 403 | standard |
+| Invalid filter (from > to, bad date, unknown stage, unsupported format) | 400 | Invalid report filter (+ `field`) |
+| Role not allowed | 403 | standard from `[Authorize]`; "Forbidden" from `ReportAuthorization` |
 | Engagement or other subject not in the tenant | 404 | Report subject not found |
 | A service the report depends on is down | 503 | Report data source unavailable — try again |
-| Rendering failure | 500 | Report could not be generated (logged with a correlation id) |
+| Rendering or unexpected failure | 500 | Report could not be generated (logged with the correlation id) |
+
+Logs record the report code, error kind and correlation id, never the filter values, which can identify clients. A cancelled request (the user closed the page) is not treated as a failure.
 
 ## Status
 
@@ -125,6 +165,6 @@ Errors are ASP.NET `ProblemDetails` with a `reportCode` extension. Stack traces 
 | Report model + value rules | CSTD-36-M1 | Done |
 | PDF renderer | CSTD-36-M2 | Done |
 | CSV exporter | CSTD-36-M3 | Done |
-| `ReportResults`, error contract, role helper | CSTD-36-M4 | Planned |
+| `ReportResults`, error contract, role helper, Workflow wiring | CSTD-36-M4 | Done |
 | Telemetry, sample report | CSTD-36-M5 | Planned |
 | Frontend download helper | CSTD-36-M6 | Planned |

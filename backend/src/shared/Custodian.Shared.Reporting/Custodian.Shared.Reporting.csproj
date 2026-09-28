@@ -8,6 +8,11 @@
     <PackageReference Include="QuestPDF" Version="2026.9.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- ReportResults, the ProblemDetails filter and claim helpers are ASP.NET Core types. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
