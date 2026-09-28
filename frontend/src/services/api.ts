@@ -103,7 +103,8 @@ async function authorizedFetch(
         let errorData: any = null;
 
         const contentType = response.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
+        // ASP.NET error bodies (ProblemDetails) are application/problem+json.
+        if (contentType.includes('application/json') || contentType.includes('+json')) {
             try {
                 errorData = await response.json();
                 if (errorData?.errors && typeof errorData.errors === 'object') {
@@ -147,6 +148,103 @@ export async function request<T = any>(
 
     // plain text response
     return (await response.text()) as unknown as T;
+}
+
+/* ==========================================================================
+   Reports (CSTD-36)
+   ========================================================================== */
+
+/** RFC 7807 body of a failed report request (see docs/reporting.md, Errors). */
+export interface ReportProblem {
+    status: number;
+    title: string;
+    detail?: string;
+    reportCode?: string;
+    correlationId?: string;
+    /** The filter at fault, for "Invalid report filter". */
+    field?: string;
+}
+
+export class ReportDownloadError extends Error {
+    problem: ReportProblem;
+
+    constructor(problem: ReportProblem) {
+        super(problem.detail ? `${problem.title}: ${problem.detail}` : problem.title);
+        this.name = 'ReportDownloadError';
+        this.problem = problem;
+    }
+}
+
+export type ReportParams = Record<string, string | number | boolean | null | undefined>;
+
+/** File name from `Content-Disposition` (quoted, bare or RFC 5987 `filename*=`), else `fallback`. */
+export function reportFileName(contentDisposition: string | null, fallback: string): string {
+    if (!contentDisposition) return fallback;
+    const extended = /filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)/.exec(contentDisposition);
+    if (extended) {
+        try {
+            return decodeURIComponent(extended[1].trim());
+        } catch {
+            /* fall through to the plain filename */
+        }
+    }
+    const plain = /filename\s*=\s*("([^"]*)"|[^;]+)/.exec(contentDisposition);
+    const name = (plain?.[2] ?? plain?.[1] ?? '').trim();
+    return name || fallback;
+}
+
+function toReportProblem(err: unknown): ReportProblem {
+    if (err instanceof ApiError) {
+        const data = err.data && typeof err.data === 'object' ? err.data : {};
+        return {
+            status: err.status,
+            title: data.title || (err.status === 403 ? 'You do not have access to this report' : 'Report could not be generated'),
+            detail: data.detail || (data.title ? undefined : err.message || undefined),
+            reportCode: data.reportCode,
+            correlationId: data.correlationId,
+            field: data.field,
+        };
+    }
+    // Network failure (service down, CORS): fetch rejects without a response.
+    return {
+        status: 0,
+        title: 'Report data source unavailable — try again',
+        detail: err instanceof Error ? err.message : undefined,
+    };
+}
+
+/**
+ * Downloads a report (CSTD-36 endpoint convention: GET api/reports/{slug}?format=pdf|csv&filters) with the
+ * caller's token, saving it under the server's file name. Empty/undefined params are left out.
+ * Throws ReportDownloadError carrying the ProblemDetails (title, detail, field, correlationId).
+ */
+export async function downloadReport(url: string, params: ReportParams = {}): Promise<{ fileName: string }> {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') query.append(key, String(value));
+    });
+    const fullUrl = query.toString() ? `${url}${url.includes('?') ? '&' : '?'}${query.toString()}` : url;
+
+    let response: Response;
+    try {
+        response = await authorizedFetch(fullUrl, { headers: { Accept: 'application/pdf, text/csv, application/problem+json' } });
+    } catch (err) {
+        throw new ReportDownloadError(toReportProblem(err));
+    }
+
+    const fallback = `custodian-report.${String(params.format || 'pdf').toLowerCase()}`;
+    const fileName = reportFileName(response.headers.get('content-disposition'), fallback);
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // Give the browser a moment to start the download before releasing the blob.
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
+    return { fileName };
 }
 
 /* ==========================================================================

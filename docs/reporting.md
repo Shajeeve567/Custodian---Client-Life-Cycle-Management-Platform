@@ -164,6 +164,31 @@ The message is shown to the user for every kind except a 500, so keep ids and in
 
 Logs record the report code, error kind and correlation id, never the filter values, which can identify clients. A cancelled request (the user closed the page) is not treated as a failure.
 
+## Frontend
+
+`frontend/src/services/api.ts` exports `downloadReport(url, params)`. It:
+
+- sends the request with the user's token;
+- leaves out empty parameters;
+- saves the file under the name from `Content-Disposition`;
+- throws a `ReportDownloadError` whose `problem` holds the ProblemDetails fields (`title`, `detail`, `field`, `reportCode`, `correlationId`). A network failure reads as "Report data source unavailable — try again".
+
+`<ReportDownloadButton url format params />` (`frontend/src/components/reports/`) wraps it:
+
+- a "Generating…" spinner while the report is built;
+- the error title and detail under the button;
+- the reference id to quote for a 500.
+
+```tsx
+<ReportDownloadButton
+    url={`${API_BASE.WORKFLOW}/api/reports/sla-performance`}
+    format="pdf"
+    params={{ from, to, stage, engagementId }}
+/>
+```
+
+The shared `authorizedFetch` now also reads `application/problem+json` error bodies. Previously the raw JSON text became the error message for every ProblemDetails response.
+
 ## Telemetry
 
 Wrap each generation in `ReportTelemetry.MeasureAsync(reportCode, format, generate)`. It records one entry per run:
@@ -201,4 +226,4 @@ Still open for DevOps (CSTD-36-5): render a PDF inside the Workflow Docker image
 | CSV exporter | CSTD-36-M3 | Done |
 | `ReportResults`, error contract, role helper, Workflow wiring | CSTD-36-M4 | Done |
 | Telemetry, sample report, CI check | CSTD-36-M5 | Done |
-| Frontend download helper | CSTD-36-M6 | Planned |
+| Frontend download helper + button | CSTD-36-M6 | Done |
