@@ -2,6 +2,7 @@ using Confluent.Kafka;
 using Custodian.Workflow;
 using Custodian.Workflow.Data;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Access;
 using Custodian.Workflow.Services.Kafka;
 using Custodian.Shared.Http;
 using Custodian.Shared.Auth;
@@ -14,7 +15,8 @@ using Scalar.AspNetCore;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add controllers & CORS
-builder.Services.AddControllers();
+// Staff only reach engagements they are responsible for (Owners: all; see EngagementAccess).
+builder.Services.AddControllers(options => options.Filters.Add<StaffEngagementAccessFilter>());
 builder.Services.AddCustodianCors(builder.Configuration, builder.Environment);
 builder.Services.AddTenantContext();
 builder.Services.AddJwtAuthentication(builder.Configuration, builder.Environment);

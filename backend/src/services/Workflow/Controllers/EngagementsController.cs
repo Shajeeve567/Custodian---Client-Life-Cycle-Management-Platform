@@ -2,6 +2,7 @@ using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Access;
 using Custodian.Workflow.Services.Stall;
 using Custodian.Workflow.Services.Gates;
 using Custodian.Workflow.Services.NextAction;
@@ -63,7 +64,10 @@ public class EngagementsController : ControllerBase
             EngagementId = Guid.NewGuid(),
             TenantId = effectiveTenantId,
             ClientId = request.ClientId,
-            StaffId = request.StaffId,
+            // Staff can only create engagements they are responsible for; otherwise they could not open them.
+            StaffId = EngagementAccess.IsAssignmentRestricted(User)
+                ? EngagementAccess.CallerUserId(User) ?? request.StaffId
+                : request.StaffId,
             Status = EngagementStatus.Draft,
             Stage = EngagementStage.Onboarding,
             CreatedAt = DateTime.UtcNow
@@ -196,10 +200,14 @@ public class EngagementsController : ControllerBase
 
         var engagements = await _repository.GetAllByTenantAsync(effectiveTenantId);
 
-        // Owner/Staff see the whole tenant; a Client sees only its own engagements.
+        // Owner: the whole tenant. Staff: the engagements they are responsible for. Client: its own.
         if (IsClientCaller())
         {
             engagements = engagements.Where(IsOwnedByCaller).ToList();
+        }
+        else
+        {
+            engagements = engagements.Where(e => EngagementAccess.CanAccess(User, e.StaffId)).ToList();
         }
 
         return Ok(engagements.Select(MapToResponse));

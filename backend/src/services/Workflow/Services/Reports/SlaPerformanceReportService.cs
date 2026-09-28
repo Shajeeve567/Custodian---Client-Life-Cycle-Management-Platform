@@ -13,8 +13,11 @@ public interface ISlaPerformanceReportService
     /// Computes the SLA performance numbers for the caller's tenant (from the JWT) as of <paramref name="now"/>.
     /// Throws <see cref="ReportGenerationException"/>: 404 for an engagement outside the tenant, 400 when
     /// the filters match too many actions, 503 when the database is unreachable.
+    /// <paramref name="restrictToStaffId"/> limits everything to engagements that staff member is responsible
+    /// for (a Staff caller; null for Owners), on top of the filters.
     /// </summary>
-    Task<SlaPerformanceData> ComputeAsync(string tenantId, SlaReportFilter filter, DateTimeOffset now, CancellationToken ct = default);
+    Task<SlaPerformanceData> ComputeAsync(
+        string tenantId, SlaReportFilter filter, DateTimeOffset now, string? restrictToStaffId = null, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -47,7 +50,8 @@ public sealed class SlaPerformanceReportService : ISlaPerformanceReportService
         _sla = sla;
     }
 
-    public async Task<SlaPerformanceData> ComputeAsync(string tenantId, SlaReportFilter filter, DateTimeOffset now, CancellationToken ct = default)
+    public async Task<SlaPerformanceData> ComputeAsync(
+        string tenantId, SlaReportFilter filter, DateTimeOffset now, string? restrictToStaffId = null, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         ArgumentNullException.ThrowIfNull(filter);
@@ -55,13 +59,13 @@ public sealed class SlaPerformanceReportService : ISlaPerformanceReportService
         try
         {
             if (filter.EngagementId.HasValue &&
-                !await _db.Engagements.AsNoTracking().AnyAsync(e => e.EngagementId == filter.EngagementId && e.TenantId == tenantId, ct))
+                !await Engagements(tenantId, restrictToStaffId).AnyAsync(e => e.EngagementId == filter.EngagementId, ct))
             {
-                // Same answer whether it does not exist or belongs to another tenant.
+                // Same answer whether it does not exist, belongs to another tenant or to another staff member.
                 throw ReportGenerationException.SubjectNotFound("The selected engagement was not found in this workspace.");
             }
 
-            var actions = await FilteredActions(tenantId, filter)
+            var actions = await FilteredActions(tenantId, filter, restrictToStaffId)
                 .Where(a => a.ActivatedAt != null && a.ActivatedAt >= filter.FromUtc && a.ActivatedAt < filter.ToUtcExclusive)
                 .OrderBy(a => a.ActivatedAt)
                 .ThenBy(a => a.ActionId)
@@ -76,7 +80,7 @@ public sealed class SlaPerformanceReportService : ISlaPerformanceReportService
                     field: "to");
             }
 
-            var stalls = await LoadStallsAsync(tenantId, filter, ct);
+            var stalls = await LoadStallsAsync(tenantId, filter, restrictToStaffId, ct);
             return Compute(filter, now, actions, stalls);
         }
         catch (DbException ex)
@@ -85,10 +89,17 @@ public sealed class SlaPerformanceReportService : ISlaPerformanceReportService
         }
     }
 
-    /// <summary>The tenant's actions narrowed by engagement, stage, staff and type (not by date).</summary>
-    private IQueryable<ClientAction> FilteredActions(string tenantId, SlaReportFilter filter)
+    /// <summary>The tenant's engagements the caller may report on.</summary>
+    private IQueryable<Engagement> Engagements(string tenantId, string? restrictToStaffId)
     {
         var engagements = _db.Engagements.AsNoTracking().Where(e => e.TenantId == tenantId);
+        return restrictToStaffId is null ? engagements : engagements.Where(e => e.StaffId == restrictToStaffId);
+    }
+
+    /// <summary>The tenant's actions narrowed by engagement, stage, staff and type (not by date).</summary>
+    private IQueryable<ClientAction> FilteredActions(string tenantId, SlaReportFilter filter, string? restrictToStaffId)
+    {
+        var engagements = Engagements(tenantId, restrictToStaffId);
         if (filter.EngagementId.HasValue) engagements = engagements.Where(e => e.EngagementId == filter.EngagementId);
         if (filter.StaffId is not null) engagements = engagements.Where(e => e.StaffId == filter.StaffId);
 
@@ -100,9 +111,9 @@ public sealed class SlaPerformanceReportService : ISlaPerformanceReportService
         return actions;
     }
 
-    private async Task<List<StallRecord>> LoadStallsAsync(string tenantId, SlaReportFilter filter, CancellationToken ct)
+    private async Task<List<StallRecord>> LoadStallsAsync(string tenantId, SlaReportFilter filter, string? restrictToStaffId, CancellationToken ct)
     {
-        var actionIds = FilteredActions(tenantId, filter).Select(a => a.ActionId);
+        var actionIds = FilteredActions(tenantId, filter, restrictToStaffId).Select(a => a.ActionId);
         return await _db.StallRecords.AsNoTracking()
             .Where(s => s.TenantId == tenantId && actionIds.Contains(s.ActionId))
             .Where(s => s.ResolvedAtUtc == null

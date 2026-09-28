@@ -69,7 +69,7 @@ public class ClientPortalControllerTests
             ProgressPercentage = 25
         };
 
-        _mockPortalService.Setup(s => s.GetActiveDashboardForClientAsync(tenantId, clientId))
+        _mockPortalService.Setup(s => s.GetActiveDashboardForClientAsync(tenantId, clientId, It.IsAny<string?>()))
             .ReturnsAsync(expectedDto);
 
         // Act
@@ -105,7 +105,7 @@ public class ClientPortalControllerTests
         var clientId = "client-user-1";
         SetupUserContext(tenantId, clientId, "Client");
 
-        _mockPortalService.Setup(s => s.GetActiveDashboardForClientAsync(tenantId, clientId))
+        _mockPortalService.Setup(s => s.GetActiveDashboardForClientAsync(tenantId, clientId, It.IsAny<string?>()))
             .ReturnsAsync((ClientPortalDashboardDto?)null);
 
         // Act
@@ -212,7 +212,7 @@ public class ClientPortalControllerTests
 
         _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
 
-        _mockPortalService.Setup(s => s.GetActiveDashboardForClientAsync(tenantId, forgedClientId))
+        _mockPortalService.Setup(s => s.GetActiveDashboardForClientAsync(tenantId, forgedClientId, It.IsAny<string?>()))
             .ReturnsAsync((ClientPortalDashboardDto?)null);
 
         // Act
@@ -221,7 +221,7 @@ public class ClientPortalControllerTests
         // Assert: MUST return 404 NotFound and MUST NEVER call GetActiveDashboardForTenantAsync
         var notFound = Assert.IsType<NotFoundObjectResult>(result.Result);
         Assert.Equal(404, notFound.StatusCode);
-        _mockPortalService.Verify(s => s.GetActiveDashboardForTenantAsync(It.IsAny<string>()), Times.Never);
+        _mockPortalService.Verify(s => s.GetActiveDashboardForTenantAsync(It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]
@@ -273,7 +273,7 @@ public class ClientPortalControllerTests
 
         _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
 
-        _mockPortalService.Setup(s => s.GetActiveDashboardForTenantAsync(tenantId))
+        _mockPortalService.Setup(s => s.GetActiveDashboardForTenantAsync(tenantId, It.IsAny<string?>()))
             .ReturnsAsync(expectedDto);
 
         // Act
@@ -317,7 +317,7 @@ public class ClientPortalControllerTests
             NextAction = expectedNextAction
         };
 
-        _mockPortalService.Setup(s => s.GetActiveDashboardForClientAsync(tenantId, clientId))
+        _mockPortalService.Setup(s => s.GetActiveDashboardForClientAsync(tenantId, clientId, It.IsAny<string?>()))
             .ReturnsAsync(expectedDto);
 
         // Act

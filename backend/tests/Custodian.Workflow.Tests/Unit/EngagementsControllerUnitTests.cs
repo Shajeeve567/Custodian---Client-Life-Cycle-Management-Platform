@@ -659,8 +659,8 @@ public class EngagementsControllerUnitTests
     [Fact]
     public async Task GetEngagements_WithoutTenantQuery_ShouldUseJwtClaimAndReturn200OK()
     {
-        // Arrange: Authenticated JWT user belongs to tenant-AUTHENTICATED
-        SetupUserJwtClaim("tenant-AUTHENTICATED");
+        // Arrange: Authenticated JWT user belongs to tenant-AUTHENTICATED (an Owner: sees every engagement)
+        SetupUserJwtClaim("tenant-AUTHENTICATED", role: "Owner");
 
         var engagement = new Engagement
         {

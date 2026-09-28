@@ -147,7 +147,7 @@ public class SlaPerformanceReportEndpointTests : IClassFixture<SlaPerformanceRep
     [Fact]
     public async Task Csv_HasOneRowPerAction()
     {
-        var response = await Client("Staff", TenantA).GetAsync($"{Url}?format=csv");
+        var response = await Client("Owner", TenantA).GetAsync($"{Url}?format=csv");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/csv", response.Content.Headers.ContentType!.MediaType);

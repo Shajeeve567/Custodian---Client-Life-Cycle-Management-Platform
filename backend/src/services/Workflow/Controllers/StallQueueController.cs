@@ -46,6 +46,12 @@ public class StallQueueController : ControllerBase
 
         var callerStaffId = User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
             ?? User?.FindFirst("sub")?.Value;
+        // Staff only see stalls on engagements they are responsible for (Owners see the whole workspace).
+        if (Services.Access.EngagementAccess.RestrictedStaffId(User) is { } restrictedStaffId)
+        {
+            mine = true;
+            callerStaffId = restrictedStaffId;
+        }
         if (mine && string.IsNullOrWhiteSpace(callerStaffId))
             return BadRequest(new { message = "mine=true needs a signed-in staff member." });
 

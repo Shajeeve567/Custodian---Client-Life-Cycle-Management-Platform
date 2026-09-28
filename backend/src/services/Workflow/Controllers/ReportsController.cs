@@ -3,6 +3,7 @@ using Custodian.Shared.Reporting.Errors;
 using Custodian.Shared.Reporting.Export;
 using Custodian.Shared.Reporting.Observability;
 using Custodian.Shared.Reporting.Rendering;
+using Custodian.Workflow.Services.Access;
 using Custodian.Workflow.Services.Reports;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -56,7 +57,8 @@ public class ReportsController : ControllerBase
         var output = await _telemetry.MeasureAsync(SlaPerformanceReportBuilder.ReportCode, format, async () =>
         {
             var filter = SlaReportFilter.Parse(query, now);
-            var data = await _slaReport.ComputeAsync(tenantId, filter, now, ct);
+            // Staff report only on the engagements they are responsible for; Owners on the whole workspace.
+            var data = await _slaReport.ComputeAsync(tenantId, filter, now, EngagementAccess.RestrictedStaffId(User), ct);
             var report = SlaPerformanceReportBuilder.Build(data, tenantId, ReportAuthorization.ResolveActor(User));
 
             var bytes = format == ReportFormat.Csv ? _csv.ToCsv(report.Detail) : _renderer.RenderPdf(report);
