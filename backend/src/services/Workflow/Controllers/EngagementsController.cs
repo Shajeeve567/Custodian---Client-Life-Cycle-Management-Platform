@@ -149,6 +149,37 @@ public class EngagementsController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// CSTD-35: Explicit re-evaluation of the next action for an engagement. Use this
+    /// when staff want to confirm the current state after an intervention rather than
+    /// mutate it. Idempotent — repeated calls do not change engagement state.
+    /// Returns the same result shape as GET /next-action.
+    /// </summary>
+    [HttpPost("{id}/recheck")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<NextActionResult>> Recheck(
+        Guid id,
+        [FromQuery] string? tenantId,
+        CancellationToken ct = default)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden) return Forbid();
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+            return BadRequest("Tenant identification is required.");
+
+        var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
+        if (engagement == null) return NotFound();
+
+        if (_nextActionService == null)
+            return StatusCode(500, new { message = "Next action evaluation service is not configured." });
+
+        var result = await _nextActionService.GetNextActionAsync(id, effectiveTenantId, NextActionView.Staff, ct);
+        if (result == null)
+            return NotFound(new { message = $"Next action could not be evaluated for engagement '{id}'." });
+
+        return Ok(result);
+    }
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<EngagementResponse>>> GetEngagements([FromQuery] string? tenantId)
     {
