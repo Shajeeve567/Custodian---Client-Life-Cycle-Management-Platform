@@ -4,6 +4,7 @@ using System.Text;
 using Custodian.Shared.Messaging;
 using Custodian.Audit.DTOs;
 using Custodian.Audit.Services;
+using Custodian.Audit.Services.EngagementAccess;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -16,13 +17,48 @@ namespace Custodian.Audit.Controllers;
 [Route("api/events")]
 public class AuditEventsController : ControllerBase
 {
+    private const string EngagementNotFound = "Engagement not found.";
+
     private readonly IAuditEventService _eventService;
     private readonly AuditIngestionOptions _ingestion;
+    private readonly IEngagementAccessClient? _engagementAccess;
 
-    public AuditEventsController(IAuditEventService eventService, IOptions<AuditIngestionOptions>? ingestionOptions = null)
+    public AuditEventsController(
+        IAuditEventService eventService,
+        IOptions<AuditIngestionOptions>? ingestionOptions = null,
+        IEngagementAccessClient? engagementAccess = null)
     {
         _eventService = eventService;
         _ingestion = ingestionOptions?.Value ?? new AuditIngestionOptions();
+        _engagementAccess = engagementAccess;
+    }
+
+    /// <summary>
+    /// Staff (not Owners) only see the audit trail of engagements they are the responsible staff for;
+    /// Workflow owns that assignment and is asked as the caller.
+    /// </summary>
+    private bool IsAssignmentRestricted => User?.IsInRole("Staff") == true && User?.IsInRole("Owner") != true;
+
+    private static ObjectResult AccessUnavailable() => new(new
+    {
+        message = "Unable to confirm access to this engagement right now. Please try again shortly."
+    }) { StatusCode = StatusCodes.Status503ServiceUnavailable };
+
+    /// <summary>Null when the caller may read the engagement's trail; 404 when hidden; 503 when unconfirmed (fail closed).</summary>
+    private async Task<ActionResult?> EnsureCanReadEngagementAsync(Guid engagementId, Guid tenantId)
+    {
+        if (!IsAssignmentRestricted) return null;
+        if (_engagementAccess is null) return AccessUnavailable();
+
+        try
+        {
+            var allowed = await _engagementAccess.CanAccessEngagementAsync(engagementId, tenantId, HttpContext?.RequestAborted ?? default);
+            return allowed ? null : NotFound(new { message = EngagementNotFound });
+        }
+        catch (EngagementAccessUnavailableException)
+        {
+            return AccessUnavailable();
+        }
     }
 
     /// <summary>
@@ -72,7 +108,7 @@ public class AuditEventsController : ControllerBase
     /// <summary>
     /// Gets all audit events for a specific engagement within the caller's tenant.
     /// </summary>
-    [Authorize(Roles = "Owner,Staff")] // the audit trail spans every client in the workspace: staff only
+    [Authorize(Roles = "Owner,Staff")] // staff only; Staff further limited to engagements they are responsible for
     [HttpGet("engagement/{engagementId:guid}")]
     public async Task<ActionResult<IEnumerable<AuditEventResponse>>> GetEventsByEngagement(
         Guid engagementId,
@@ -89,6 +125,12 @@ public class AuditEventsController : ControllerBase
             return BadRequest(new { message = "Tenant ID could not be resolved from JWT claim or query parameters." });
         }
 
+        var denied = await EnsureCanReadEngagementAsync(engagementId, effectiveTenantId);
+        if (denied != null)
+        {
+            return denied;
+        }
+
         var results = await _eventService.GetEventsByEngagementAsync(engagementId, effectiveTenantId);
         return Ok(results);
     }
@@ -100,7 +142,7 @@ public class AuditEventsController : ControllerBase
     /// change, timestamp tamper, previous-hash substitution — breaks verification
     /// at the first bad event.
     /// </summary>
-    [Authorize(Roles = "Owner,Staff")] // the audit trail spans every client in the workspace: staff only
+    [Authorize(Roles = "Owner,Staff")] // staff only; Staff further limited to engagements they are responsible for
     [HttpGet("verify")]
     public async Task<ActionResult<ChainVerificationResult>> VerifyChain(
         [FromQuery] Guid engagementId,
@@ -123,6 +165,12 @@ public class AuditEventsController : ControllerBase
             return BadRequest(new { message = "engagementId is required" });
         }
 
+        var denied = await EnsureCanReadEngagementAsync(engagementId, effectiveTenantId);
+        if (denied != null)
+        {
+            return denied;
+        }
+
         var result = await _eventService.VerifyChainAsync(effectiveTenantId, engagementId);
         return Ok(result);
     }
@@ -130,7 +178,7 @@ public class AuditEventsController : ControllerBase
     /// <summary>
     /// Gets a single audit event by ID within the caller's tenant.
     /// </summary>
-    [Authorize(Roles = "Owner,Staff")] // the audit trail spans every client in the workspace: staff only
+    [Authorize(Roles = "Owner,Staff")] // staff only; Staff further limited to engagements they are responsible for
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<AuditEventResponse>> GetEventById(
         Guid id,
@@ -153,13 +201,24 @@ public class AuditEventsController : ControllerBase
             return NotFound(new { message = $"Audit event with ID '{id}' was not found for tenant '{effectiveTenantId}'." });
         }
 
+        // An event of an engagement the caller may not open is reported as not found.
+        var denied = await EnsureCanReadEngagementAsync(result.EngagementId, effectiveTenantId);
+        if (denied is NotFoundObjectResult)
+        {
+            return NotFound(new { message = $"Audit event with ID '{id}' was not found for tenant '{effectiveTenantId}'." });
+        }
+        if (denied != null)
+        {
+            return denied;
+        }
+
         return Ok(result);
     }
 
     /// <summary>
     /// Gets all audit events for the caller's tenant.
     /// </summary>
-    [Authorize(Roles = "Owner,Staff")] // the audit trail spans every client in the workspace: staff only
+    [Authorize(Roles = "Owner,Staff")] // staff only; Staff further limited to engagements they are responsible for
     [HttpGet]
     public async Task<ActionResult<IEnumerable<AuditEventResponse>>> GetEvents(
         [FromQuery] string? tenantId)
@@ -176,7 +235,25 @@ public class AuditEventsController : ControllerBase
         }
 
         var results = await _eventService.GetEventsByTenantAsync(effectiveTenantId);
-        return Ok(results);
+        if (!IsAssignmentRestricted)
+        {
+            return Ok(results);
+        }
+
+        if (_engagementAccess is null)
+        {
+            return AccessUnavailable();
+        }
+
+        try
+        {
+            var visible = await _engagementAccess.GetAccessibleEngagementIdsAsync(effectiveTenantId, HttpContext?.RequestAborted ?? default);
+            return Ok(results.Where(e => visible.Contains(e.EngagementId)).ToList());
+        }
+        catch (EngagementAccessUnavailableException)
+        {
+            return AccessUnavailable();
+        }
     }
 
     /// <summary>
