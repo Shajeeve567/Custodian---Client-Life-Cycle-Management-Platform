@@ -896,12 +896,10 @@ public class DocumentsControllerTests
         service.Verify(s => s.GetDocumentsByEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
     }
 
-    [Theory]
-    [InlineData("Owner")]
-    [InlineData("Staff")]
-    public async Task C7_StaffAndOwner_ActAcrossTenant_WithoutOwnershipLookup(string role)
+    [Fact]
+    public async Task Owner_ActsAcrossTheWorkspace_WithoutAnAccessLookup()
     {
-        var (controller, access, service) = ControllerFor(role);
+        var (controller, access, service) = ControllerFor("Owner");
         var engagementId = Guid.NewGuid();
         service.Setup(s => s.GetDocumentsByEngagementAsync(engagementId, "tenant-001")).ReturnsAsync(Array.Empty<DocumentResponseDto>());
 
@@ -909,6 +907,61 @@ public class DocumentsControllerTests
 
         Assert.IsType<OkObjectResult>(result.Result);
         access.Verify(a => a.CanAccessEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // Staff only reach documents of engagements they are the responsible staff for (Workflow's rule).
+
+    [Fact]
+    public async Task Staff_AssignedToTheEngagement_CanListDocuments()
+    {
+        var (controller, access, service) = ControllerFor("Staff");
+        var engagementId = Guid.NewGuid();
+        access.Setup(a => a.CanAccessEngagementAsync(engagementId, "tenant-001", It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        service.Setup(s => s.GetDocumentsByEngagementAsync(engagementId, "tenant-001")).ReturnsAsync(Array.Empty<DocumentResponseDto>());
+
+        var result = await controller.GetDocumentsByEngagement(engagementId, null, null);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        access.Verify(a => a.CanAccessEngagementAsync(engagementId, "tenant-001", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Staff_NotAssigned_GetsNotFound_OnEveryDocumentEndpoint_AndNothingRuns()
+    {
+        var (controller, access, service) = ControllerFor("Staff");
+        var engagementId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        access.Setup(a => a.CanAccessEngagementAsync(engagementId, "tenant-001", It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        var file = new FormFile(new MemoryStream(Encoding.UTF8.GetBytes("%PDF-1.4")), 0, 8, "file", "doc.pdf");
+
+        var results = new object?[]
+        {
+            (await controller.GetDocumentsByEngagement(engagementId, null, null)).Result,
+            (await controller.GetDocumentById(engagementId, documentId, null)).Result,
+            await controller.DownloadDocument(engagementId, documentId, null),
+            (await controller.UploadDocument(engagementId, new DocumentUploadDto { File = file, Type = "KYC_PASSPORT" }, null)).Result,
+            (await controller.VerifyDocument(engagementId, documentId, new VerifyDocumentRequestDto(), null)).Result,
+            (await controller.RejectDocument(engagementId, documentId, new RejectDocumentRequestDto { Reason = "Blurry" }, null)).Result,
+            (await controller.UpdateDocumentMetadata(engagementId, documentId, new UpdateDocumentMetadataDto(), null)).Result,
+            (await controller.SoftDeleteDocument(engagementId, documentId, null)).Result
+        };
+
+        Assert.All(results, r => Assert.IsType<NotFoundObjectResult>(r));
+        Assert.Empty(service.Invocations);
+    }
+
+    [Fact]
+    public async Task Staff_WorkflowUnavailable_Returns503_FailClosed()
+    {
+        var (controller, access, service) = ControllerFor("Staff");
+        var engagementId = Guid.NewGuid();
+        access.Setup(a => a.CanAccessEngagementAsync(engagementId, "tenant-001", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new EngagementAccessUnavailableException("down"));
+
+        var result = await controller.VerifyDocument(engagementId, Guid.NewGuid(), new VerifyDocumentRequestDto(), null);
+
+        Assert.Equal(503, Assert.IsType<ObjectResult>(result.Result).StatusCode);
+        Assert.Empty(service.Invocations);
     }
 
     [Fact]

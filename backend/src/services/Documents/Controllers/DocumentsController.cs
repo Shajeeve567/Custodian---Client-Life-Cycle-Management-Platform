@@ -51,7 +51,7 @@ public class DocumentsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
-        var accessDenied = await EnsureClientCanAccessEngagementAsync(engagementId, effectiveTenantId);
+        var accessDenied = await EnsureCallerCanAccessEngagementAsync(engagementId, effectiveTenantId);
         if (accessDenied != null)
         {
             return accessDenied;
@@ -99,7 +99,7 @@ public class DocumentsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
-        var accessDenied = await EnsureClientCanAccessEngagementAsync(engagementId, effectiveTenantId);
+        var accessDenied = await EnsureCallerCanAccessEngagementAsync(engagementId, effectiveTenantId);
         if (accessDenied != null)
         {
             return accessDenied;
@@ -132,7 +132,7 @@ public class DocumentsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
-        var accessDenied = await EnsureClientCanAccessEngagementAsync(engagementId, effectiveTenantId);
+        var accessDenied = await EnsureCallerCanAccessEngagementAsync(engagementId, effectiveTenantId);
         if (accessDenied != null)
         {
             return accessDenied;
@@ -171,7 +171,7 @@ public class DocumentsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
-        var accessDenied = await EnsureClientCanAccessEngagementAsync(engagementId, effectiveTenantId);
+        var accessDenied = await EnsureCallerCanAccessEngagementAsync(engagementId, effectiveTenantId);
         if (accessDenied != null)
         {
             return accessDenied;
@@ -223,6 +223,12 @@ public class DocumentsController : ControllerBase
         if (authResult != null)
         {
             return authResult;
+        }
+
+        var accessDenied = await EnsureCallerCanAccessEngagementAsync(engagementId, effectiveTenantId);
+        if (accessDenied != null)
+        {
+            return accessDenied;
         }
 
         if (!ModelState.IsValid)
@@ -277,6 +283,12 @@ public class DocumentsController : ControllerBase
         if (authResult != null)
         {
             return authResult;
+        }
+
+        var accessDenied = await EnsureCallerCanAccessEngagementAsync(engagementId, effectiveTenantId);
+        if (accessDenied != null)
+        {
+            return accessDenied;
         }
 
         if (string.IsNullOrWhiteSpace(dto.Reason))
@@ -341,6 +353,12 @@ public class DocumentsController : ControllerBase
             return authResult;
         }
 
+        var accessDenied = await EnsureCallerCanAccessEngagementAsync(engagementId, effectiveTenantId);
+        if (accessDenied != null)
+        {
+            return accessDenied;
+        }
+
         if (!ModelState.IsValid)
         {
             return BadRequest(ModelState);
@@ -397,6 +415,12 @@ public class DocumentsController : ControllerBase
             return authResult;
         }
 
+        var accessDenied = await EnsureCallerCanAccessEngagementAsync(engagementId, effectiveTenantId);
+        if (accessDenied != null)
+        {
+            return accessDenied;
+        }
+
         var staffActor = ResolveStaffActor();
 
         try
@@ -434,12 +458,16 @@ public class DocumentsController : ControllerBase
     }
 
     /// <summary>
-    /// A Client may only touch documents of an engagement it owns (ownership is Workflow's). Owner and
-    /// Staff act across their tenant. Returns 403 when denied and 503 when Workflow cannot confirm (fail closed).
+    /// Engagement access is Workflow's rule, asked as the caller: a Client only reaches engagements it owns,
+    /// a Staff member only those they are the responsible staff for, an Owner every engagement in the
+    /// workspace (no lookup needed). Denied: 403 for a Client, 404 for Staff (the engagement stays hidden,
+    /// as in Workflow). 503 when Workflow cannot confirm (fail closed).
     /// </summary>
-    private async Task<ActionResult?> EnsureClientCanAccessEngagementAsync(Guid engagementId, string tenantId)
+    private async Task<ActionResult?> EnsureCallerCanAccessEngagementAsync(Guid engagementId, string tenantId)
     {
-        if (User?.IsInRole("Client") != true)
+        var isClient = User?.IsInRole("Client") == true;
+        var isRestrictedStaff = User?.IsInRole("Staff") == true && User?.IsInRole("Owner") != true;
+        if (!isClient && !isRestrictedStaff)
         {
             return null;
         }
@@ -447,7 +475,8 @@ public class DocumentsController : ControllerBase
         try
         {
             var allowed = await _engagementAccess.CanAccessEngagementAsync(engagementId, tenantId, HttpContext?.RequestAborted ?? default);
-            return allowed ? null : Forbid();
+            if (allowed) return null;
+            return isClient ? Forbid() : NotFound(new { message = "Engagement not found." });
         }
         catch (EngagementAccessUnavailableException ex)
         {

@@ -24,8 +24,9 @@ builder.Services.AddSingleton<IDocumentValidator, DocumentValidator>();
 builder.Services.AddScoped<IStorageService, LocalStorageService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 
-// Client ownership of an engagement lives in Workflow; Documents asks it (as the caller) before letting
-// a Client read or upload an engagement's documents. Fails closed when Workflow is unreachable.
+// Engagement access lives in Workflow (client ownership; staff only for engagements they are responsible
+// for). Documents asks it, as the caller, before a Client or Staff member touches an engagement's documents.
+// Fails closed when Workflow is unreachable.
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddHttpClient<Custodian.Documents.Services.EngagementAccess.IEngagementAccessClient,
     Custodian.Documents.Services.EngagementAccess.WorkflowEngagementAccessClient>(client =>
