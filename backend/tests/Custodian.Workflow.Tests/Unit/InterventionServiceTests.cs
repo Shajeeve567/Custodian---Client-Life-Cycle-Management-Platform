@@ -71,6 +71,28 @@ public class InterventionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RecordAsync_EventCarriesWhatTheAuditTrailShows()
+    {
+        object? payload = null;
+        _audit.Setup(a => a.PublishEventAsync(_engagementId, Tenant, Actor, "intervention.recovered", It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, _, p) => payload = p)
+            .Returns(Task.CompletedTask);
+        var blockerActionId = Guid.NewGuid();
+        var req = ValidRequest();
+        req.BlockerActionId = blockerActionId;
+
+        var result = await _svc.RecordAsync(_engagementId, Tenant, Actor, req);
+
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(payload);
+        Assert.Equal(result.InterventionId, json.GetProperty("interventionId").GetGuid());
+        Assert.Equal("client-1", json.GetProperty("clientId").GetString());
+        Assert.Equal(InterventionType.RecoveryAction, json.GetProperty("type").GetString());
+        Assert.Equal(InterventionOutcome.Progressing, json.GetProperty("outcome").GetString());
+        Assert.Equal(req.Reason, json.GetProperty("reason").GetString()); // staff-only; audit is staff-only
+        Assert.Equal(blockerActionId, json.GetProperty("blockerActionId").GetGuid());
+    }
+
+    [Fact]
     public async Task RecordAsync_InvalidType_Throws()
     {
         var req = ValidRequest();

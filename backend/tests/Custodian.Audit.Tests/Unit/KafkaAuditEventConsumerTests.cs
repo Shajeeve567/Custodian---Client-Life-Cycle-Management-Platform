@@ -226,6 +226,7 @@ public class KafkaAuditEventConsumerTests
     [InlineData("document.uploaded")]
     [InlineData("ClientActionCreated")]
     [InlineData("RequirementReviewed")]
+    [InlineData("intervention.recovered")] // CSTD-35 AC5: intervention history is audited
     public async Task ProcessMessageAsync_DocumentServiceEvent_IsRecorded(string eventType)
     {
         // H1: Documents now publishes to Kafka; previously its HTTP events were rejected (401) and lost.

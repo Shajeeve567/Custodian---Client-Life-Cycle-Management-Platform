@@ -42,6 +42,9 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
         "ConditionAttached",
         "ConditionUpdated",
         "ConditionDeactivated",
+        // CSTD-35 (Intervention & Recovery). Dot-case as Workflow publishes it; Identity reads the same
+        // event for the client-safe "back on track" notification.
+        "intervention.recovered",
         // CSTD-27/28 (Documents), published by the Documents service since it moved to Kafka
         EventTypes.DocumentUploaded,
         EventTypes.DocumentVerified,

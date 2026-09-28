@@ -76,7 +76,8 @@ public sealed class InterventionService : IInterventionService
         await _dbContext.SaveChangesAsync(ct);
 
         // Audit + client-safe notification. Same transport (Kafka) as StageChange/StatusChange.
-        // The payload carries clientId so Identity's mapper can target the notification.
+        // The payload carries clientId so Identity's mapper can target the notification. The reason is
+        // staff-only: it is kept for the (staff-only) audit trail and never used in client notifications.
         await _auditPublisher.PublishEventAsync(
             engagementId,
             tenantId,
@@ -88,7 +89,10 @@ public sealed class InterventionService : IInterventionService
                 interventionId = intervention.InterventionId,
                 type = intervention.Type,
                 outcome = intervention.Outcome,
-                blockerActionId = intervention.BlockerActionId,            });
+                reason = intervention.Reason,
+                stallId = intervention.StallId,
+                blockerActionId = intervention.BlockerActionId,
+            });
 
         return Map(intervention);
     }
