@@ -28,7 +28,6 @@ import {
     RequestRequirementRequest,
     ReviewRequirementRequest,
     RequirementResponse,
-    StallQueueItem,
     ChainVerificationResult,
     StallQueueFilters,
     StallQueueResult,
@@ -39,6 +38,9 @@ import {
     DeactivateConditionRequest,
     NextActionResult,
     UpdateClientActionRequest,
+    StallQueueItem,
+    Intervention,
+    RecordInterventionRequest,
 } from '../types';
 
 export const API_BASE = {
@@ -275,6 +277,22 @@ export const WorkflowApi = {
         const items = (await response.json()) as StallQueueItem[];
         const total = Number(response.headers.get('X-Total-Count'));
         return { items, totalCount: Number.isFinite(total) && total > 0 ? total : items.length };
+    },
+
+    // CSTD-35: intervention & recovery
+    async recordIntervention(
+        engagementId: string,
+        data: RecordInterventionRequest,
+        tenantId: string
+    ): Promise<Intervention> {
+        return request<Intervention>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/interventions?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'POST',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify(data),
+            }
+        );
     },
 
     async updateStatus(engagementId: string, status: EngagementStatus, tenantId: string): Promise<Engagement> {

@@ -1,5 +1,8 @@
 export type UserRole = 'Owner' | 'Staff' | 'Client' | 'Admin';
 
+export type InterventionType = 'Meeting' | 'RecoveryAction';
+export type InterventionOutcome = 'Recovered' | 'Progressing' | 'NoChange' | 'Escalated';
+
 export interface UserProfile {
     userId: string;
     username?: string;
@@ -531,3 +534,23 @@ export interface DeactivateConditionRequest {
     reason: string;
 }
 
+export interface Intervention {
+    interventionId: string;
+    engagementId: string;
+    tenantId: string;
+    stallId?: string | null;
+    blockerActionId?: string | null;
+    type: InterventionType | string;
+    reason: string;
+    outcome: InterventionOutcome | string;
+    recordedBy: string;
+    createdAt: string;
+}
+
+export interface RecordInterventionRequest {
+    type: InterventionType | string;
+    reason: string;
+    outcome: InterventionOutcome | string;
+    blockerActionId?: string | null;
+    stallId?: string | null;
+}
