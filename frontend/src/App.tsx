@@ -11,6 +11,7 @@ import { AuditPage } from './pages/AuditPage';
 import { PortalPage } from './pages/PortalPage';
 import { WorkspacePage } from './pages/WorkspacePage';
 import { StallQueuePage } from './pages/StallQueuePage';
+import { ReportsPage } from './pages/ReportsPage';
 import './App.css';
 
 export const App: React.FC = () => {
@@ -39,6 +40,7 @@ export const App: React.FC = () => {
                             <Route path="/stall-queue" element={<StallQueuePage />} />
                             <Route path="/documents" element={<DocumentsPage />} />
                             <Route path="/audit" element={<AuditPage />} />
+                            <Route path="/reports" element={<ReportsPage />} />
                         </Route>
                     </Route>
 

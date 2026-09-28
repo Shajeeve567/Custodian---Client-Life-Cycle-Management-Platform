@@ -156,6 +156,11 @@ export async function request<T = any>(
    Reports (CSTD-36)
    ========================================================================== */
 
+/** Report endpoints (each hosted by the service that owns the data). */
+export const ReportsApi = {
+    slaPerformanceUrl: () => `${API_BASE.WORKFLOW}/api/reports/sla-performance`,
+};
+
 /** RFC 7807 body of a failed report request (see docs/reporting.md, Errors). */
 export interface ReportProblem {
     status: number;
