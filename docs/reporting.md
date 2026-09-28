@@ -72,6 +72,16 @@ This university case-study project qualifies. A commercial deployment above that
 
 **Tests** read PDFs back with [PdfPig](https://www.nuget.org/packages/PdfPig) (Apache-2.0, tests only). The official package id is `PdfPig`. The similarly named `UglyToad.PdfPig` package on NuGet is not the official release and must not be used.
 
+## CSV output
+
+`CsvExporter` (`ICsvExporter.ToCsv(tableSection)`) writes one `TableSection` as a CSV file, usually a report's per-row detail table:
+
+- **Encoding:** UTF-8 with a BOM, so Excel reads non-ASCII names correctly.
+- **Format:** RFC 4180. Comma separated, CRLF row endings, and the header row first. A field is quoted when it contains a comma, quote or line break, or starts or ends with a space; quotes inside are doubled.
+- **Values:** `ReportValue.Format`, i.e. invariant numbers (`1234.5`), ISO-8601 UTC dates, and `Yes`/`No`.
+- **Formula protection:** text starting with `=`, `+`, `-`, `@`, tab or CR gets a leading `'`, so Excel shows it instead of running it as a formula. Task titles and file names are user-entered. Numbers, including negative ones, are written unchanged.
+- **Only the data:** the table title and footnote are not written.
+
 ## Adding a report
 
 1. In the owning service, query live data for the caller's tenant and compute a plain result object.
@@ -114,7 +124,7 @@ Errors are ASP.NET `ProblemDetails` with a `reportCode` extension. Stack traces 
 |---|---|---|
 | Report model + value rules | CSTD-36-M1 | Done |
 | PDF renderer | CSTD-36-M2 | Done |
-| CSV exporter | CSTD-36-M3 | Planned |
+| CSV exporter | CSTD-36-M3 | Done |
 | `ReportResults`, error contract, role helper | CSTD-36-M4 | Planned |
 | Telemetry, sample report | CSTD-36-M5 | Planned |
 | Frontend download helper | CSTD-36-M6 | Planned |
