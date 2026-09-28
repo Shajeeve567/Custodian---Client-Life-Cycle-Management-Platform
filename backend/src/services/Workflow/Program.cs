@@ -2,9 +2,11 @@ using Confluent.Kafka;
 using Custodian.Workflow;
 using Custodian.Workflow.Data;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Access;
 using Custodian.Workflow.Services.Kafka;
 using Custodian.Shared.Http;
 using Custodian.Shared.Auth;
+using Custodian.Shared.Reporting;
 using Custodian.Shared.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -13,7 +15,8 @@ using Scalar.AspNetCore;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add controllers & CORS
-builder.Services.AddControllers();
+// Staff only reach engagements they are responsible for (Owners: all; see EngagementAccess).
+builder.Services.AddControllers(options => options.Filters.Add<StaffEngagementAccessFilter>());
 builder.Services.AddCustodianCors(builder.Configuration, builder.Environment);
 builder.Services.AddTenantContext();
 builder.Services.AddJwtAuthentication(builder.Configuration, builder.Environment);
@@ -36,6 +39,9 @@ if (!string.IsNullOrWhiteSpace(connectionString))
 
 // Register Workflow domain services (repositories, actions, conditions, gate, next action, SLA/stall)
 builder.Services.AddWorkflowDomainServices(builder.Configuration);
+
+// CSTD-36 shared report renderer + CSV exporter (reports are generated from Workflow's own live data).
+builder.Services.AddCustodianReporting();
 
 // Audit transport (Audit:Transport, env Audit__Transport). "Kafka" (appsettings.json) publishes onto the
 // shared "custodian.events" topic, which Audit, Identity (notifications) and Workflow's own consumer

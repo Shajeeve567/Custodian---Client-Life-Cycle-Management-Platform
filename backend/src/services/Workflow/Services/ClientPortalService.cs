@@ -67,7 +67,7 @@ public class ClientPortalService : IClientPortalService
         return await BuildDashboardDtoAsync(engagement);
     }
 
-    public async Task<ClientPortalDashboardDto?> GetActiveDashboardForClientAsync(string tenantId, string clientId)
+    public async Task<ClientPortalDashboardDto?> GetActiveDashboardForClientAsync(string tenantId, string clientId, string? staffId = null)
     {
         if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(clientId))
         {
@@ -78,6 +78,7 @@ public class ClientPortalService : IClientPortalService
         var engagement = await _dbContext.Engagements
             .AsNoTracking()
             .Where(e => e.TenantId == tenantId && e.ClientId == clientId.Trim())
+            .Where(e => staffId == null || e.StaffId == staffId)
             .Where(e => e.Status != EngagementStatus.Cancelled)
             .OrderByDescending(e => e.Status != EngagementStatus.Closed)
             .ThenByDescending(e => e.CreatedAt)
@@ -91,7 +92,7 @@ public class ClientPortalService : IClientPortalService
         return await BuildDashboardDtoAsync(engagement);
     }
 
-    public async Task<ClientPortalDashboardDto?> GetActiveDashboardForTenantAsync(string tenantId)
+    public async Task<ClientPortalDashboardDto?> GetActiveDashboardForTenantAsync(string tenantId, string? staffId = null)
     {
         if (string.IsNullOrWhiteSpace(tenantId))
         {
@@ -102,6 +103,7 @@ public class ClientPortalService : IClientPortalService
         var engagement = await _dbContext.Engagements
             .AsNoTracking()
             .Where(e => e.TenantId == tenantId)
+            .Where(e => staffId == null || e.StaffId == staffId)
             .Where(e => e.Status != EngagementStatus.Cancelled)
             .OrderByDescending(e => e.Status != EngagementStatus.Closed)
             .ThenByDescending(e => e.CreatedAt)

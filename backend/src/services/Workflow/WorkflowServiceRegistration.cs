@@ -37,8 +37,13 @@ public static class WorkflowServiceRegistration
         services.AddScoped<IStallQueueProvider, StallQueueProvider>();
         services.AddScoped<IStallQueueService, StallQueueService>();
 
+        // CSTD-35: Intervention
+        services.AddScoped<IInterventionService, InterventionService>();
+
         // CSTD-19: next action consumes the CSTD-33 SLA/stall rules through these adapters
         services.AddScoped<ISlaCalculator, SlaCalculator>();
+        // CSTD-37 SLA performance report numbers.
+        services.AddScoped<Services.Reports.ISlaPerformanceReportService, Services.Reports.SlaPerformanceReportService>();
         services.AddScoped<IStallService, StallService>();
         services.AddScoped<INextActionService, NextActionService>();
 

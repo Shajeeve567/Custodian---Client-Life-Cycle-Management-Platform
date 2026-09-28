@@ -363,6 +363,71 @@ namespace Workflow.Data.Migrations
                     b.ToTable("engagement_conditions", (string)null);
                 });
 
+            modelBuilder.Entity("Custodian.Workflow.Models.Intervention", b =>
+                {
+                    b.Property<Guid>("InterventionId")
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(36)
+                        .HasColumnType("char(36)")
+                        .HasColumnName("intervention_id");
+
+                    b.Property<Guid?>("BlockerActionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("char(36)")
+                        .HasColumnName("blocker_action_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("EngagementId")
+                        .HasMaxLength(36)
+                        .HasColumnType("char(36)")
+                        .HasColumnName("engagement_id");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("outcome");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("longtext")
+                        .HasColumnName("reason");
+
+                    b.Property<string>("RecordedBy")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("recorded_by");
+
+                    b.Property<Guid?>("StallId")
+                        .HasMaxLength(36)
+                        .HasColumnType("char(36)")
+                        .HasColumnName("stall_id");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("varchar(36)")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("type");
+
+                    b.HasKey("InterventionId");
+
+                    b.HasIndex(new[] { "TenantId", "CreatedAt" }, "idx_intervention_tenant_created");
+
+                    b.HasIndex(new[] { "TenantId", "EngagementId" }, "idx_intervention_tenant_engagement");
+
+                    b.ToTable("interventions", (string)null);
+                });
+
             modelBuilder.Entity("Custodian.Workflow.Models.Requirement", b =>
                 {
                     b.Property<Guid>("RequirementId")

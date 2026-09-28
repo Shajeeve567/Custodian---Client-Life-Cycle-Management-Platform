@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { DashboardLayout } from '../components/DashboardLayout';
 import { WorkflowApi, IdentityApi, ApiError } from '../services/api';
 import { StallQueueItem, ClientProfile, UserAccountResponse, EngagementStage } from '../types';
+import { RecordInterventionModal } from '../components/RecordInterventionModal';
 import {
     AlertTriangle,
     Clock,
@@ -55,6 +56,10 @@ export const StallQueuePage: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
+    // Intervention & recovery state
+    const [interveningOn, setInterveningOn] = useState<StallQueueItem | null>(null);
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
     const load = useCallback(async () => {
         if (!tenantId) return;
         setIsLoading(true);
@@ -100,6 +105,9 @@ export const StallQueuePage: React.FC = () => {
 
     const hasItems = items.length > 0;
 
+    // Diagnostic: confirm the modal render path is reachable on this render pass.
+    console.log('[StallQueue] render. interveningOn=', interveningOn, 'tenantId=', tenantId);
+
     return (
         <DashboardLayout>
             <div className="space-y-6">
@@ -128,6 +136,14 @@ export const StallQueuePage: React.FC = () => {
                         <span>Refresh</span>
                     </button>
                 </div>
+
+                {/* Success banner */}
+                {successMessage && (
+                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-800 flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>{successMessage}</span>
+                    </div>
+                )}
 
                 {/* Summary KPI cards */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -249,6 +265,7 @@ export const StallQueuePage: React.FC = () => {
                                         <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Next Action</th>
                                         <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Overdue</th>
                                         <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Responsible Staff</th>
+                                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
@@ -304,6 +321,19 @@ export const StallQueuePage: React.FC = () => {
                                                         <span className="truncate max-w-[160px]">{resolveStaffName(item.staffId)}</span>
                                                     </div>
                                                 </td>
+                                                <td className="px-4 py-4 align-top">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            console.log('[StallQueue] Record Intervention clicked. item=', item);
+                                                            console.log('[StallQueue] tenantId=', tenantId);
+                                                            setInterveningOn(item);
+                                                        }}
+                                                        className="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-xs font-bold transition inline-flex items-center gap-1.5 whitespace-nowrap"
+                                                    >
+                                                        Record Intervention
+                                                    </button>
+                                                </td>
                                             </tr>
                                         );
                                     })}
@@ -313,6 +343,25 @@ export const StallQueuePage: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {/* Intervention modal */}
+            {interveningOn && tenantId && (
+                <RecordInterventionModal
+                    isOpen={!!interveningOn}
+                    onClose={() => setInterveningOn(null)}
+                    onRecorded={() => {
+                        const label = resolveClientName(interveningOn.clientId);
+                        setSuccessMessage(`Intervention recorded for ${label}.`);
+                        setTimeout(() => setSuccessMessage(null), 5000);
+                        load();
+                    }}
+                    tenantId={tenantId}
+                    engagementId={interveningOn.engagementId}
+                    engagementLabel={`${resolveClientName(interveningOn.clientId)} — ENG-${interveningOn.engagementId.slice(0, 6).toUpperCase()}`}
+                    blockerActionId={(interveningOn as any).blockerActionId ?? null}
+                    blockerActionTitle={interveningOn.blockerActionTitle}
+                />
+            )}
         </DashboardLayout>
     );
 };

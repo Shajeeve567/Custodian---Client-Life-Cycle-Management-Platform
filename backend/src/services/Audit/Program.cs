@@ -44,6 +44,16 @@ builder.Services.AddDbContext<AuditDbContext>(options =>
 builder.Services.AddScoped<IAuditEventRepository, AuditEventRepository>();
 builder.Services.AddScoped<IAuditEventService, AuditEventService>();
 
+// Engagement assignment lives in Workflow: Staff only read the audit trail of engagements they are the
+// responsible staff for. Audit asks Workflow as the caller; fails closed (503) when Workflow is unreachable.
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddHttpClient<Custodian.Audit.Services.EngagementAccess.IEngagementAccessClient,
+    Custodian.Audit.Services.EngagementAccess.WorkflowEngagementAccessClient>(client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["Services:WorkflowUrl"] ?? "http://localhost:5225");
+    client.Timeout = TimeSpan.FromSeconds(5);
+});
+
 // SHA-256 hash chain: stateless, deterministic, no shared mutable state
 // Singleton so the genesis constant and canonicalization are one instance
 builder.Services.AddSingleton<IHashChainService, HashChainService>();

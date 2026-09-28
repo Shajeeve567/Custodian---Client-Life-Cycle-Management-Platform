@@ -92,10 +92,27 @@ public sealed class EventToClientSafeMessageMapper : IEventToMessageMapper
                     "Reminder: Action awaiting your input",
                     $"Friendly reminder: An action on your engagement ('{Field("actionTitle", "title") ?? "pending step"}') is awaiting your input to keep your onboarding moving smoothly.");
 
-            case "stagechange" or "intervention.recovered" or "engagement.ready":
+            case "stagechange" or "engagement.ready":
                 return Message(
                     "Engagement Update: Progressing to Next Stage",
                     $"Great news! Your engagement has been updated and has progressed to the '{Humanize(Field("stageName", "stage", "toStage")) ?? "next"}' stage.");
+            
+            // CSTD-35: an intervention was recorded
+            // Only client positive outcome notify
+            case "intervention.recovered":
+                {
+                    var outcome = Field("outcome");
+                    if (!string.Equals(outcome, "Recovered", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(outcome, "Progressing", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return null;
+                    }
+
+                    return Message(
+                        "Engagement Update: Back on track",
+                        "Good news! Your onboarding team has resolved a blocker and your engagement is moving forward again. Please check your portal for any next steps"
+                    );
+                }
 
             default:
                 return null;

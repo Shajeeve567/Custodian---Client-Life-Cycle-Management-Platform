@@ -2,6 +2,7 @@ using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Access;
 using Custodian.Workflow.Services.Stall;
 using Custodian.Workflow.Services.Gates;
 using Custodian.Workflow.Services.NextAction;
@@ -63,7 +64,10 @@ public class EngagementsController : ControllerBase
             EngagementId = Guid.NewGuid(),
             TenantId = effectiveTenantId,
             ClientId = request.ClientId,
-            StaffId = request.StaffId,
+            // Staff can only create engagements they are responsible for; otherwise they could not open them.
+            StaffId = EngagementAccess.IsAssignmentRestricted(User)
+                ? EngagementAccess.CallerUserId(User) ?? request.StaffId
+                : request.StaffId,
             Status = EngagementStatus.Draft,
             Stage = EngagementStage.Onboarding,
             CreatedAt = DateTime.UtcNow
@@ -149,6 +153,37 @@ public class EngagementsController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// CSTD-35: Explicit re-evaluation of the next action for an engagement. Use this
+    /// when staff want to confirm the current state after an intervention rather than
+    /// mutate it. Idempotent — repeated calls do not change engagement state.
+    /// Returns the same result shape as GET /next-action.
+    /// </summary>
+    [HttpPost("{id}/recheck")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<NextActionResult>> Recheck(
+        Guid id,
+        [FromQuery] string? tenantId,
+        CancellationToken ct = default)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden) return Forbid();
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+            return BadRequest("Tenant identification is required.");
+
+        var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
+        if (engagement == null) return NotFound();
+
+        if (_nextActionService == null)
+            return StatusCode(500, new { message = "Next action evaluation service is not configured." });
+
+        var result = await _nextActionService.GetNextActionAsync(id, effectiveTenantId, NextActionView.Staff, ct);
+        if (result == null)
+            return NotFound(new { message = $"Next action could not be evaluated for engagement '{id}'." });
+
+        return Ok(result);
+    }
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<EngagementResponse>>> GetEngagements([FromQuery] string? tenantId)
     {
@@ -165,10 +200,14 @@ public class EngagementsController : ControllerBase
 
         var engagements = await _repository.GetAllByTenantAsync(effectiveTenantId);
 
-        // Owner/Staff see the whole tenant; a Client sees only its own engagements.
+        // Owner: the whole tenant. Staff: the engagements they are responsible for. Client: its own.
         if (IsClientCaller())
         {
             engagements = engagements.Where(IsOwnedByCaller).ToList();
+        }
+        else
+        {
+            engagements = engagements.Where(e => EngagementAccess.CanAccess(User, e.StaffId)).ToList();
         }
 
         return Ok(engagements.Select(MapToResponse));
@@ -256,6 +295,68 @@ public class EngagementsController : ControllerBase
                     changedAt = DateTime.UtcNow
                 });
         }
+
+        return Ok(MapToResponse(updated));
+    }
+
+    /// <summary>
+    /// Owner only: changes the engagement's responsible staff member (Engagement.StaffId). Staff see only
+    /// engagements they are responsible for, so this is how an owner gives a staff member access or hands
+    /// work over. The new staff id is a user id from the workspace's team list (Identity); Workflow does not
+    /// hold user accounts, so it checks the format only. Audited as ResponsibleStaffChanged.
+    /// </summary>
+    [HttpPut("{id}/staff")]
+    [Authorize(Roles = "Owner")]
+    public async Task<ActionResult<EngagementResponse>> ChangeResponsibleStaff(Guid id, [FromBody] ChangeResponsibleStaffRequest request)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(null);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest("Tenant identification is required.");
+        }
+
+        if (!Guid.TryParse(request.StaffId, out var newStaffGuid) || newStaffGuid == Guid.Empty)
+        {
+            return BadRequest(new { message = "staffId must be the user id of a workspace member." });
+        }
+
+        var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
+        if (engagement == null)
+        {
+            return NotFound();
+        }
+
+        var newStaffId = newStaffGuid.ToString();
+        var previousStaffId = engagement.StaffId;
+        if (string.Equals(previousStaffId, newStaffId, StringComparison.OrdinalIgnoreCase))
+        {
+            return Ok(MapToResponse(engagement));
+        }
+
+        engagement.StaffId = newStaffId;
+        var updated = await _repository.UpdateAsync(engagement);
+
+        await _auditPublisher.PublishEventAsync(
+            updated.EngagementId,
+            effectiveTenantId,
+            ResolveActor(),
+            "ResponsibleStaffChanged",
+            new
+            {
+                fromStaffId = previousStaffId,
+                toStaffId = newStaffId,
+                changedAt = DateTime.UtcNow
+            });
 
         return Ok(MapToResponse(updated));
     }

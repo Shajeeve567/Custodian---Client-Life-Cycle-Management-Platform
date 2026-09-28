@@ -164,13 +164,14 @@ public class SecurityHardeningEndpointTests : IClassFixture<SecurityHardeningEnd
     };
 
     [Fact]
-    public async Task StaffWorkspaceToken_SeesWholeTenant()
+    public async Task OwnerWorkspaceToken_SeesWholeTenant()
     {
+        // Staff see only the engagements they are responsible for: StaffEngagementAccessTests.
         var mine = NewEngagement("client-a");
         var other = NewEngagement("client-b");
         _factory.Seed(mine, other);
 
-        var response = await Client(Token(_tenantId, "Staff")).GetAsync("/api/Engagements");
+        var response = await Client(Token(_tenantId, "Owner")).GetAsync("/api/Engagements");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var ids = (await response.Content.ReadFromJsonAsync<List<EngagementDto>>())!.Select(e => e.EngagementId).ToList();

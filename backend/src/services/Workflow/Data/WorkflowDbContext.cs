@@ -14,6 +14,7 @@ public class WorkflowDbContext : DbContext
     public DbSet<Requirement> Requirements => Set<Requirement>();
     public DbSet<EngagementCondition> EngagementConditions => Set<EngagementCondition>();
     public DbSet<StallRecord> StallRecords => Set<StallRecord>();
+    public DbSet<Intervention> Interventions => Set<Intervention>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -206,6 +207,24 @@ public class WorkflowDbContext : DbContext
             entity.HasIndex(s => new { s.TenantId, s.ResolvedAtUtc }).HasDatabaseName("idx_stall_tenant_resolved");
             entity.HasIndex(s => new { s.ActionId, s.ResolvedAtUtc }).HasDatabaseName("idx_stall_action_resolved");
             entity.HasIndex(s => s.EngagementId).HasDatabaseName("idx_stall_engagement");
+        });
+
+        modelBuilder.Entity<Intervention>(entity =>
+        {
+            entity.ToTable("interventions");
+            entity.HasKey(e => e.InterventionId);
+            entity.Property(e => e.InterventionId).HasColumnName("intervention_id").HasMaxLength(36);
+            entity.Property(e => e.TenantId).HasColumnName("tenant_id").HasMaxLength(36).IsRequired();
+            entity.Property(e => e.EngagementId).HasColumnName("engagement_id").HasMaxLength(36).IsRequired();
+            entity.Property(e => e.StallId).HasColumnName("stall_id").HasMaxLength(36);
+            entity.Property(e => e.BlockerActionId).HasColumnName("blocker_action_id").HasMaxLength(36);
+            entity.Property(e => e.Type).HasColumnName("type").HasMaxLength(30).IsRequired();
+            entity.Property(e => e.Reason).HasColumnName("reason").HasColumnType("longtext").IsRequired();
+            entity.Property(e => e.Outcome).HasColumnName("outcome").HasMaxLength(30).IsRequired();
+            entity.Property(e => e.RecordedBy).HasColumnName("recorded_by").HasMaxLength(255).IsRequired();
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+            entity.HasIndex(e => new { e.TenantId, e.EngagementId }, "idx_intervention_tenant_engagement");
+            entity.HasIndex(e => new { e.TenantId, e.CreatedAt }, "idx_intervention_tenant_created");
         });
     }
 }

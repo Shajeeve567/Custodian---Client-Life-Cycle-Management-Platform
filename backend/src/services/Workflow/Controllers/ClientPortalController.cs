@@ -53,7 +53,8 @@ public class ClientPortalController : ControllerBase
             // Staff / Owner preview without specific client specified: fallback to tenant's active onboarding engagement
             if (User?.IsInRole("Staff") == true || User?.IsInRole("Owner") == true)
             {
-                var staffPreviewDashboard = await _portalService.GetActiveDashboardForTenantAsync(effectiveTenantId);
+                var staffPreviewDashboard = await _portalService.GetActiveDashboardForTenantAsync(
+                    effectiveTenantId, Services.Access.EngagementAccess.RestrictedStaffId(User));
                 if (staffPreviewDashboard == null)
                 {
                     return NotFound(new { message = $"No active onboarding engagement found in workspace '{effectiveTenantId}'." });
@@ -64,7 +65,9 @@ public class ClientPortalController : ControllerBase
             return BadRequest(new { message = "Client identification is required via JWT sub/clientId claim, X-Client-ID header, or clientId parameter." });
         }
 
-        var dashboard = await _portalService.GetActiveDashboardForClientAsync(effectiveTenantId, effectiveClientId);
+        // A Staff member previewing a client only sees that client's engagements they are responsible for.
+        var dashboard = await _portalService.GetActiveDashboardForClientAsync(
+            effectiveTenantId, effectiveClientId, Services.Access.EngagementAccess.RestrictedStaffId(User));
         if (dashboard == null)
         {
             return NotFound(new { message = $"No active onboarding engagement found for client '{effectiveClientId}' in workspace '{effectiveTenantId}'." });

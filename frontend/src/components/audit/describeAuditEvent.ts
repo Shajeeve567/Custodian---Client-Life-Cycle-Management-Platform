@@ -5,7 +5,7 @@ import { AuditEvent } from '../../types';
  * detail lines that say exactly what changed. Pure; names and task titles are supplied by the caller.
  */
 
-export type AuditCategory = 'Engagement' | 'Tasks' | 'Questions' | 'Documents' | 'Conditions';
+export type AuditCategory = 'Engagement' | 'Tasks' | 'Questions' | 'Documents' | 'Conditions' | 'Interventions';
 
 export type AuditTone = 'neutral' | 'positive' | 'negative' | 'warning' | 'info';
 
@@ -20,6 +20,8 @@ export interface AuditDescription {
 export interface AuditLookups {
     /** Title of a task by actionId, for older events that only carry the id. */
     taskTitle: (actionId?: string | null) => string | undefined;
+    /** Display name (email) of a user id, when the team list is available. */
+    personName?: (userId?: string | null) => string | undefined;
 }
 
 type Payload = Record<string, any>;
@@ -89,7 +91,7 @@ const compact = (lines: (string | undefined | false | null)[]) => lines.filter(B
 
 export function describeAuditEvent(evt: AuditEvent, lookups: AuditLookups): AuditDescription {
     const p = parsePayload(evt);
-    const taskName = quoted(p.title ?? p.actionTitle ?? lookups.taskTitle(p.actionId));
+    const taskName = quoted(p.title ?? p.actionTitle ?? lookups.taskTitle(p.actionId ?? p.blockerActionId));
 
     switch (evt.type) {
         // ---------------- Engagement ----------------
@@ -100,6 +102,13 @@ export function describeAuditEvent(evt: AuditEvent, lookups: AuditLookups): Audi
             const label = to === 'Started' ? 'Engagement started' : to === 'Closed' ? 'Engagement closed' : to === 'Cancelled' ? 'Engagement cancelled' : 'Engagement status changed';
             return { category: 'Engagement', label, details: compact([`Status: ${p.fromStatus ?? '?'} → ${to ?? '?'}`]), tone: to === 'Cancelled' ? 'negative' : 'positive' };
         }
+        case 'ResponsibleStaffChanged':
+            return {
+                category: 'Engagement',
+                label: 'Responsible staff changed',
+                details: compact([`Staff: ${lookups.personName?.(p.fromStaffId) ?? p.fromStaffId ?? '?'} → ${lookups.personName?.(p.toStaffId) ?? p.toStaffId ?? '?'}`]),
+                tone: 'info',
+            };
         case 'StageChange':
             return { category: 'Engagement', label: 'Stage advanced', details: [`Stage: ${humanize(p.fromStage)} → ${humanize(p.toStage)}`], tone: 'positive' };
 
@@ -224,6 +233,24 @@ export function describeAuditEvent(evt: AuditEvent, lookups: AuditLookups): Audi
         case 'ConditionDeactivated':
             return { category: 'Conditions', label: 'Condition removed', details: compact([p.deactivationReason && `Reason: ${p.deactivationReason}`]), tone: 'negative' };
 
+        // ---------------- Interventions (CSTD-35) ----------------
+        case 'intervention.recovered': {
+            const outcome = p.outcome as string | undefined;
+            const tone: AuditTone =
+                outcome === 'Recovered' ? 'positive' : outcome === 'Escalated' ? 'warning' : outcome === 'Progressing' ? 'info' : 'neutral';
+            return {
+                category: 'Interventions',
+                label: p.type === 'Meeting' ? 'Intervention meeting recorded' : 'Recovery action recorded',
+                details: compact([
+                    taskName && `Blocked task: ${taskName}`,
+                    outcome && `Outcome: ${humanize(outcome)}`,
+                    p.reason && `Reason: ${p.reason}`,
+                    (outcome === 'Recovered' || outcome === 'Progressing') && 'Client notified',
+                ]),
+                tone,
+            };
+        }
+
         default:
             return { category: 'Engagement', label: humanize(evt.type), details: [], tone: 'neutral' };
     }
@@ -232,5 +259,5 @@ export function describeAuditEvent(evt: AuditEvent, lookups: AuditLookups): Audi
 /** Task ids an event refers to, so older events (without titles) can be named from the task list. */
 export const referencedActionId = (evt: AuditEvent): string | undefined => {
     const p = parsePayload(evt);
-    return p.title || p.actionTitle ? undefined : (p.actionId as string | undefined) ?? undefined;
+    return p.title || p.actionTitle ? undefined : (p.actionId ?? p.blockerActionId) ?? undefined;
 };

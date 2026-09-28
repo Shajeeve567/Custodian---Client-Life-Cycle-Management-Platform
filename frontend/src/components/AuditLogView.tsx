@@ -18,9 +18,10 @@ import {
     Search,
     ShieldCheck,
     Flag,
+    LifeBuoy,
 } from 'lucide-react';
 
-const CATEGORIES: AuditCategory[] = ['Engagement', 'Tasks', 'Questions', 'Documents', 'Conditions'];
+const CATEGORIES: AuditCategory[] = ['Engagement', 'Tasks', 'Questions', 'Documents', 'Conditions', 'Interventions'];
 
 const CATEGORY_ICONS: Record<AuditCategory, React.ReactNode> = {
     Engagement: <Flag className="w-4 h-4" />,
@@ -28,6 +29,7 @@ const CATEGORY_ICONS: Record<AuditCategory, React.ReactNode> = {
     Questions: <MessageSquare className="w-4 h-4" />,
     Documents: <FileText className="w-4 h-4" />,
     Conditions: <Layers className="w-4 h-4" />,
+    Interventions: <LifeBuoy className="w-4 h-4" />,
 };
 
 const TONE_CLASSES: Record<AuditTone, string> = {
@@ -134,9 +136,12 @@ export const AuditLogView: React.FC = () => {
         () =>
             events.map((evt) => ({
                 evt,
-                info: describeAuditEvent(evt, { taskTitle: (id) => (id ? taskTitles[id] : undefined) }),
+                info: describeAuditEvent(evt, {
+                    taskTitle: (id) => (id ? taskTitles[id] : undefined),
+                    personName: (id) => (id ? team.find((u) => u.id === id)?.email : undefined),
+                }),
             })),
-        [events, taskTitles]
+        [events, taskTitles, team]
     );
 
     const filtered = useMemo(() => {

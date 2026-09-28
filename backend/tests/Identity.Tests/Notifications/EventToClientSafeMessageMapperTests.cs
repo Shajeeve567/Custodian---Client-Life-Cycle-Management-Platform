@@ -163,21 +163,38 @@ public class EventToClientSafeMessageMapperTests
         Assert.Contains("Identity Verification Step", result.Message);
     }
 
-    [Fact]
-    public void Map_InterventionRecovered_ShouldReturnStageProgressionMessage()
+    // CSTD-35: interventions notify the client only for a positive outcome, with a generic message
+    // (never the staff-only reason).
+    [Theory]
+    [InlineData("Recovered")]
+    [InlineData("Progressing")]
+    public void Map_InterventionRecovered_PositiveOutcome_ShouldReturnBackOnTrackMessage(string outcome)
     {
         var clientId = Guid.NewGuid();
         var envelope = CreateEnvelope("intervention.recovered", new
         {
             clientId,
-            stageName = "Compliance Review"
+            outcome,
+            reason = "Internal: client ignored three emails"
         });
 
         var result = _mapper.MapToClientSafeMessage(envelope);
 
-        Assert.Equal(clientId, result.ClientId);
-        Assert.Contains("Progressing to Next Stage", result.Subject);
-        Assert.Contains("Compliance Review", result.Message);
+        Assert.NotNull(result);
+        Assert.Equal(clientId, result!.ClientId);
+        Assert.Contains("Back on track", result.Subject);
+        Assert.DoesNotContain("ignored", result.Message);
+    }
+
+    [Theory]
+    [InlineData("NoChange")]
+    [InlineData("Escalated")]
+    [InlineData(null)]
+    public void Map_InterventionRecovered_OtherOutcome_IsNotSent(string? outcome)
+    {
+        var envelope = CreateEnvelope("intervention.recovered", new { clientId = Guid.NewGuid(), outcome });
+
+        Assert.Null(_mapper.MapToClientSafeMessage(envelope));
     }
 
     [Theory]

@@ -31,6 +31,12 @@ public class SlaCalculator : ISlaCalculator
         return new SlaStatus(dueAt, isOverdue, isOverdue ? nowUtc - dueAt : null);
     }
 
+    public DateTime ResolveDueAt(ClientAction action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        return _stallDetection.ResolveEffectiveDeadline(action);
+    }
+
     public SlaStatus CalculateRequirementSla(Requirement requirement, DateTimeOffset now)
     {
         // Requirements carry no deadline of their own; the engine uses the mirrored action's SLA.
