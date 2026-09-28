@@ -8,6 +8,7 @@ using Custodian.Shared.Reporting.Auth;
 using Custodian.Shared.Reporting.Errors;
 using Custodian.Shared.Reporting.Export;
 using Custodian.Shared.Reporting.Models;
+using Custodian.Shared.Reporting.Observability;
 using Custodian.Shared.Reporting.Rendering;
 using Custodian.Workflow.Data;
 using Microsoft.AspNetCore.Authorization;
@@ -77,12 +78,13 @@ public class ReportPipelineTests : IClassFixture<ReportPipelineTests.Factory>
     }
 
     [Fact]
-    public void Workflow_RegistersTheSharedRendererAndExporter()
+    public void Workflow_RegistersTheSharedReportingServices()
     {
         using var scope = _factory.Services.CreateScope();
 
         Assert.IsType<PdfReportRenderer>(scope.ServiceProvider.GetRequiredService<IReportRenderer>());
         Assert.IsType<CsvExporter>(scope.ServiceProvider.GetRequiredService<ICsvExporter>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ReportTelemetry>());
     }
 
     [Theory]
@@ -155,11 +157,13 @@ public class TestReportController : ControllerBase
 
     private readonly IReportRenderer _renderer;
     private readonly ICsvExporter _csv;
+    private readonly ReportTelemetry _telemetry;
 
-    public TestReportController(IReportRenderer renderer, ICsvExporter csv)
+    public TestReportController(IReportRenderer renderer, ICsvExporter csv, ReportTelemetry telemetry)
     {
         _renderer = renderer;
         _csv = csv;
+        _telemetry = telemetry;
     }
 
     [HttpGet("sample")]
@@ -167,13 +171,18 @@ public class TestReportController : ControllerBase
     {
         var reportFormat = ReportFormats.Parse(format);
         var tenantId = ReportAuthorization.RequireTenantId(User);
-        var metadata = new ReportMetadata("SAMPLE", "Sample", tenantId, DateTimeOffset.UtcNow,
-            ReportAuthorization.ResolveActor(User), [], "Workflow service live database");
-        var table = new TableSection("Rows", [new ReportColumn("Name")], [new object?[] { "One" }]);
-        var model = new SampleReport(metadata, [table]);
 
-        var bytes = reportFormat == ReportFormat.Csv ? _csv.ToCsv(table) : _renderer.RenderPdf(model);
-        return ReportResults.File(ReportResults.Output(metadata, reportFormat, bytes));
+        var output = _telemetry.Measure("SAMPLE", reportFormat, () =>
+        {
+            var metadata = new ReportMetadata("SAMPLE", "Sample", tenantId, DateTimeOffset.UtcNow,
+                ReportAuthorization.ResolveActor(User), [], "Workflow service live database");
+            var table = new TableSection("Rows", [new ReportColumn("Name")], [new object?[] { "One" }]);
+            var model = new SampleReport(metadata, [table]);
+
+            var bytes = reportFormat == ReportFormat.Csv ? _csv.ToCsv(table) : _renderer.RenderPdf(model);
+            return new ReportRun(ReportResults.Output(metadata, reportFormat, bytes));
+        });
+        return ReportResults.File(output);
     }
 
     [HttpGet("broken")]

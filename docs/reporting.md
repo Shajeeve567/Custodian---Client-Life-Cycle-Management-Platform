@@ -86,7 +86,7 @@ This university case-study project qualifies. A commercial deployment above that
 
 1. **Compute the numbers.** In the owning service, query live data for the caller's tenant (`ReportAuthorization.RequireTenantId(User)`) and compute a plain result object.
 2. **Build the model.** Build a `ReportModel` subclass from it (a *model builder*): metadata + sections. Take `GeneratedBy` from `ReportAuthorization.ResolveActor(User)`.
-3. **Render it.** Use `IReportRenderer` for PDF, or `ICsvExporter` to export a `TableSection` as CSV. Register both once per service with `builder.Services.AddCustodianReporting()`; Workflow already does this.
+3. **Render it** inside `ReportTelemetry.MeasureAsync` (see Telemetry). Use `IReportRenderer` for PDF, or `ICsvExporter` to export a `TableSection` as CSV. Register these once per service with `builder.Services.AddCustodianReporting()`; Workflow already does this.
 4. **Return it** with `ReportResults.File(ReportResults.Output(metadata, format, bytes))`.
 
 A report endpoint looks like this:
@@ -103,9 +103,15 @@ public class ReportsController : ControllerBase
     {
         var reportFormat = ReportFormats.Parse(format);                  // 400 on anything but pdf/csv
         var tenantId = ReportAuthorization.RequireTenantId(User);        // JWT only
-        var model = await _builder.BuildAsync(tenantId, ..., ReportAuthorization.ResolveActor(User));
-        var bytes = reportFormat == ReportFormat.Csv ? _csv.ToCsv(model.Detail) : _renderer.RenderPdf(model);
-        return ReportResults.File(ReportResults.Output(model.Metadata, reportFormat, bytes));
+
+        var output = await _telemetry.MeasureAsync("SLA_PERFORMANCE", reportFormat, async () =>
+        {
+            var data = await _service.ComputeAsync(tenantId, filter);        // plain numbers
+            var model = _builder.Build(data, ReportAuthorization.ResolveActor(User));
+            var bytes = reportFormat == ReportFormat.Csv ? _csv.ToCsv(model.Detail) : _renderer.RenderPdf(model);
+            return new ReportRun(ReportResults.Output(model.Metadata, reportFormat, bytes), IsEmpty: data.TotalActions == 0);
+        });
+        return ReportResults.File(output);
     }
 }
 ```
@@ -158,6 +164,34 @@ The message is shown to the user for every kind except a 500, so keep ids and in
 
 Logs record the report code, error kind and correlation id, never the filter values, which can identify clients. A cancelled request (the user closed the page) is not treated as a failure.
 
+## Telemetry
+
+Wrap each generation in `ReportTelemetry.MeasureAsync(reportCode, format, generate)`. It records one entry per run:
+
+| Where | What |
+|---|---|
+| Log line (`ILogger`, category `ReportTelemetry`) | `Report SLA_PERFORMANCE (pdf) finished in 412.3 ms: success, 58210 bytes.` |
+| Meter `Custodian.Reporting` | `custodian.report.generation.duration` (ms) and `custodian.report.generation.size` (bytes), tagged `report_code`, `format`, `outcome` |
+| Activity source `Custodian.Reporting` | `report.generate` span with the same tags |
+
+- **Outcomes:**
+    - `success`;
+    - `empty` (the run reported no matching records);
+    - `invalid_filter`, `forbidden`, `subject_not_found`, `data_source_unavailable` or `generation_failed`. For these the exception is rethrown unchanged for `[ReportErrors]`.
+- **Privacy:** report contents, filter values and exception messages are never recorded, because they can identify clients.
+- **Collection:** no exporter (App Insights, Prometheus) is wired in any service yet. That matches the existing next-action telemetry. Today the log line is what App Service's log stream shows, and the meter and activity are ready for an OpenTelemetry exporter when one is added.
+
+## CI
+
+`dotnet test backend/Custodian.sln` (the `ci.yml` backend job, on `ubuntu-latest`) runs the reporting tests:
+
+- `SampleReportTests` render a test-only sample report (`SampleReportModelBuilder`) as PDF and CSV, so a renderer that throws fails the build;
+- `ReportPipelineTests` run a test-only endpoint through the real Workflow pipeline.
+
+QuestPDF brings its own linux-x64 native library and the bundled Lato font, so no extra CI setup is needed.
+
+Still open for DevOps (CSTD-36-5): render a PDF inside the Workflow Docker image, and on App Service Linux once CSTD-37's endpoint is deployed.
+
 ## Status
 
 | Part | Milestone | State |
@@ -166,5 +200,5 @@ Logs record the report code, error kind and correlation id, never the filter val
 | PDF renderer | CSTD-36-M2 | Done |
 | CSV exporter | CSTD-36-M3 | Done |
 | `ReportResults`, error contract, role helper, Workflow wiring | CSTD-36-M4 | Done |
-| Telemetry, sample report | CSTD-36-M5 | Planned |
+| Telemetry, sample report, CI check | CSTD-36-M5 | Done |
 | Frontend download helper | CSTD-36-M6 | Planned |
