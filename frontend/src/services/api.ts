@@ -398,6 +398,14 @@ export const WorkflowApi = {
         );
     },
 
+    // Owner only: hand the engagement to another staff member / owner (staff only see engagements they are responsible for).
+    async changeResponsibleStaff(engagementId: string, staffId: string): Promise<Engagement> {
+        return request<Engagement>(`${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/staff`, {
+            method: 'PUT',
+            body: JSON.stringify({ staffId }),
+        });
+    },
+
     async updateStatus(engagementId: string, status: EngagementStatus, tenantId: string): Promise<Engagement> {
         return request<Engagement>(`${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/status`, {
             method: 'PUT',

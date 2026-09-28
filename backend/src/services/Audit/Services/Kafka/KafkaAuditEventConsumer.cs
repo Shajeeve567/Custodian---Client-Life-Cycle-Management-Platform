@@ -22,6 +22,8 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
         "Genesis",
         "StatusChange",
         "StageChange",
+        // Owner handed the engagement to another responsible staff member (who then gains access to it).
+        "ResponsibleStaffChanged",
         // CSTD-16 (Requirements Collection)
         "RequirementRequested",
         "RequirementSubmitted",

@@ -299,6 +299,68 @@ public class EngagementsController : ControllerBase
         return Ok(MapToResponse(updated));
     }
 
+    /// <summary>
+    /// Owner only: changes the engagement's responsible staff member (Engagement.StaffId). Staff see only
+    /// engagements they are responsible for, so this is how an owner gives a staff member access or hands
+    /// work over. The new staff id is a user id from the workspace's team list (Identity); Workflow does not
+    /// hold user accounts, so it checks the format only. Audited as ResponsibleStaffChanged.
+    /// </summary>
+    [HttpPut("{id}/staff")]
+    [Authorize(Roles = "Owner")]
+    public async Task<ActionResult<EngagementResponse>> ChangeResponsibleStaff(Guid id, [FromBody] ChangeResponsibleStaffRequest request)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(null);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest("Tenant identification is required.");
+        }
+
+        if (!Guid.TryParse(request.StaffId, out var newStaffGuid) || newStaffGuid == Guid.Empty)
+        {
+            return BadRequest(new { message = "staffId must be the user id of a workspace member." });
+        }
+
+        var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
+        if (engagement == null)
+        {
+            return NotFound();
+        }
+
+        var newStaffId = newStaffGuid.ToString();
+        var previousStaffId = engagement.StaffId;
+        if (string.Equals(previousStaffId, newStaffId, StringComparison.OrdinalIgnoreCase))
+        {
+            return Ok(MapToResponse(engagement));
+        }
+
+        engagement.StaffId = newStaffId;
+        var updated = await _repository.UpdateAsync(engagement);
+
+        await _auditPublisher.PublishEventAsync(
+            updated.EngagementId,
+            effectiveTenantId,
+            ResolveActor(),
+            "ResponsibleStaffChanged",
+            new
+            {
+                fromStaffId = previousStaffId,
+                toStaffId = newStaffId,
+                changedAt = DateTime.UtcNow
+            });
+
+        return Ok(MapToResponse(updated));
+    }
+
     [HttpPut("{id}/stage")]
     [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<EngagementResponse>> UpdateStage(Guid id, [FromBody] UpdateEngagementStageRequest request)

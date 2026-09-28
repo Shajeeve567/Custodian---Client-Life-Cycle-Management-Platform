@@ -121,6 +121,72 @@ public class EngagementsControllerUnitTests
         ), Times.Once);
     }
 
+    // ==========================================
+    // CHANGE RESPONSIBLE STAFF (owner only)
+    // ==========================================
+
+    [Fact]
+    public async Task ChangeResponsibleStaff_UpdatesTheEngagement_AndAuditsFromAndTo()
+    {
+        SetupUserJwtClaim("tenant-001", role: "Owner");
+        var engagement = new Engagement { EngagementId = Guid.NewGuid(), TenantId = "tenant-001", ClientId = "c1", StaffId = "old-staff" };
+        var newStaff = Guid.NewGuid().ToString();
+        _mockRepo.Setup(r => r.GetByIdAsync(engagement.EngagementId, "tenant-001")).ReturnsAsync(engagement);
+        _mockRepo.Setup(r => r.UpdateAsync(It.IsAny<Engagement>())).ReturnsAsync((Engagement e) => e);
+        object? payload = null;
+        _mockAuditPublisher
+            .Setup(a => a.PublishEventAsync(engagement.EngagementId, "tenant-001", It.IsAny<string>(), "ResponsibleStaffChanged", It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, _, p) => payload = p)
+            .Returns(Task.CompletedTask);
+
+        var result = await _controller.ChangeResponsibleStaff(engagement.EngagementId, new ChangeResponsibleStaffRequest { StaffId = newStaff });
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(newStaff, Assert.IsType<EngagementResponse>(ok.Value).StaffId);
+        _mockRepo.Verify(r => r.UpdateAsync(It.Is<Engagement>(e => e.StaffId == newStaff)), Times.Once);
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(payload);
+        Assert.Equal("old-staff", json.GetProperty("fromStaffId").GetString());
+        Assert.Equal(newStaff, json.GetProperty("toStaffId").GetString());
+    }
+
+    [Fact]
+    public async Task ChangeResponsibleStaff_SameStaff_ChangesNothing()
+    {
+        SetupUserJwtClaim("tenant-001", role: "Owner");
+        var staff = Guid.NewGuid().ToString();
+        var engagement = new Engagement { EngagementId = Guid.NewGuid(), TenantId = "tenant-001", ClientId = "c1", StaffId = staff };
+        _mockRepo.Setup(r => r.GetByIdAsync(engagement.EngagementId, "tenant-001")).ReturnsAsync(engagement);
+
+        var result = await _controller.ChangeResponsibleStaff(engagement.EngagementId, new ChangeResponsibleStaffRequest { StaffId = staff.ToUpperInvariant() });
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        _mockRepo.Verify(r => r.UpdateAsync(It.IsAny<Engagement>()), Times.Never);
+        _mockAuditPublisher.Verify(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("not-a-user-id")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    public async Task ChangeResponsibleStaff_InvalidStaffId_Is400(string staffId)
+    {
+        SetupUserJwtClaim("tenant-001", role: "Owner");
+
+        var result = await _controller.ChangeResponsibleStaff(Guid.NewGuid(), new ChangeResponsibleStaffRequest { StaffId = staffId });
+
+        Assert.IsType<BadRequestObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task ChangeResponsibleStaff_UnknownEngagement_Is404()
+    {
+        SetupUserJwtClaim("tenant-001", role: "Owner");
+        _mockRepo.Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), "tenant-001")).ReturnsAsync((Engagement?)null);
+
+        var result = await _controller.ChangeResponsibleStaff(Guid.NewGuid(), new ChangeResponsibleStaffRequest { StaffId = Guid.NewGuid().ToString() });
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
     [Fact]
     public async Task CreateEngagement_MissingTenantId_ShouldReturn400BadRequest()
     {

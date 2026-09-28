@@ -53,6 +53,13 @@ interface WorkspaceStageViewProps {
 // Add Task form value for "Request Information": creates a requirement (question) instead of a plain task.
 const REQUEST_INFORMATION_TYPE = REQUEST_INFORMATION_OPTION;
 
+/** Owner or Staff of this workspace (clients are workspace members too, but cannot be responsible staff). */
+const isTeamMemberOf = (user: UserAccountResponse, tenantId?: string | null): boolean => {
+    const membership = user.memberships?.find((m) => m.tenantId === tenantId);
+    const role = String(membership?.role ?? '');
+    return role === 'Owner' || role === 'Staff' || role === '0' || role === '1';
+};
+
 /** documentId stored in a task's SourceMetadata JSON by the evidence upload, if any. */
 const metadataDocumentId = (sourceMetadata?: string | null): string | undefined => {
     if (!sourceMetadata) return undefined;
@@ -75,6 +82,10 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [engagement, setEngagement] = useState<Engagement | null>(null);
     const [client, setClient] = useState<ClientProfile | null>(null);
     const [staffLead, setStaffLead] = useState<UserAccountResponse | null>(null);
+    // Owner only: workspace owners and staff who can be made responsible for this engagement.
+    const [assignableStaff, setAssignableStaff] = useState<UserAccountResponse[]>([]);
+    const [isChangingStaff, setIsChangingStaff] = useState(false);
+    const [staffChangeError, setStaffChangeError] = useState<string | null>(null);
     const [actions, setActions] = useState<ClientAction[]>([]);
     const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
     const [conditions, setConditions] = useState<EngagementCondition[]>([]);
@@ -160,6 +171,28 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
         return docId ? documents.find((d) => d.documentId === docId) : undefined;
     };
 
+    const handleChangeResponsibleStaff = async (staffId: string) => {
+        if (!engagement || !staffId || staffId === engagement.staffId) return;
+        const next = assignableStaff.find((u) => u.id === staffId);
+        const ok = window.confirm(
+            `Make ${next?.email ?? 'this person'} responsible for this engagement?\n\n` +
+            'Staff only see engagements they are responsible for, so the current staff member will lose access (owners keep it).'
+        );
+        if (!ok) return;
+
+        setIsChangingStaff(true);
+        setStaffChangeError(null);
+        try {
+            const updated = await WorkflowApi.changeResponsibleStaff(engagement.engagementId, staffId);
+            setEngagement((prev) => (prev ? { ...prev, staffId: updated.staffId } : prev));
+            setStaffLead(next ?? null);
+        } catch (err: any) {
+            setStaffChangeError(err?.message || 'Could not change the responsible staff.');
+        } finally {
+            setIsChangingStaff(false);
+        }
+    };
+
     // CSTD-19 (19-N5): next actions are computed on read with no cache, so every workspace reload
     // (which already runs after each mutation) refreshes the panel too.
     const loadNextAction = useCallback(async () => {
@@ -213,8 +246,9 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                         const users = await IdentityApi.getUsers(token);
                         if (foundEng) {
                             const matchedStaff = users.find((u) => u.id === foundEng.staffId);
-                            if (matchedStaff) setStaffLead(matchedStaff);
+                            setStaffLead(matchedStaff ?? null);
                         }
+                        setAssignableStaff(users.filter((u) => isTeamMemberOf(u, tenantId)));
                     } catch (uErr) {
                         console.warn(uErr);
                     }
@@ -810,13 +844,35 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             Standard checklist…
                         </button>
                     )}
-                    <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200/80 text-xs">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                            STAFF CUSTODIAN
-                        </span>
-                        <span className="font-semibold text-slate-800 truncate block mt-0.5">
-                            {staffLead?.email || 'Assigned Custodian'}
-                        </span>
+                    <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200/80 text-xs max-w-[240px]">
+                        <label htmlFor="responsible-staff" className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            RESPONSIBLE STAFF
+                        </label>
+                        {role === 'Owner' && assignableStaff.length > 0 && engagement ? (
+                            <select
+                                id="responsible-staff"
+                                value={engagement.staffId}
+                                onChange={(e) => handleChangeResponsibleStaff(e.target.value)}
+                                disabled={isChangingStaff}
+                                title="Staff only see engagements they are responsible for"
+                                className="mt-0.5 w-full bg-transparent font-semibold text-slate-800 truncate focus:outline-none cursor-pointer disabled:opacity-60"
+                            >
+                                {!assignableStaff.some((u) => u.id === engagement.staffId) && (
+                                    <option value={engagement.staffId}>Unknown ({engagement.staffId.slice(0, 8)})</option>
+                                )}
+                                {assignableStaff.map((u) => (
+                                    <option key={u.id} value={u.id}>
+                                        {u.email}
+                                    </option>
+                                ))}
+                            </select>
+                        ) : (
+                            <span className="font-semibold text-slate-800 truncate block mt-0.5">
+                                {staffLead?.email || (engagement?.staffId === userId ? 'You' : 'Assigned custodian')}
+                            </span>
+                        )}
+                        {isChangingStaff && <span className="text-[10px] text-slate-500 block mt-0.5">Saving…</span>}
+                        {staffChangeError && <span role="alert" className="text-[10px] text-rose-600 block mt-0.5">{staffChangeError}</span>}
                     </div>
 
                     <div className="p-3 bg-indigo-50/80 rounded-xl border border-indigo-200/80 text-xs">

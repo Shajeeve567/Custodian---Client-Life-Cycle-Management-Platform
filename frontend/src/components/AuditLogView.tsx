@@ -136,9 +136,12 @@ export const AuditLogView: React.FC = () => {
         () =>
             events.map((evt) => ({
                 evt,
-                info: describeAuditEvent(evt, { taskTitle: (id) => (id ? taskTitles[id] : undefined) }),
+                info: describeAuditEvent(evt, {
+                    taskTitle: (id) => (id ? taskTitles[id] : undefined),
+                    personName: (id) => (id ? team.find((u) => u.id === id)?.email : undefined),
+                }),
             })),
-        [events, taskTitles]
+        [events, taskTitles, team]
     );
 
     const filtered = useMemo(() => {

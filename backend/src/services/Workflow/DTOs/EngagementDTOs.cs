@@ -27,6 +27,15 @@ public class UpdateEngagementStatusRequest
     public string Status { get; set; } = string.Empty;
 }
 
+/// <summary>Owner only: hands an engagement to another staff member (or owner) of the workspace.</summary>
+public class ChangeResponsibleStaffRequest
+{
+    /// <summary>User id of the new responsible staff member.</summary>
+    [Required]
+    [MaxLength(36)]
+    public string StaffId { get; set; } = string.Empty;
+}
+
 public class UpdateEngagementStageRequest
 {
     [Required]

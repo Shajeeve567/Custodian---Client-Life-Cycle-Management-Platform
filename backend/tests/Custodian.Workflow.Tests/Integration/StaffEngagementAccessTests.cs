@@ -109,7 +109,10 @@ public class StaffEngagementAccessTests : IClassFixture<StaffEngagementAccessTes
     [Fact]
     public async Task EngagementList_Staff_SeesOnlyAssigned_OwnerSeesAll()
     {
-        Assert.Equal([Assigned], await EngagementIds(await Staff().GetAsync("/api/Engagements")));
+        // Other tests in this class add engagements for staff A, so check membership, not the exact list.
+        var staffIds = await EngagementIds(await Staff().GetAsync("/api/Engagements"));
+        Assert.Contains(Assigned, staffIds);
+        Assert.DoesNotContain(Unassigned, staffIds);
 
         var ownerIds = await EngagementIds(await Owner().GetAsync("/api/Engagements"));
         Assert.Contains(Assigned, ownerIds);
@@ -204,6 +207,36 @@ public class StaffEngagementAccessTests : IClassFixture<StaffEngagementAccessTes
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal(StaffA, json.RootElement.GetProperty("staffId").GetString());
+    }
+
+    // ---------------- Reassignment (owner only) ----------------
+
+    [Fact]
+    public async Task OnlyOwners_CanChangeTheResponsibleStaff()
+    {
+        var response = await Staff().PutAsJsonAsync($"/api/Engagements/{Assigned}/staff", new { staffId = OwnerId });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Reassigning_GivesTheNewStaffMemberAccess()
+    {
+        // Its own engagement, so the other tests' data is untouched.
+        var engagementId = Guid.NewGuid();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<WorkflowDbContext>();
+            db.Engagements.Add(new Engagement { EngagementId = engagementId, TenantId = Tenant, ClientId = "client-c", StaffId = OwnerId, Status = EngagementStatus.Started });
+            db.SaveChanges();
+        }
+        Assert.Equal(HttpStatusCode.NotFound, (await Staff().GetAsync($"/api/Engagements/{engagementId}")).StatusCode);
+
+        var response = await Owner().PutAsJsonAsync($"/api/Engagements/{engagementId}/staff", new { staffId = StaffA });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Staff().GetAsync($"/api/Engagements/{engagementId}")).StatusCode);
+        Assert.Contains(engagementId, await EngagementIds(await Staff().GetAsync("/api/Engagements")));
     }
 
     // ---------------- Portal preview and clients ----------------

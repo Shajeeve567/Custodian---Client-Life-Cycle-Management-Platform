@@ -20,6 +20,8 @@ export interface AuditDescription {
 export interface AuditLookups {
     /** Title of a task by actionId, for older events that only carry the id. */
     taskTitle: (actionId?: string | null) => string | undefined;
+    /** Display name (email) of a user id, when the team list is available. */
+    personName?: (userId?: string | null) => string | undefined;
 }
 
 type Payload = Record<string, any>;
@@ -100,6 +102,13 @@ export function describeAuditEvent(evt: AuditEvent, lookups: AuditLookups): Audi
             const label = to === 'Started' ? 'Engagement started' : to === 'Closed' ? 'Engagement closed' : to === 'Cancelled' ? 'Engagement cancelled' : 'Engagement status changed';
             return { category: 'Engagement', label, details: compact([`Status: ${p.fromStatus ?? '?'} → ${to ?? '?'}`]), tone: to === 'Cancelled' ? 'negative' : 'positive' };
         }
+        case 'ResponsibleStaffChanged':
+            return {
+                category: 'Engagement',
+                label: 'Responsible staff changed',
+                details: compact([`Staff: ${lookups.personName?.(p.fromStaffId) ?? p.fromStaffId ?? '?'} → ${lookups.personName?.(p.toStaffId) ?? p.toStaffId ?? '?'}`]),
+                tone: 'info',
+            };
         case 'StageChange':
             return { category: 'Engagement', label: 'Stage advanced', details: [`Stage: ${humanize(p.fromStage)} → ${humanize(p.toStage)}`], tone: 'positive' };
 
