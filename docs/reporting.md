@@ -28,7 +28,7 @@ A report is pure data: `ReportMetadata` plus an ordered list of sections (`Custo
 | Section | Use |
 |---|---|
 | `KeyValueSection(title, pairs)` | Summary figures: "Total actions" → 42 |
-| `TableSection(title, columns, rows, footnote?)` | Breakdowns. One cell per column; `ReportColumnAlignment.Right` for numbers |
+| `TableSection(title, columns, rows, footnote?)` | Breakdowns. One cell per column; `ReportColumnAlignment.Right` for numbers; `Width` (relative, default 1) widens label columns |
 | `TextSection(title, paragraphs)` | Explanations, e.g. metric definitions |
 | `EmptySection(title, message?)` | A section with no matching data. Default message: "No records match the selected filters." |
 
@@ -216,6 +216,46 @@ Wrap each generation in `ReportTelemetry.MeasureAsync(reportCode, format, genera
 QuestPDF brings its own linux-x64 native library and the bundled Lato font, so no extra CI setup is needed.
 
 Still open for DevOps (CSTD-36-5): render a PDF inside the Workflow Docker image, and on App Service Linux once CSTD-37's endpoint is deployed.
+
+## Reports
+
+### SLA Performance (CSTD-37)
+
+`GET {Workflow}/api/reports/sla-performance` (Owner, Staff), code `SLA_PERFORMANCE`.
+
+| Parameter | Values | Default |
+|---|---|---|
+| `from`, `to` | `yyyy-MM-dd` (UTC). `to` is inclusive; the range is at most 366 days | the last 30 days, including today |
+| `engagementId` | engagement id; another tenant's id → 404 | all |
+| `stage` | `1`–`5` or a name (`DocumentCollection`) | all |
+| `staffId` | the engagement's responsible staff (`Engagement.StaffId`) | all |
+| `actionType` | a stored action type (`KycDocument`, `CustomTask`, …) | all |
+| `format` | `pdf` or `csv` (per-action detail) | `pdf` |
+
+**What gets counted:** actions that became actionable (`ActivatedAt`) inside the range.
+
+**Due time** comes from `ISlaCalculator.ResolveDueAt`: the explicit deadline, else `ActivatedAt` + the stage SLA. This is the stall queue's rule.
+
+**Sections:**
+1. Summary
+2. On time vs late vs overdue
+3. Timing (hours)
+4. By stage
+5. By action type
+6. By responsible party
+7. Stall statistics
+8. Stalls resolved, by how
+9. Top 10 overdue now
+10. Definitions (how every number is computed)
+
+**Code:**
+- `Services/Reports/SlaPerformanceReportService.cs`: queries and maths;
+- `SlaPerformanceReportBuilder.cs`: the sections;
+- `Controllers/ReportsController.cs`: the endpoint.
+
+**Tests:**
+- `tests/Custodian.Workflow.Tests/Unit/Reports/`: filters, maths (hand-computed fixture), builder;
+- `Integration/SlaPerformanceReportEndpointTests.cs`: the endpoint.
 
 ## Status
 

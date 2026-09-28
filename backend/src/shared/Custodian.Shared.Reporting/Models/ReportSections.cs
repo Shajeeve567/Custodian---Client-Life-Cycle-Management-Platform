@@ -43,8 +43,14 @@ public enum ReportColumnAlignment
     Right
 }
 
-/// <summary>A table column. Numbers read best right-aligned.</summary>
-public sealed record ReportColumn(string Header, ReportColumnAlignment Alignment = ReportColumnAlignment.Left);
+/// <summary>
+/// A table column. Numbers read best right-aligned. <paramref name="Width"/> is relative to the other
+/// columns (default 1): give label columns 2 or 3 so they do not wrap. CSV ignores it.
+/// </summary>
+public sealed record ReportColumn(string Header, ReportColumnAlignment Alignment = ReportColumnAlignment.Left, float Width = 1)
+{
+    public float Width { get; } = Width > 0 ? Width : throw new ArgumentOutOfRangeException(nameof(Width), "Column width must be positive.");
+}
 
 /// <summary>
 /// Rows of typed cell values (see <see cref="ReportValue"/>). Every row has exactly one cell per column.

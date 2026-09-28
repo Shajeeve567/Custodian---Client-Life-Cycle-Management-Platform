@@ -180,9 +180,9 @@ public sealed class PdfReportRenderer : IReportRenderer
         {
             table.ColumnsDefinition(columns =>
             {
-                foreach (var _ in section.Columns)
+                foreach (var column in section.Columns)
                 {
-                    columns.RelativeColumn();
+                    columns.RelativeColumn(column.Width);
                 }
             });
 
