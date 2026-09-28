@@ -13,10 +13,13 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add Controllers & CORS
 builder.Services.AddControllers();
-builder.Services.AddCustodianCors(builder.Configuration);
+builder.Services.AddCustodianCors(builder.Configuration, builder.Environment);
 builder.Services.AddTenantContext();
-builder.Services.AddJwtAuthentication(builder.Configuration);
-builder.Services.AddAuthorization();
+builder.Services.AddJwtAuthentication(builder.Configuration, builder.Environment);
+// Tenant APIs require a workspace token (tenant_id claim); see TenantAuthorizationExtensions.
+builder.Services.AddTenantScopedAuthorization();
+// HTTP audit ingestion is service-only: callers must present AuditIngestion:ApiKey.
+builder.Services.Configure<AuditIngestionOptions>(builder.Configuration.GetSection(AuditIngestionOptions.SectionName));
 
 // Add OpenAPI / Swagger
 builder.Services.AddOpenApi();
@@ -61,16 +64,22 @@ if (app.Environment.IsDevelopment())
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetService<AuditDbContext>();
-    dbContext?.Database.Migrate();
+    if (dbContext != null)
+    {
+        // Baselines databases created by the old EnsureCreated() call, then applies migrations.
+        AuditDatabaseInitializer.Migrate(dbContext, app.Logger);
+    }
 }
 
+app.LogCustodianCors();
 app.UseCors();
 // app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseTenantContext();
 app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Audit Service" }));
-app.MapControllers();
+// Every controller endpoint requires a workspace token (tenant_id), combined with its own roles.
+app.MapControllers().RequireTenantMembership();
 
 app.Run();
 

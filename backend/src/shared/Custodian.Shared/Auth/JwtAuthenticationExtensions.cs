@@ -2,17 +2,21 @@ using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Custodian.Shared.Auth;
 
 public static class JwtAuthenticationExtensions
 {
-    public static IServiceCollection AddJwtAuthentication(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddJwtAuthentication(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         // 1. Automatically grab the "Jwt" section from appsettings.json and map it to your JwtTokenOptions record!
         var jwtOptions = configuration.GetSection("Jwt").Get<JwtTokenOptions>() 
             ?? throw new ArgumentNullException("JWT configuration is missing in appsettings.json!");
+
+        // Refuse to start with a missing/weak key, or with the public dev key outside Development/Testing.
+        JwtSigningKeyGuard.Validate(jwtOptions.SigningKey, environment);
 
         // 2. Configure ASP.NET Core Authentication
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

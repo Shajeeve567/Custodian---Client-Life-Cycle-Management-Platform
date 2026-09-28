@@ -25,8 +25,20 @@ import {
     RejectDocumentRequest,
     UpdateDocumentMetadataRequest,
     SubmitRequirementRequest,
+    RequestRequirementRequest,
+    ReviewRequirementRequest,
     RequirementResponse,
     StallQueueItem,
+    ChainVerificationResult,
+    StallQueueFilters,
+    StallQueueResult,
+    EngagementCondition,
+    ClientSafeCondition,
+    AttachConditionRequest,
+    UpdateConditionRequest,
+    DeactivateConditionRequest,
+    NextActionResult,
+    UpdateClientActionRequest,
 } from '../types';
 
 export const API_BASE = {
@@ -55,10 +67,14 @@ export function setUnauthorizedHandler(handler: OnUnauthorizedCallback | null) {
     unauthorizedHandler = handler;
 }
 
-export async function request<T = any>(
+/**
+ * fetch with the caller's bearer token and the shared error handling (ApiError, 401 handler).
+ * Returns the successful Response unread, so callers can take JSON, text or a Blob.
+ */
+async function authorizedFetch(
     url: string,
     options: RequestInit & { token?: string; skipAuthHeader?: boolean } = {}
-): Promise<T> {
+): Promise<Response> {
     const { token, skipAuthHeader = false, headers: customHeaders, ...rest } = options;
 
     const headers = new Headers(customHeaders || {});
@@ -109,6 +125,15 @@ export async function request<T = any>(
 
         throw new ApiError(response.status, errorMessage || `HTTP Error ${response.status}`, errorData);
     }
+
+    return response;
+}
+
+export async function request<T = any>(
+    url: string,
+    options: RequestInit & { token?: string; skipAuthHeader?: boolean } = {}
+): Promise<T> {
+    const response = await authorizedFetch(url, options);
 
     // Parse successful response
     const contentType = response.headers.get('content-type') || '';
@@ -235,12 +260,21 @@ export const WorkflowApi = {
         });
     },
 
-    async getStallQueue(tenantId: string): Promise<StallQueueItem[]> {
-        const url = `${API_BASE.WORKFLOW}/api/stall-queue?tenantId=${encodeURIComponent(tenantId)}`;
-        return request<StallQueueItem[]>(url, {
+    async getStallQueue(tenantId: string, filters: StallQueueFilters = {}): Promise<StallQueueResult> {
+        const params = new URLSearchParams({ tenantId });
+        if (filters.mine) params.append('mine', 'true');
+        if (filters.stage) params.append('stage', filters.stage);
+        if (filters.minOverdueHours) params.append('minOverdueHours', String(filters.minOverdueHours));
+        if (filters.page) params.append('page', String(filters.page));
+        if (filters.pageSize) params.append('pageSize', String(filters.pageSize));
+
+        const response = await authorizedFetch(`${API_BASE.WORKFLOW}/api/stall-queue?${params.toString()}`, {
             method: 'GET',
             headers: { 'X-Tenant-ID': tenantId },
         });
+        const items = (await response.json()) as StallQueueItem[];
+        const total = Number(response.headers.get('X-Total-Count'));
+        return { items, totalCount: Number.isFinite(total) && total > 0 ? total : items.length };
     },
 
     async updateStatus(engagementId: string, status: EngagementStatus, tenantId: string): Promise<Engagement> {
@@ -259,6 +293,17 @@ export const WorkflowApi = {
             headers: { 'X-Tenant-ID': tenantId },
             body: JSON.stringify({ tenantId, stage }),
         });
+    },
+
+    // CSTD-19: Next action for the staff workspace: GET /api/engagements/{id}/next-action (Owner/Staff).
+    // Computed on every read from live state (no cache), so re-fetch after any change.
+    async getNextAction(engagementId: string, tenantId: string): Promise<NextActionResult> {
+        return request<NextActionResult>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/next-action?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'GET',
+                headers: { 'X-Tenant-ID': tenantId },
+            });
     },
 
     async deleteEngagement(engagementId: string, tenantId: string): Promise<void> {
@@ -289,6 +334,48 @@ export const WorkflowApi = {
             method: 'POST',
             body: JSON.stringify(req),
         });
+    },
+
+    // What the standard checklist would add right now (nothing is saved) — shown for review before applying.
+    async previewStandardChecklist(engagementId: string, tenantId: string): Promise<ClientAction[]> {
+        return request<ClientAction[]>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/standard-checklist/preview?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'GET',
+                headers: { 'X-Tenant-ID': tenantId },
+            });
+    },
+
+    // Staff-defined stage tasks: opt-in standard checklist (idempotent). Returns only the tasks it added.
+    async applyStandardChecklist(engagementId: string, tenantId: string): Promise<ClientAction[]> {
+        return request<ClientAction[]>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/standard-checklist?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'POST',
+                headers: { 'X-Tenant-ID': tenantId },
+            });
+    },
+
+    // Edit a Pending, staff-managed task (Owner/Staff). 409 if not Pending or linked to a requirement/condition.
+    async updateAction(engagementId: string, actionId: string, req: UpdateClientActionRequest, tenantId: string): Promise<ClientAction> {
+        return request<ClientAction>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/${actionId}?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'PATCH',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify(req),
+            });
+    },
+
+    // Cancel a task that is no longer required (kept as Cancelled). 409 for completed or source-linked tasks.
+    async cancelAction(engagementId: string, actionId: string, reason: string, tenantId: string): Promise<ClientAction> {
+        return request<ClientAction>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/actions/${actionId}/cancel?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'PUT',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify({ reason }),
+            });
     },
 
     async completeAction(actionId: string, tenantId: string, engagementId?: string, actor?: string): Promise<ClientAction> {
@@ -351,6 +438,46 @@ export const WorkflowApi = {
     },
 
     // CSTD-16 (Requirements Collection)
+    // CSTD-16 staff side: ask the client for information (creates the requirement and its task).
+    async requestRequirement(engagementId: string, data: RequestRequirementRequest, tenantId: string): Promise<RequirementResponse> {
+        return request<RequirementResponse>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/requirements?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'POST',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify(data),
+            }
+        );
+    },
+
+    // Staff view (includes the client's answer and review metadata).
+    async getRequirements(engagementId: string, tenantId: string): Promise<RequirementResponse[]> {
+        return request<RequirementResponse[]>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/requirements?tenantId=${encodeURIComponent(tenantId)}&isClientView=false`,
+            {
+                method: 'GET',
+                headers: { 'X-Tenant-ID': tenantId },
+            }
+        );
+    },
+
+    // Approve the client's answer, or reject it with a reason (the client can then resubmit).
+    async reviewRequirement(
+        engagementId: string,
+        requirementId: string,
+        data: ReviewRequirementRequest,
+        tenantId: string
+    ): Promise<RequirementResponse> {
+        return request<RequirementResponse>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/requirements/${requirementId}/review?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'PUT',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify(data),
+            }
+        );
+    },
+
     async submitRequirement(
         engagementId: string,
         requirementId: string,
@@ -365,6 +492,63 @@ export const WorkflowApi = {
                 body: JSON.stringify(data),
             }
         );
+    },
+
+    // CSTD-24: Engagement Conditions Management
+    async getConditions(engagementId: string, tenantId?: string, includeInactive: boolean = true): Promise<EngagementCondition[]> {
+        const params = new URLSearchParams();
+        if (tenantId) params.set('tenantId', tenantId);
+        params.set('includeInactive', String(includeInactive));
+        const qs = params.toString();
+        const url = `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions${qs ? `?${qs}` : ''}`;
+        return request<EngagementCondition[]>(url, {
+            method: 'GET',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+        });
+    },
+
+    async getClientConditions(engagementId: string, tenantId?: string): Promise<ClientSafeCondition[]> {
+        const params = new URLSearchParams();
+        if (tenantId) params.set('tenantId', tenantId);
+        const qs = params.toString();
+        const url = `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions${qs ? `?${qs}` : ''}`;
+        return request<ClientSafeCondition[]>(url, {
+            method: 'GET',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+        });
+    },
+
+    async attachCondition(engagementId: string, req: AttachConditionRequest, tenantId?: string): Promise<EngagementCondition> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions`;
+        return request<EngagementCondition>(url, {
+            method: 'POST',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify(req),
+        });
+    },
+
+    async updateCondition(engagementId: string, conditionId: string, req: UpdateConditionRequest, tenantId?: string): Promise<EngagementCondition> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}`;
+        return request<EngagementCondition>(url, {
+            method: 'PATCH',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify(req),
+        });
+    },
+
+    async deactivateCondition(engagementId: string, conditionId: string, reason: string, tenantId?: string): Promise<EngagementCondition> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/deactivate?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/deactivate`;
+        return request<EngagementCondition>(url, {
+            method: 'PUT',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify({ reason }),
+        });
     },
 };
 
@@ -417,21 +601,20 @@ export const PortalApi = {
    ========================================================================== */
 
 export const AuditApi = {
+    // The Audit API lives under /api (previously called without it, so every request returned 404).
     async getEvents(tenantId?: string, engagementId?: string): Promise<AuditEvent[]> {
-        let url = `${API_BASE.AUDIT}/events`;
-        const params = new URLSearchParams();
-        if (tenantId) params.append('tenantId', tenantId);
-        if (engagementId) params.append('engagementId', engagementId);
-        const query = params.toString();
-        if (query) url += `?${query}`;
+        const base = engagementId
+            ? `${API_BASE.AUDIT}/api/audit-events/engagement/${encodeURIComponent(engagementId)}`
+            : `${API_BASE.AUDIT}/api/audit-events`;
+        const url = tenantId ? `${base}?tenantId=${encodeURIComponent(tenantId)}` : base;
         return request<AuditEvent[]>(url);
     },
 
-    async verifyChain(tenantId?: string): Promise<{ isVerified: boolean; count: number }> {
-        const url = tenantId
-            ? `${API_BASE.AUDIT}/events/verify?tenantId=${encodeURIComponent(tenantId)}`
-            : `${API_BASE.AUDIT}/events/verify`;
-        return request<{ isVerified: boolean; count: number }>(url);
+    // Hash chains are per engagement (CSTD-40), so verification takes one engagement at a time.
+    async verifyChain(engagementId: string, tenantId?: string): Promise<ChainVerificationResult> {
+        const params = new URLSearchParams({ engagementId });
+        if (tenantId) params.append('tenantId', tenantId);
+        return request<ChainVerificationResult>(`${API_BASE.AUDIT}/api/audit-events/verify?${params.toString()}`);
     },
 };
 
@@ -526,6 +709,33 @@ export const DocumentsApi = {
             method: 'DELETE',
             headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
         });
+    },
+
+    /**
+     * Downloads a document with the caller's token and saves it under fileName. The download endpoint
+     * requires authentication, so a plain link (which sends no Authorization header) gets a 401.
+     */
+    async downloadDocument(
+        engagementId: string,
+        documentId: string,
+        fileName: string,
+        tenantId?: string,
+        includeDeleted: boolean = false
+    ): Promise<void> {
+        const response = await authorizedFetch(
+            DocumentsApi.getDownloadUrl(engagementId, documentId, tenantId, includeDeleted),
+            { headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined }
+        );
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = objectUrl;
+        link.download = fileName || `document-${documentId}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        // Give the browser a moment to start the download before releasing the blob.
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
     },
 
     getDownloadUrl(engagementId: string, documentId: string, tenantId?: string, includeDeleted: boolean = false): string {

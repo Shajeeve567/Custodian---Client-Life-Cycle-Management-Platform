@@ -285,4 +285,90 @@ public class ClientPortalControllerTests
         var dto = Assert.IsType<ClientPortalDashboardDto>(okResult.Value);
         Assert.Equal(expectedDto.EngagementId, dto.EngagementId);
     }
+
+    [Fact]
+    public async Task GetMyActiveEngagement_IncludesNextActionResultInResponse()
+    {
+        // Arrange
+        var tenantId = "tenant-001";
+        var clientId = "client-user-1";
+        SetupUserContext(tenantId, clientId, "Client");
+
+        var engagementId = Guid.NewGuid();
+        var expectedNextAction = new NextActionResult
+        {
+            EngagementId = engagementId,
+            EngagementStatus = "Started",
+            CurrentStage = "Onboarding",
+            OverallState = OverallState.ClientActionRequired,
+            PrimaryAction = new NextActionItem
+            {
+                Kind = NextActionKind.DocumentUpload,
+                Title = "Upload Identity Proof",
+                ResponsibleParty = ResponsibleParty.Client
+            }
+        };
+
+        var expectedDto = new ClientPortalDashboardDto
+        {
+            EngagementId = engagementId,
+            CurrentStageNumber = 1,
+            CurrentStageName = "Onboarding",
+            NextAction = expectedNextAction
+        };
+
+        _mockPortalService.Setup(s => s.GetActiveDashboardForClientAsync(tenantId, clientId))
+            .ReturnsAsync(expectedDto);
+
+        // Act
+        var result = await _controller.GetMyActiveEngagement(tenantId: null, clientId: null);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var dto = Assert.IsType<ClientPortalDashboardDto>(okResult.Value);
+        Assert.NotNull(dto.NextAction);
+        Assert.Equal(OverallState.ClientActionRequired, dto.NextAction.OverallState);
+        Assert.NotNull(dto.NextAction.PrimaryAction);
+        Assert.Equal("Upload Identity Proof", dto.NextAction.PrimaryAction.Title);
+    }
+
+    [Fact]
+    public async Task GetEngagementDashboard_IncludesNextActionResultInResponse()
+    {
+        // Arrange
+        var tenantId = "tenant-001";
+        var clientId = "client-user-1";
+        var engagementId = Guid.NewGuid();
+        SetupUserContext(tenantId, clientId, "Client");
+
+        var expectedNextAction = new NextActionResult
+        {
+            EngagementId = engagementId,
+            EngagementStatus = "Started",
+            CurrentStage = "DocumentCollection",
+            OverallState = OverallState.AwaitingStaff,
+            PrimaryAction = null
+        };
+
+        var expectedDto = new ClientPortalDashboardDto
+        {
+            EngagementId = engagementId,
+            CurrentStageNumber = 2,
+            CurrentStageName = "Document Collection",
+            NextAction = expectedNextAction
+        };
+
+        _mockPortalService.Setup(s => s.GetDashboardForEngagementAsync(engagementId, tenantId, clientId))
+            .ReturnsAsync(expectedDto);
+
+        // Act
+        var result = await _controller.GetEngagementDashboard(engagementId, tenantId: null, clientId: null);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var dto = Assert.IsType<ClientPortalDashboardDto>(okResult.Value);
+        Assert.NotNull(dto.NextAction);
+        Assert.Equal(OverallState.AwaitingStaff, dto.NextAction.OverallState);
+        Assert.Null(dto.NextAction.PrimaryAction);
+    }
 }

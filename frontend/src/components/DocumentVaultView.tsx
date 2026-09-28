@@ -204,8 +204,11 @@ export const DocumentVaultView: React.FC = () => {
         }
     };
 
-    // Sync workflow action on verification/rejection
+    // Fast path for the staff UI: apply the outcome to the task linked to THIS document. Workflow also
+    // receives Documents' Kafka event (DocumentEventsConsumer) and applies the same outcome, so a
+    // failure here is only logged; whichever arrives second is a no-op.
     const syncWorkflowActionVerification = async (
+        documentId: string,
         status: 'Verified' | 'Rejected',
         reason?: string
     ) => {
@@ -213,7 +216,7 @@ export const DocumentVaultView: React.FC = () => {
             const actions = await WorkflowApi.getActions(activeEngagementId, tenantId, false);
             const linkedAction = actions.find(
                 (a: ClientAction) =>
-                    (a.type === 'DocumentUpload' || a.type === 'KycDocument') && !a.isCompleted
+                    a.linkedDocumentId === documentId && a.status !== 'Completed' && a.status !== 'Cancelled'
             );
             if (linkedAction) {
                 await WorkflowApi.applyVerification(
@@ -248,7 +251,7 @@ export const DocumentVaultView: React.FC = () => {
             );
 
             // Synchronize workflow state
-            await syncWorkflowActionVerification('Verified', verifyNotes);
+            await syncWorkflowActionVerification(verifyingDoc.documentId, 'Verified', verifyNotes);
 
             showSuccess(`Document ${verifyingDoc.documentId.slice(0, 8)}... successfully verified!`);
             setVerifyingDoc(null);
@@ -282,7 +285,7 @@ export const DocumentVaultView: React.FC = () => {
             );
 
             // Synchronize workflow state
-            await syncWorkflowActionVerification('Rejected', rejectionReason);
+            await syncWorkflowActionVerification(rejectingDoc.documentId, 'Rejected', rejectionReason);
 
             showSuccess(`Document ${rejectingDoc.documentId.slice(0, 8)}... marked as REJECTED.`);
             setRejectingDoc(null);
@@ -890,20 +893,22 @@ export const DocumentVaultView: React.FC = () => {
                                             <td className="py-3.5 px-4 text-right">
                                                 <div className="flex items-center justify-end gap-1.5">
                                                     {/* Download Button - Enabled even if soft-deleted per requirement 4 */}
-                                                    <a
-                                                        href={DocumentsApi.getDownloadUrl(
-                                                            activeEngagementId,
-                                                            doc.documentId,
-                                                            tenantId,
-                                                            doc.isDeleted
-                                                        )}
-                                                        target="_blank"
-                                                        rel="noreferrer"
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            DocumentsApi.downloadDocument(
+                                                                activeEngagementId,
+                                                                doc.documentId,
+                                                                doc.fileName || `${doc.type}.pdf`,
+                                                                tenantId,
+                                                                doc.isDeleted
+                                                            ).catch((err: any) => alert('Download failed: ' + (err.message || 'Server error')))
+                                                        }
                                                         title="Download PDF Evidence"
                                                         className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50/50 transition"
                                                     >
                                                         <Download className="w-3.5 h-3.5" />
-                                                    </a>
+                                                    </button>
 
                                                     {/* Verify & Reject Buttons - Staff Verification */}
                                                     {!isDeleted && !isVerified && (

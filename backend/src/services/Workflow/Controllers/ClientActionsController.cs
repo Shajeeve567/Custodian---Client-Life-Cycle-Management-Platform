@@ -1,5 +1,7 @@
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Stall;
+using Custodian.Workflow.Services.Gates;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -13,23 +15,21 @@ public class ClientActionsController : ControllerBase
 {
     private readonly IClientActionService _actionService;
     private readonly ILogger<ClientActionsController> _logger;
-    private readonly IStallDetectionService _stall;
     private readonly IStallActionsProvider _stallActionsProvider;
-    private readonly IStallEventDeduplicator _stallDeduplicator;
-    private readonly IAuditPublisher _auditPublisher;
+    private readonly IStallRecorder _stallRecorder;
+    private readonly IDocumentComplianceClient _documentClient;
+
     public ClientActionsController(
         IClientActionService actionService,
-        IStallDetectionService stall,
         IStallActionsProvider stallActionsProvider,
-        IStallEventDeduplicator stallDeduplicator,
-        IAuditPublisher auditPublisher,
+        IStallRecorder stallRecorder,
+        IDocumentComplianceClient documentClient,
         ILogger<ClientActionsController> logger)
     {
+        _documentClient = documentClient;
         _actionService = actionService;
-        _stall = stall;
         _stallActionsProvider = stallActionsProvider;
-        _stallDeduplicator = stallDeduplicator;
-        _auditPublisher = auditPublisher;
+        _stallRecorder = stallRecorder;
         _logger = logger;
     }
 
@@ -106,9 +106,11 @@ public class ClientActionsController : ControllerBase
     }
 
     /// <summary>
-    /// Creates a new action request for an engagement.
+    /// Creates a new stage task for an engagement. Owner/Staff only: tasks are defined by staff,
+    /// in the current stage or a later one.
     /// </summary>
     [HttpPost]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<ClientActionResponseDto>> CreateAction(
         [FromRoute] Guid engagementId,
         [FromBody] CreateClientActionDto dto,
@@ -130,28 +132,219 @@ public class ClientActionsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        if (User.IsInRole("Client"))
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
         {
-            var callerClientId = ResolveCallerClientId();
-            if (string.IsNullOrWhiteSpace(callerClientId) ||
-                !await _actionService.ClientOwnsEngagementAsync(engagementId, effectiveTenantId, callerClientId))
-            {
-                return Forbid();
-            }
+            return authResult;
         }
 
         try
         {
+            dto.CreatedBy = ResolveStaffActor() ?? dto.CreatedBy; // actor from the JWT, for the audit trail
             var result = await _actionService.CreateActionAsync(engagementId, effectiveTenantId, dto);
             return CreatedAtAction(
                 nameof(GetActionHistory),
                 new { engagementId, tenantId = effectiveTenantId },
                 result);
         }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
         catch (ArgumentException ex)
         {
             _logger.LogWarning(ex, "Failed to create action for engagement {EngagementId}", engagementId);
             return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Conflict creating action for engagement {EngagementId}", engagementId);
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Opt-in standard checklist: applies the default lifecycle tasks for the current stage and later.
+    /// Idempotent — tasks already applied are not duplicated. Owner/Staff only.
+    /// </summary>
+    /// <summary>
+    /// Lists the tasks the standard checklist would add (current and later stages, skipping ones already
+    /// present) without adding anything, so staff can review them before applying.
+    /// </summary>
+    [HttpGet("standard-checklist/preview")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<IEnumerable<ClientActionResponseDto>>> PreviewStandardChecklist(
+        [FromRoute] Guid engagementId,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        try
+        {
+            var preview = await _actionService.PreviewStandardChecklistAsync(engagementId, effectiveTenantId);
+            return preview == null
+                ? NotFound(new { message = $"Engagement '{engagementId}' was not found for tenant '{effectiveTenantId}'." })
+                : Ok(preview);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    [HttpPost("standard-checklist")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<IEnumerable<ClientActionResponseDto>>> ApplyStandardChecklist(
+        [FromRoute] Guid engagementId,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        try
+        {
+            var added = await _actionService.ApplyStandardChecklistAsync(engagementId, effectiveTenantId, ResolveStaffActor() ?? "Staff");
+            if (added == null)
+            {
+                return NotFound(new { message = $"Engagement '{engagementId}' was not found for tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(added);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Edits a Pending, staff-managed task (title, description, deadline, stage, assignee).
+    /// Requirement- and condition-linked tasks are managed through their source (409). Owner/Staff only.
+    /// </summary>
+    [HttpPatch("{actionId:guid}")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<ClientActionResponseDto>> UpdateAction(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid actionId,
+        [FromBody] UpdateClientActionDto dto,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        try
+        {
+            var result = await _actionService.UpdateActionAsync(engagementId, actionId, effectiveTenantId, dto, ResolveStaffActor() ?? "Staff");
+            if (result == null)
+            {
+                return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Cancels a task that is no longer required (kept as Cancelled, never deleted). Completed tasks
+    /// cannot be cancelled (409); requirement- and condition-linked tasks are refused (409). Owner/Staff only.
+    /// </summary>
+    [HttpPut("{actionId:guid}/cancel")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<ClientActionResponseDto>> CancelAction(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid actionId,
+        [FromBody] CancelClientActionDto dto,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var authResult = CheckStaffAuthorization();
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        try
+        {
+            var result = await _actionService.CancelActionAsync(engagementId, actionId, effectiveTenantId, dto.Reason, ResolveStaffActor() ?? "Staff");
+            if (result == null)
+            {
+                return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
         }
     }
 
@@ -189,7 +382,24 @@ public class ClientActionsController : ControllerBase
             {
                 return Forbid();
             }
+
+            // Clients complete only their own plain tasks; staff, evidence and condition tasks are refused.
+            // Not yet: the engagement or the task's stage has not started (the client may act later).
+            var notYetReason = await _actionService.GetClientAvailabilityBlockReasonAsync(engagementId, actionId, effectiveTenantId);
+            if (notYetReason != null)
+            {
+                return Conflict(new { message = notYetReason });
+            }
+
+            var blockReason = await _actionService.GetClientCompletionBlockReasonAsync(engagementId, actionId, effectiveTenantId);
+            if (blockReason != null)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = blockReason });
+            }
         }
+
+        // Actor identity comes from the JWT, never from the request body.
+        dto.CompletedByActor = ResolveStaffActor() ?? dto.CompletedByActor;
 
         try
         {
@@ -204,6 +414,10 @@ public class ClientActionsController : ControllerBase
         catch (ArgumentException ex)
         {
             return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
         }
     }
 
@@ -241,15 +455,44 @@ public class ClientActionsController : ControllerBase
             {
                 return Forbid();
             }
+
+            // A client uploads evidence only once the task's stage has started.
+            var notYetReason = await _actionService.GetClientAvailabilityBlockReasonAsync(engagementId, actionId, effectiveTenantId);
+            if (notYetReason != null)
+            {
+                return Conflict(new { message = notYetReason });
+            }
         }
 
-        var result = await _actionService.UploadEvidenceAsync(engagementId, actionId, effectiveTenantId, dto);
-        if (result == null)
+        // Actor identity comes from the JWT, never from the request body.
+        dto.UploaderActor = ResolveStaffActor() ?? dto.UploaderActor;
+
+        // Compliance and verification outcomes are never taken from the caller: a client could otherwise
+        // send verificationStatus "Verified" and complete its own evidence. Read them from Documents.
+        var untrusted = await ApplyTrustedDocumentStatusAsync(engagementId, effectiveTenantId, dto);
+        if (untrusted != null)
         {
-            return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            return untrusted;
         }
 
-        return Ok(result);
+        try
+        {
+            var result = await _actionService.UploadEvidenceAsync(engagementId, actionId, effectiveTenantId, dto);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Action '{actionId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     /// <summary>
@@ -286,7 +529,8 @@ public class ClientActionsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        dto.ReviewerActor ??= ResolveStaffActor();
+        // Actor identity comes from the JWT, never from the request body.
+        dto.ReviewerActor = ResolveStaffActor() ?? dto.ReviewerActor;
 
         try
         {
@@ -301,6 +545,10 @@ public class ClientActionsController : ControllerBase
         catch (ArgumentException ex)
         {
             return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
         }
     }
 
@@ -338,7 +586,8 @@ public class ClientActionsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        dto.VerifiedBy ??= ResolveStaffActor();
+        // Actor identity comes from the JWT, never from the request body.
+        dto.VerifiedBy = ResolveStaffActor() ?? dto.VerifiedBy;
 
         try
         {
@@ -354,6 +603,10 @@ public class ClientActionsController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     private ActionResult? CheckStaffAuthorization()
@@ -368,13 +621,6 @@ public class ClientActionsController : ControllerBase
             return isStaff ? null : Forbid();
         }
 
-        // 2. Check X-User-Role header fallback for direct testing / service-to-service calls
-        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Role", out var roleHeader))
-        {
-            var role = roleHeader.ToString();
-            var isStaff = role.Equals("Owner", StringComparison.OrdinalIgnoreCase) || role.Equals("Staff", StringComparison.OrdinalIgnoreCase);
-            return isStaff ? null : Forbid();
-        }
 
         return null;
     }
@@ -398,6 +644,54 @@ public class ClientActionsController : ControllerBase
         return string.IsNullOrWhiteSpace(fallbackSub) ? null : fallbackSub.Trim();
     }
 
+    /// <summary>
+    /// Replaces caller-supplied document outcome fields with the Documents service's own record.
+    /// Returns an error result when the document is unknown for this engagement (400) or Documents
+    /// cannot be reached (503, fail closed); null when the DTO now holds trusted values.
+    /// </summary>
+    private async Task<ActionResult?> ApplyTrustedDocumentStatusAsync(Guid engagementId, string tenantId, UploadActionEvidenceDto dto)
+    {
+        dto.ComplianceStatus = null;
+        dto.RejectionReason = null;
+        dto.VerificationStatus = null;
+        dto.VerificationReason = null;
+        dto.VerifiedBy = null;
+
+        if (!dto.DocumentId.HasValue)
+        {
+            return null; // No document yet: the action simply moves to Uploaded, awaiting staff review.
+        }
+
+        IReadOnlyList<DocumentSummaryDto> documents;
+        try
+        {
+            documents = await _documentClient.GetDocumentsAsync(engagementId, tenantId, HttpContext?.RequestAborted ?? default);
+        }
+        catch (DocumentComplianceUnavailableException ex)
+        {
+            _logger.LogWarning(ex, "Documents unavailable while recording evidence for engagement {EngagementId}", engagementId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { message = "Document status is temporarily unavailable. Please try again shortly." });
+        }
+
+        var document = documents.FirstOrDefault(d => d.DocumentId == dto.DocumentId.Value && !d.IsDeleted);
+        if (document == null)
+        {
+            return BadRequest(new { message = $"Document '{dto.DocumentId}' was not found for engagement '{engagementId}'." });
+        }
+
+        dto.ComplianceStatus = document.ComplianceStatus;
+        dto.RejectionReason = document.RejectionReason;
+        // Only a staff decision already recorded in Documents counts; a fresh upload stays awaiting review.
+        if (string.Equals(document.VerificationStatus, Custodian.Shared.Contracts.DocumentVerificationStatus.Verified, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(document.VerificationStatus, Custodian.Shared.Contracts.DocumentVerificationStatus.Rejected, StringComparison.OrdinalIgnoreCase))
+        {
+            dto.VerificationStatus = document.VerificationStatus;
+        }
+
+        return null;
+    }
+
     private string? ResolveStaffActor()
     {
         var actor = User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
@@ -410,10 +704,6 @@ public class ClientActionsController : ControllerBase
             return actor.Trim();
         }
 
-        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Id", out var userHeader))
-        {
-            return userHeader.ToString().Trim();
-        }
 
         return null;
     }
@@ -483,33 +773,12 @@ public class ClientActionsController : ControllerBase
         if (result is null)
             return NotFound(new { message = $"Engagement '{engagementId}' was not found." });
 
-        var status = _stall.EvaluateForEngagement(
-            engagementId, result.Actions, DateTime.UtcNow);
-
-        // Fire the overdue event only the first time we observe this stall. Dedup key
-        // includes the deadline so extending the deadline allows a future fire.
-        if (status.IsStalled
-            && status.ActionId.HasValue
-            && status.DeadlineUtc.HasValue
-            && !_stallDeduplicator.HasFired(engagementId, status.ActionId.Value, status.DeadlineUtc.Value))
-        {
-            _stallDeduplicator.MarkFired(engagementId, status.ActionId.Value, status.DeadlineUtc.Value);
-
-            await _auditPublisher.PublishEventAsync(
-                engagementId,
-                effectiveTenantId,
-                "System",
-                "action.overdue",
-                new
-                {
-                    clientId = result.ClientId,
-                    actionId = status.ActionId,
-                    actionTitle = status.ActionTitle,
-                    stageNumber = status.StageNumber,
-                    deadlineUtc = status.DeadlineUtc,
-                    hoursOverdue = status.HoursOverdue
-                });
-        }
+        // Compute-on-read (CSTD-33): records a new stall episode and publishes action.overdue once for
+        // it (persisted, so restarts and other instances never re-send), and resolves stalls that ended.
+        var snapshots = await _stallRecorder.SyncAsync(
+            effectiveTenantId,
+            new[] { new StallSyncInput(engagementId, result.ClientId, result.Actions) });
+        var status = snapshots[engagementId].Status;
 
         return Ok(status);
     }

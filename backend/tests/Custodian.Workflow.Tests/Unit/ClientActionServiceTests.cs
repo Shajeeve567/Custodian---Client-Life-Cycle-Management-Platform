@@ -26,14 +26,27 @@ public class ClientActionServiceTests
     /// CSTD-18 gating are unaffected. Tests that specifically exercise the gate-check inject
     /// their own Mock&lt;IGateEvaluator&gt; instead of calling this helper.
     /// </summary>
-    private static ClientActionService CreateService(WorkflowDbContext db)
-    {
-        var gateEvaluator = new Mock<IGateEvaluator>();
-        gateEvaluator
-            .Setup(g => g.EvaluateAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<EngagementStage>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(GateEvaluationResult.Satisfied());
+    private static ClientActionService CreateService(WorkflowDbContext db) =>
+        new(db, new Mock<IAuditPublisher>().Object);
 
-        return new ClientActionService(db, gateEvaluator.Object, new Mock<IAuditPublisher>().Object);
+    // Creating a task requires an existing engagement in the tenant.
+    private static async Task SeedEngagementAsync(
+        WorkflowDbContext db,
+        Guid engagementId,
+        string tenantId,
+        EngagementStage stage = EngagementStage.Onboarding,
+        EngagementStatus status = EngagementStatus.Started)
+    {
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-1",
+            StaffId = "staff-1",
+            Status = status,
+            Stage = stage
+        });
+        await db.SaveChangesAsync();
     }
 
     [Fact]
@@ -235,6 +248,7 @@ public class ClientActionServiceTests
         };
 
         // Act
+        await SeedEngagementAsync(db, engagementId, tenantId);
         var created = await service.CreateActionAsync(engagementId, tenantId, createDto);
 
         // Assert
@@ -325,26 +339,15 @@ public class ClientActionServiceTests
     }
 
     [Fact]
-    public async Task CompleteActionAsync_LastActionInStage_GateBlocked_CompletesActionButDoesNotAdvanceStageOrPublishAudit()
+    public async Task CompleteActionAsync_LastActionInStage_DoesNotAutoAdvanceStage()
     {
-        // Arrange
+        // Arrange: staff advance stages explicitly (PUT /stage); completing the last task never moves the stage
         using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
         var engagementId = Guid.NewGuid();
         var actionId = Guid.NewGuid();
         var tenantId = "tenant-001";
+        await SeedEngagementAsync(db, engagementId, tenantId);
 
-        db.Engagements.Add(new Engagement
-        {
-            EngagementId = engagementId,
-            TenantId = tenantId,
-            ClientId = "client-1",
-            StaffId = "staff-1",
-            Status = EngagementStatus.Started,
-            Stage = EngagementStage.Onboarding
-        });
-
-        // The only non-internal Stage 1 action — completing it is otherwise eligible to
-        // auto-advance the engagement into Stage 2 (DocumentCollection).
         db.ClientActions.Add(new ClientAction
         {
             ActionId = actionId,
@@ -357,83 +360,19 @@ public class ClientActionServiceTests
         });
         await db.SaveChangesAsync();
 
-        var gateEvaluator = new Mock<IGateEvaluator>();
-        gateEvaluator
-            .Setup(g => g.EvaluateAsync(engagementId, tenantId, EngagementStage.DocumentCollection, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(GateEvaluationResult.Blocked("Required document not yet verified.", Array.Empty<GateRequirementResult>()));
         var auditPublisher = new Mock<IAuditPublisher>();
-
-        var service = new ClientActionService(db, gateEvaluator.Object, auditPublisher.Object);
-        var completeDto = new CompleteClientActionDto { CompletedByActor = "client-user-1" };
+        var service = new ClientActionService(db, auditPublisher.Object);
 
         // Act
-        var result = await service.CompleteActionAsync(engagementId, actionId, tenantId, completeDto);
+        var result = await service.CompleteActionAsync(engagementId, actionId, tenantId, new CompleteClientActionDto { CompletedByActor = "client-user-1" });
 
-        // Assert: the action itself still completes — only the engagement's stage advance is gated
-        Assert.NotNull(result);
-        Assert.Equal(ClientActionStatus.Completed, result.Status);
-
+        // Assert
+        Assert.Equal(ClientActionStatus.Completed, result!.Status);
         var dbEngagement = await db.Engagements.FirstAsync(e => e.EngagementId == engagementId);
         Assert.Equal(EngagementStage.Onboarding, dbEngagement.Stage);
-
         auditPublisher.Verify(
             a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), "StageChange", It.IsAny<object>()),
             Times.Never());
-    }
-
-    [Fact]
-    public async Task CompleteActionAsync_LastActionInStage_GateSatisfied_AdvancesStageAndPublishesAuditEvent()
-    {
-        // Arrange
-        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
-        var engagementId = Guid.NewGuid();
-        var actionId = Guid.NewGuid();
-        var tenantId = "tenant-001";
-
-        db.Engagements.Add(new Engagement
-        {
-            EngagementId = engagementId,
-            TenantId = tenantId,
-            ClientId = "client-1",
-            StaffId = "staff-1",
-            Status = EngagementStatus.Started,
-            Stage = EngagementStage.Onboarding
-        });
-
-        db.ClientActions.Add(new ClientAction
-        {
-            ActionId = actionId,
-            EngagementId = engagementId,
-            TenantId = tenantId,
-            Title = "Stage 1 Intake",
-            Status = ClientActionStatus.Pending,
-            StageNumber = 1,
-            IsInternalOnly = false
-        });
-        await db.SaveChangesAsync();
-
-        var gateEvaluator = new Mock<IGateEvaluator>();
-        gateEvaluator
-            .Setup(g => g.EvaluateAsync(engagementId, tenantId, EngagementStage.DocumentCollection, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(GateEvaluationResult.Satisfied());
-        var auditPublisher = new Mock<IAuditPublisher>();
-
-        var service = new ClientActionService(db, gateEvaluator.Object, auditPublisher.Object);
-        var completeDto = new CompleteClientActionDto { CompletedByActor = "client-user-1" };
-
-        // Act
-        var result = await service.CompleteActionAsync(engagementId, actionId, tenantId, completeDto);
-
-        // Assert
-        Assert.NotNull(result);
-        Assert.Equal(ClientActionStatus.Completed, result.Status);
-
-        var dbEngagement = await db.Engagements.FirstAsync(e => e.EngagementId == engagementId);
-        Assert.Equal(EngagementStage.DocumentCollection, dbEngagement.Stage);
-
-        auditPublisher.Verify(
-            a => a.PublishEventAsync(engagementId, tenantId, "client-user-1", "StageChange", It.IsAny<object>()),
-            Times.Once());
     }
 
     [Fact]
@@ -458,6 +397,7 @@ public class ClientActionServiceTests
         };
 
         // Act
+        await SeedEngagementAsync(db, engagementId, tenantId);
         var created = await service.CreateActionAsync(engagementId, tenantId, createDto);
 
         // Assert
@@ -906,26 +846,73 @@ public class ClientActionServiceTests
     }
 
     [Fact]
-    public async Task EnsureLifecycleActionsAsync_SeedsAllFiveStages()
+    public async Task ApplyStandardChecklistAsync_OnNewEngagement_AddsDefaultTasksForAllStages()
     {
         // Arrange
         using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
         var engagementId = Guid.NewGuid();
         var tenantId = "tenant-seeder";
-
+        await SeedEngagementAsync(db, engagementId, tenantId);
         var service = CreateService(db);
 
         // Act
-        var actions = await service.EnsureLifecycleActionsAsync(engagementId, tenantId);
+        var actions = await service.ApplyStandardChecklistAsync(engagementId, tenantId, "staff-1");
 
         // Assert
         Assert.NotNull(actions);
-        Assert.True(actions.Count >= 5);
-        Assert.Contains(actions, a => a.StageNumber == 1);
-        Assert.Contains(actions, a => a.StageNumber == 2 && a.Type == "KycDocument");
-        Assert.Contains(actions, a => a.StageNumber == 3);
-        Assert.Contains(actions, a => a.StageNumber == 4);
-        Assert.Contains(actions, a => a.StageNumber == 5);
+        Assert.Contains(actions!, a => a.StageNumber == 1 && a.ActivatedAt != null);
+        Assert.Contains(actions!, a => a.StageNumber == 2 && a.Type == "KycDocument" && a.ActivatedAt == null);
+        Assert.Contains(actions!, a => a.StageNumber == 3);
+        Assert.Contains(actions!, a => a.StageNumber == 4);
+        Assert.Contains(actions!, a => a.StageNumber == 5);
+        Assert.All(actions!, a => Assert.Equal(ClientActionSourceType.Lifecycle, a.SourceType));
+    }
+
+    [Fact]
+    public async Task ApplyStandardChecklistAsync_IsIdempotent_AndPublishesOnce()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-seeder";
+        await SeedEngagementAsync(db, engagementId, tenantId);
+        var audit = new Mock<IAuditPublisher>();
+        var service = new ClientActionService(db, audit.Object);
+
+        var first = await service.ApplyStandardChecklistAsync(engagementId, tenantId, "staff-1");
+        var second = await service.ApplyStandardChecklistAsync(engagementId, tenantId, "staff-1");
+
+        Assert.NotEmpty(first!);
+        Assert.Empty(second!);
+        Assert.Equal(first!.Count, await db.ClientActions.CountAsync(a => a.EngagementId == engagementId));
+        audit.Verify(a => a.PublishEventAsync(engagementId, tenantId, "staff-1", "StandardChecklistApplied", It.IsAny<object>()), Times.Once());
+    }
+
+    [Fact]
+    public async Task ApplyStandardChecklistAsync_MidEngagement_OnlyAddsCurrentAndLaterStages()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-seeder";
+        await SeedEngagementAsync(db, engagementId, tenantId, EngagementStage.Verification); // stage 3
+        var service = CreateService(db);
+
+        var actions = await service.ApplyStandardChecklistAsync(engagementId, tenantId, "staff-1");
+
+        Assert.NotEmpty(actions!);
+        Assert.All(actions!, a => Assert.True(a.StageNumber >= 3));
+    }
+
+    [Fact]
+    public async Task ApplyStandardChecklistAsync_ClosedEngagement_Throws_UnknownEngagement_ReturnsNull()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var closedId = Guid.NewGuid();
+        await SeedEngagementAsync(db, closedId, "tenant-001", status: EngagementStatus.Closed);
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ApplyStandardChecklistAsync(closedId, "tenant-001", "staff-1"));
+        Assert.Null(await service.ApplyStandardChecklistAsync(Guid.NewGuid(), "tenant-001", "staff-1"));
+        Assert.Null(await service.ApplyStandardChecklistAsync(closedId, "tenant-other", "staff-1"));
     }
 
     [Fact]
@@ -943,33 +930,24 @@ public class ClientActionServiceTests
     }
 
     [Fact]
-    public async Task GetActionsByEngagementAsync_WhenEngagementExistsAndHasNoActions_AutoSeedsLifecycleActions()
+    public async Task GetActionsByEngagementAsync_EngagementWithNoTasks_ReturnsEmpty_AndNeverSeeds()
     {
-        // Arrange
+        // Arrange: reads are pure — stage tasks are defined by staff, never seeded on read
         using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
         var engagementId = Guid.NewGuid();
         var tenantId = "tenant-seeder";
-
-        db.Engagements.Add(new Engagement
-        {
-            EngagementId = engagementId,
-            TenantId = tenantId,
-            ClientId = "client-1",
-            StaffId = "staff-1",
-            Status = EngagementStatus.Started,
-            Stage = EngagementStage.Onboarding
-        });
-        await db.SaveChangesAsync();
-
+        await SeedEngagementAsync(db, engagementId, tenantId);
         var service = CreateService(db);
 
         // Act
-        var actions = (await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: false)).ToList();
+        for (var i = 0; i < 3; i++)
+        {
+            var actions = await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: false);
+            Assert.Empty(actions);
+        }
 
         // Assert
-        Assert.NotEmpty(actions);
-        Assert.Contains(actions, a => a.StageNumber == 1);
-        Assert.Contains(actions, a => a.StageNumber == 2);
+        Assert.Equal(0, await db.ClientActions.CountAsync());
     }
 
     [Fact]
@@ -1047,5 +1025,1519 @@ public class ClientActionServiceTests
 
         // Assert
         Assert.False(owns);
+    }
+
+    [Fact]
+    public async Task GetActions_StaffCaller_ExposesNewLifecycleAndSourceLinks()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var activatedAt = DateTime.UtcNow.AddHours(-2);
+        var updatedAt = DateTime.UtcNow.AddMinutes(-30);
+        var docId = Guid.NewGuid();
+        var condId = Guid.NewGuid();
+        var meetId = Guid.NewGuid();
+        var reqId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Staff Full View Action",
+            Type = ClientActionType.DocumentUpload,
+            Status = ClientActionStatus.Pending,
+            Source = "ManualTest",
+            SourceType = ClientActionSourceType.Document,
+            ActivatedAt = activatedAt,
+            UpdatedAt = updatedAt,
+            LinkedRequirementId = reqId,
+            LinkedDocumentId = docId,
+            LinkedConditionId = condId,
+            LinkedMeetingId = meetId,
+            IsInternalOnly = false,
+            AssignedToRole = "Client"
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act: staff view (isClientView = false)
+        var result = (await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: false)).ToList();
+
+        // Assert: all fields are exposed in staff view
+        Assert.Single(result);
+        var dto = result[0];
+        Assert.Equal(activatedAt, dto.ActivatedAt);
+        Assert.Equal(ClientActionSourceType.Document, dto.SourceType);
+        Assert.Equal(updatedAt, dto.UpdatedAt);
+        Assert.Equal(reqId, dto.LinkedRequirementId);
+        Assert.Equal(docId, dto.LinkedDocumentId);
+        Assert.Equal(condId, dto.LinkedConditionId);
+        Assert.Equal(meetId, dto.LinkedMeetingId);
+    }
+
+    [Fact]
+    public async Task GetActions_ClientCaller_StripsSensitiveSourceLinksAndActivatedAt()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var activatedAt = DateTime.UtcNow.AddHours(-2);
+        var updatedAt = DateTime.UtcNow.AddMinutes(-30);
+        var docId = Guid.NewGuid();
+        var condId = Guid.NewGuid();
+        var meetId = Guid.NewGuid();
+        var reqId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Client Safe View Action",
+            Type = ClientActionType.DocumentUpload,
+            Status = ClientActionStatus.Pending,
+            Source = "ManualTest",
+            SourceType = ClientActionSourceType.Document,
+            ActivatedAt = activatedAt,
+            UpdatedAt = updatedAt,
+            LinkedRequirementId = reqId,
+            LinkedDocumentId = docId,
+            LinkedConditionId = condId,
+            LinkedMeetingId = meetId,
+            IsInternalOnly = false,
+            AssignedToRole = "Client"
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act: client view (isClientView = true)
+        var result = (await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: true)).ToList();
+
+        // Assert: client view preserves SourceType and LinkedRequirementId, but strips ActivatedAt and external linked IDs
+        Assert.Single(result);
+        var dto = result[0];
+        Assert.Null(dto.ActivatedAt);
+        Assert.Null(dto.LinkedDocumentId);
+        Assert.Null(dto.LinkedConditionId);
+        Assert.Null(dto.LinkedMeetingId);
+        Assert.Equal(ClientActionSourceType.Document, dto.SourceType);
+        Assert.Equal(reqId, dto.LinkedRequirementId);
+        Assert.Equal(updatedAt, dto.UpdatedAt);
+    }
+
+    [Fact]
+    public void ClientActionSchema_ConstantsAndDefaults_AreProperlyConfigured()
+    {
+        // Assert: ClientActionStatus includes Cancelled
+        Assert.Equal("Cancelled", ClientActionStatus.Cancelled);
+
+        // Assert: ClientActionSourceType constants
+        Assert.Equal("Requirement", ClientActionSourceType.Requirement);
+        Assert.Equal("Document", ClientActionSourceType.Document);
+        Assert.Equal("Condition", ClientActionSourceType.Condition);
+        Assert.Equal("Meeting", ClientActionSourceType.Meeting);
+        Assert.Equal("Lifecycle", ClientActionSourceType.Lifecycle);
+        Assert.Equal("Manual", ClientActionSourceType.Manual);
+
+        // Assert: ClientActionType constants
+        Assert.Equal("DocumentUpload", ClientActionType.DocumentUpload);
+        Assert.Equal("KycDocument", ClientActionType.KycDocument);
+        Assert.Equal("SignAgreement", ClientActionType.SignAgreement);
+        Assert.Equal("ProofOfAddress", ClientActionType.ProofOfAddress);
+        Assert.Equal("CustomTask", ClientActionType.CustomTask);
+        Assert.Equal("Requirement", ClientActionType.Requirement);
+        Assert.Equal("Approval", ClientActionType.Approval);
+        Assert.Equal("Payment", ClientActionType.Payment);
+        Assert.Equal("Meeting", ClientActionType.Meeting);
+
+        // Assert: ClientAction defaults
+        var action = new ClientAction();
+        Assert.Equal(ClientActionStatus.Pending, action.Status);
+        Assert.Equal(ClientActionSourceType.Manual, action.SourceType);
+        Assert.Equal(ClientActionType.DocumentUpload, action.Type);
+        Assert.Null(action.ActivatedAt);
+        Assert.Null(action.LinkedDocumentId);
+        Assert.Null(action.LinkedConditionId);
+        Assert.Null(action.LinkedMeetingId);
+    }
+
+    [Fact]
+    public async Task ActivateStageActionsAsync_SetsActivatedAt_OnlyForTargetStageAndNullActivatedAt()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var existingActivatedTime = DateTime.UtcNow.AddDays(-1);
+
+        var actionStage1 = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            StageNumber = 1,
+            ActivatedAt = null,
+            Status = ClientActionStatus.Pending
+        };
+        var actionStage2Unactivated = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            StageNumber = 2,
+            ActivatedAt = null,
+            Status = ClientActionStatus.Pending
+        };
+        var actionStage2AlreadyActivated = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            StageNumber = 2,
+            ActivatedAt = existingActivatedTime,
+            Status = ClientActionStatus.Pending
+        };
+
+        db.ClientActions.AddRange(actionStage1, actionStage2Unactivated, actionStage2AlreadyActivated);
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act
+        await service.ActivateStageActionsAsync(engagementId, tenantId, 2);
+
+        // Assert
+        var dbActions = await db.ClientActions.ToListAsync();
+        var updatedStage1 = dbActions.First(a => a.ActionId == actionStage1.ActionId);
+        var updatedStage2Unactivated = dbActions.First(a => a.ActionId == actionStage2Unactivated.ActionId);
+        var updatedStage2AlreadyActivated = dbActions.First(a => a.ActionId == actionStage2AlreadyActivated.ActionId);
+
+        Assert.Null(updatedStage1.ActivatedAt);
+        Assert.NotNull(updatedStage2Unactivated.ActivatedAt);
+        Assert.Equal(existingActivatedTime, updatedStage2AlreadyActivated.ActivatedAt);
+    }
+
+    [Theory]
+    [InlineData(EngagementStatus.Closed)]
+    [InlineData(EngagementStatus.Cancelled)]
+    public async Task MutatingActions_OnClosedOrCancelledEngagement_ThrowsInvalidOperationException(EngagementStatus terminalStatus)
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = terminalStatus
+        });
+
+        var actionId = Guid.NewGuid();
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Status = ClientActionStatus.Pending,
+            Type = ClientActionType.DocumentUpload
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act & Assert: CreateAction throws
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreateActionAsync(engagementId, tenantId, new CreateClientActionDto
+            {
+                Title = "New Action",
+                Type = ClientActionType.CustomTask
+            }));
+
+        // Act & Assert: CompleteAction throws
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CompleteActionAsync(engagementId, actionId, tenantId, new CompleteClientActionDto
+            {
+                CompletedByActor = "Staff"
+            }));
+
+        // Act & Assert: UploadEvidence throws
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UploadEvidenceAsync(engagementId, actionId, tenantId, new UploadActionEvidenceDto
+            {
+                DocumentId = Guid.NewGuid(),
+                ComplianceStatus = "Compliant",
+                UploaderActor = "client-1"
+            }));
+
+        // Act & Assert: ReviewAction throws
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ReviewActionAsync(engagementId, actionId, tenantId, new ReviewActionDto
+            {
+                Status = ClientActionStatus.Completed,
+                ReviewerActor = "Staff"
+            }));
+    }
+
+    [Fact]
+    public async Task ApplyStatusAsync_TerminalCancelledState_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Status = ClientActionStatus.Cancelled,
+            Type = ClientActionType.DocumentUpload
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act & Assert: Cannot complete a cancelled action
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CompleteActionAsync(engagementId, actionId, tenantId, new CompleteClientActionDto
+            {
+                CompletedByActor = "Staff"
+            }));
+
+        Assert.Contains("Cancelled", ex.Message);
+    }
+
+    [Fact]
+    public async Task StatusChange_EmitsClientActionStatusChangedAuditEvent()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Status = ClientActionStatus.Pending,
+            Type = ClientActionType.DocumentUpload,
+            SourceType = ClientActionSourceType.Document,
+            LinkedDocumentId = Guid.NewGuid()
+        });
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var gateEvaluator = new Mock<IGateEvaluator>();
+        gateEvaluator
+            .Setup(g => g.EvaluateAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<EngagementStage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GateEvaluationResult.Satisfied());
+
+        var service = new ClientActionService(db, mockAudit.Object);
+
+        // Act
+        var result = await service.CompleteActionAsync(engagementId, actionId, tenantId, new CompleteClientActionDto
+        {
+            CompletedByActor = "StaffMember"
+        });
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ClientActionStatus.Completed, result.Status);
+
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "StaffMember",
+            "ClientActionStatusChanged",
+            It.Is<object>(payload => payload != null)),
+            Times.Once);
+    }
+
+    [Theory]
+    [InlineData(ClientActionSourceType.Document, true, false, false)]
+    [InlineData(ClientActionSourceType.Condition, false, true, false)]
+    [InlineData(ClientActionSourceType.Meeting, false, false, true)]
+    [InlineData(ClientActionSourceType.Manual, false, false, false)]
+    [InlineData(ClientActionSourceType.Lifecycle, false, false, false)]
+    public async Task CreateActionAsync_ValidSourceTypesAndLinkedIds_RoundTripsCorrectly(
+        string sourceType, bool hasDocId, bool hasCondId, bool hasMeetId)
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var docId = hasDocId ? Guid.NewGuid() : (Guid?)null;
+        var condId = hasCondId ? Guid.NewGuid() : (Guid?)null;
+        var meetId = hasMeetId ? Guid.NewGuid() : (Guid?)null;
+
+        var dto = new CreateClientActionDto
+        {
+            Title = $"Action for {sourceType}",
+            Source = "Test",
+            SourceType = sourceType,
+            LinkedDocumentId = docId,
+            LinkedConditionId = condId,
+            LinkedMeetingId = meetId
+        };
+
+        // Act
+        var result = await service.CreateActionAsync(engagementId, tenantId, dto);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(sourceType, result.SourceType);
+        Assert.Equal(docId, result.LinkedDocumentId);
+        Assert.Equal(condId, result.LinkedConditionId);
+        Assert.Equal(meetId, result.LinkedMeetingId);
+    }
+
+    [Fact]
+    public async Task CreateActionAsync_InvalidSourceType_ThrowsArgumentException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        var service = CreateService(db);
+        var dto = new CreateClientActionDto
+        {
+            Title = "Invalid Source",
+            Source = "Test",
+            SourceType = "NonExistentSource"
+        };
+
+        // Act & Assert
+        await SeedEngagementAsync(db, engagementId, tenantId);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateActionAsync(engagementId, tenantId, dto));
+        Assert.Contains("Invalid source type", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateActionAsync_RequirementSourceType_ThrowsArgumentException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        var service = CreateService(db);
+        var dto = new CreateClientActionDto
+        {
+            Title = "Requirement Source",
+            Source = "Test",
+            SourceType = ClientActionSourceType.Requirement
+        };
+
+        // Act & Assert
+        await SeedEngagementAsync(db, engagementId, tenantId);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateActionAsync(engagementId, tenantId, dto));
+        Assert.Contains("Requirement-linked actions cannot be created directly", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateActionAsync_MultipleLinkedIds_ThrowsArgumentException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        var service = CreateService(db);
+        var dto = new CreateClientActionDto
+        {
+            Title = "Multiple Linked IDs",
+            Source = "Test",
+            SourceType = ClientActionSourceType.Document,
+            LinkedDocumentId = Guid.NewGuid(),
+            LinkedConditionId = Guid.NewGuid()
+        };
+
+        // Act & Assert
+        await SeedEngagementAsync(db, engagementId, tenantId);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateActionAsync(engagementId, tenantId, dto));
+        Assert.Contains("At most one linked identifier", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateActionAsync_MismatchedLinkedId_ThrowsArgumentException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        var service = CreateService(db);
+
+        // Document with LinkedConditionId
+        var dto1 = new CreateClientActionDto
+        {
+            Title = "Doc with ConditionId",
+            Source = "Test",
+            SourceType = ClientActionSourceType.Document,
+            LinkedConditionId = Guid.NewGuid()
+        };
+        await SeedEngagementAsync(db, engagementId, tenantId);
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateActionAsync(engagementId, tenantId, dto1));
+
+        // Manual with LinkedDocumentId
+        var dto2 = new CreateClientActionDto
+        {
+            Title = "Manual with DocId",
+            Source = "Test",
+            SourceType = ClientActionSourceType.Manual,
+            LinkedDocumentId = Guid.NewGuid()
+        };
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateActionAsync(engagementId, tenantId, dto2));
+    }
+
+    [Fact]
+    public async Task UploadEvidenceAsync_SetsLinkedDocumentId_AndUpdatesSourceTypeToDocument()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var docId = Guid.NewGuid();
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Upload Financials",
+            SourceType = ClientActionSourceType.Manual,
+            Status = ClientActionStatus.Pending
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act
+        var result = await service.UploadEvidenceAsync(engagementId, actionId, tenantId, new UploadActionEvidenceDto
+        {
+            DocumentId = docId,
+            ComplianceStatus = "Compliant",
+            UploaderActor = "client-user"
+        });
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(docId, result.LinkedDocumentId);
+        Assert.Equal(ClientActionSourceType.Document, result.SourceType);
+        Assert.Contains(docId.ToString(), result.SourceMetadata);
+
+        var dbAction = await db.ClientActions.FindAsync(actionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(docId, dbAction.LinkedDocumentId);
+        Assert.Equal(ClientActionSourceType.Document, dbAction.SourceType);
+    }
+
+    [Fact]
+    public async Task CreateLinkedActionAsync_ConditionAndMeeting_CreatesActionWithCorrectLinks()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var conditionId = Guid.NewGuid();
+        var meetingId = Guid.NewGuid();
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act 1: Condition action
+        var condAction = await service.CreateLinkedActionAsync(
+            engagementId,
+            tenantId,
+            ClientActionSourceType.Condition,
+            conditionId,
+            "Sign Off Condition 4B",
+            description: "Owner approval required",
+            type: ClientActionType.Approval);
+
+        // Act 2: Meeting action
+        var meetAction = await service.CreateLinkedActionAsync(
+            engagementId,
+            tenantId,
+            new CreateLinkedActionDto
+            {
+                Title = "Kickoff Strategy Meeting",
+                SourceType = ClientActionSourceType.Meeting,
+                SourceId = meetingId,
+                Type = ClientActionType.Meeting
+            });
+
+        // Assert
+        Assert.NotNull(condAction);
+        Assert.Equal(ClientActionSourceType.Condition, condAction.SourceType);
+        Assert.Equal(conditionId, condAction.LinkedConditionId);
+        Assert.Equal(ClientActionType.Approval, condAction.Type);
+
+        Assert.NotNull(meetAction);
+        Assert.Equal(ClientActionSourceType.Meeting, meetAction.SourceType);
+        Assert.Equal(meetingId, meetAction.LinkedMeetingId);
+        Assert.Equal(ClientActionType.Meeting, meetAction.Type);
+    }
+
+    [Fact]
+    public async Task CancelActionsForSourceAsync_CancelsPendingAndUploadedActions_LeavesCompletedUntouched()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var conditionId = Guid.NewGuid();
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+
+        var pendingAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = conditionId,
+            Status = ClientActionStatus.Pending
+        };
+        var uploadedAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = conditionId,
+            Status = ClientActionStatus.Uploaded
+        };
+        var completedAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = conditionId,
+            Status = ClientActionStatus.Completed
+        };
+        var unrelatedAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = Guid.NewGuid(),
+            Status = ClientActionStatus.Pending
+        };
+
+        db.ClientActions.AddRange(pendingAction, uploadedAction, completedAction, unrelatedAction);
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var gateEvaluator = new Mock<IGateEvaluator>();
+        var service = new ClientActionService(db, mockAudit.Object);
+
+        // Act
+        await service.CancelActionsForSourceAsync(
+            engagementId,
+            tenantId,
+            ClientActionSourceType.Condition,
+            conditionId,
+            "StaffUser",
+            "Condition waived by credit committee");
+
+        // Assert
+        var updatedPending = await db.ClientActions.FindAsync(pendingAction.ActionId);
+        var updatedUploaded = await db.ClientActions.FindAsync(uploadedAction.ActionId);
+        var updatedCompleted = await db.ClientActions.FindAsync(completedAction.ActionId);
+        var updatedUnrelated = await db.ClientActions.FindAsync(unrelatedAction.ActionId);
+
+        Assert.Equal(ClientActionStatus.Cancelled, updatedPending!.Status);
+        Assert.Equal(ClientActionStatus.Cancelled, updatedUploaded!.Status);
+        Assert.Equal(ClientActionStatus.Completed, updatedCompleted!.Status);
+        Assert.Equal(ClientActionStatus.Pending, updatedUnrelated!.Status);
+
+        // Audit emitted for pending and uploaded actions
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "StaffUser",
+            "ClientActionStatusChanged",
+            It.IsAny<object>()),
+            Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task GetActionsByEngagementAsync_ClientSafeDto_StrictlyStripsSensitiveFieldsAndExcludesInternalActions()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var reqId = Guid.NewGuid();
+        var docId = Guid.NewGuid();
+        var condId = Guid.NewGuid();
+        var meetId = Guid.NewGuid();
+
+        var internalAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Internal Staff Review",
+            IsInternalOnly = true,
+            Status = ClientActionStatus.Pending
+        };
+
+        var clientAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Submit Proof of Identity",
+            IsInternalOnly = false,
+            Status = ClientActionStatus.Pending,
+            SourceType = ClientActionSourceType.Document,
+            SourceMetadata = "{\"documentId\":\"123\",\"complianceStatus\":\"Compliant\",\"staffNotes\":\"Confidential\"}",
+            AssignedToRole = "Client",
+            CompletedByActor = "StaffAuditor",
+            ActivatedAt = DateTime.UtcNow,
+            LinkedRequirementId = reqId,
+            LinkedDocumentId = docId,
+            LinkedConditionId = condId,
+            LinkedMeetingId = meetId
+        };
+
+        db.ClientActions.AddRange(internalAction, clientAction);
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act: Request client view (isClientView: true)
+        var clientViewActions = (await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: true)).ToList();
+
+        // Assert: Internal actions are completely excluded
+        Assert.Single(clientViewActions);
+        var dto = clientViewActions[0];
+        Assert.Equal(clientAction.ActionId, dto.ActionId);
+
+        // Assert: Sensitive staff/internal metadata fields are stripped
+        Assert.Null(dto.SourceMetadata);
+        Assert.Null(dto.AssignedToRole);
+        Assert.Null(dto.CompletedByActor);
+        Assert.Null(dto.ActivatedAt);
+        Assert.Null(dto.LinkedDocumentId);
+        Assert.Null(dto.LinkedConditionId);
+        Assert.Null(dto.LinkedMeetingId);
+
+        // Assert: Client-relevant fields are preserved
+        Assert.Equal(ClientActionSourceType.Document, dto.SourceType);
+        Assert.Equal(reqId, dto.LinkedRequirementId);
+        Assert.False(dto.IsInternalOnly);
+    }
+
+    [Fact]
+    public async Task CompletedActions_AreNeverDeleted_AndAppearInEngagementHistory()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+
+        var actionId = Guid.NewGuid();
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Sign Client Engagement Agreement",
+            StageNumber = 1,
+            Status = ClientActionStatus.Pending,
+            IsInternalOnly = false
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act 1: Complete the action
+        var completeResult = await service.CompleteActionAsync(engagementId, actionId, tenantId, new CompleteClientActionDto
+        {
+            CompletedByActor = "client-signer"
+        });
+        Assert.NotNull(completeResult);
+        Assert.Equal(ClientActionStatus.Completed, completeResult.Status);
+
+        // Act 3: Query history in staff view and client view
+        var staffView = (await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: false)).ToList();
+        var clientView = (await service.GetActionsByEngagementAsync(engagementId, tenantId, isClientView: true)).ToList();
+
+        // Assert: Completed action is retained in both history views
+        var staffAction = staffView.FirstOrDefault(a => a.ActionId == actionId);
+        var clientAction = clientView.FirstOrDefault(a => a.ActionId == actionId);
+
+        Assert.NotNull(staffAction);
+        Assert.Equal(ClientActionStatus.Completed, staffAction.Status);
+        Assert.NotNull(staffAction.CompletedAt);
+
+        Assert.NotNull(clientAction);
+        Assert.Equal(ClientActionStatus.Completed, clientAction.Status);
+        Assert.NotNull(clientAction.CompletedAt);
+
+        // Assert: Still in the database
+        var dbRecord = await db.ClientActions.FindAsync(actionId);
+        Assert.NotNull(dbRecord);
+        Assert.Equal(ClientActionStatus.Completed, dbRecord.Status);
+    }
+
+    [Fact]
+    public async Task CancelledAction_IsStrictlyTerminal_RejectsAllSubsequentTransitions()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Waived Physical Meeting",
+            Status = ClientActionStatus.Cancelled,
+            SourceType = ClientActionSourceType.Meeting
+        });
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+
+        // Act & Assert 1: CompleteActionAsync rejects
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CompleteActionAsync(engagementId, actionId, tenantId, new CompleteClientActionDto
+            {
+                CompletedByActor = "Staff"
+            }));
+
+        // Act & Assert 2: UploadEvidenceAsync rejects
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UploadEvidenceAsync(engagementId, actionId, tenantId, new UploadActionEvidenceDto
+            {
+                DocumentId = Guid.NewGuid(),
+                ComplianceStatus = "Compliant",
+                UploaderActor = "client-user"
+            }));
+
+        // Act & Assert 3: ReviewActionAsync rejects
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ReviewActionAsync(engagementId, actionId, tenantId, new ReviewActionDto
+            {
+                Status = ClientActionStatus.Completed,
+                ReviewerActor = "Staff"
+            }));
+
+        // Act & Assert 4: ApplyVerificationOutcomeAsync rejects
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ApplyVerificationOutcomeAsync(engagementId, actionId, tenantId, new ApplyActionVerificationDto
+            {
+                VerificationStatus = DocumentVerificationStatus.Verified,
+                VerifiedBy = "Staff"
+            }));
+    }
+
+    [Fact]
+    public async Task AuditPublisher_EmitsClientActionStatusChanged_ExactlyOncePerRealChange_AndNeverOnNoOp()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-001",
+            Status = EngagementStatus.Started
+        });
+
+        db.ClientActions.Add(new ClientAction
+        {
+            ActionId = actionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Title = "Submit Audited Accounts",
+            Status = ClientActionStatus.Pending,
+            SourceType = ClientActionSourceType.Document
+        });
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var gateEvaluator = new Mock<IGateEvaluator>();
+        var service = new ClientActionService(db, mockAudit.Object);
+
+        // Act 1: Pending -> Uploaded (Real transition 1)
+        await service.UploadEvidenceAsync(engagementId, actionId, tenantId, new UploadActionEvidenceDto
+        {
+            DocumentId = Guid.NewGuid(),
+            ComplianceStatus = "Compliant",
+            UploaderActor = "client-1"
+        });
+
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "client-1",
+            "ClientActionStatusChanged",
+            It.IsAny<object>()),
+            Times.Once);
+
+        // Act 2: Uploaded -> Completed (Real transition 2)
+        await service.ReviewActionAsync(engagementId, actionId, tenantId, new ReviewActionDto
+        {
+            Status = ClientActionStatus.Completed,
+            ReviewerActor = "StaffReviewer",
+            VerificationReason = "Approved by credit team"
+        });
+
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "StaffReviewer",
+            "ClientActionStatusChanged",
+            It.IsAny<object>()),
+            Times.Once);
+
+        // Act 3: Completed -> Completed (Same-to-same no-op)
+        await service.ReviewActionAsync(engagementId, actionId, tenantId, new ReviewActionDto
+        {
+            Status = ClientActionStatus.Completed,
+            ReviewerActor = "StaffReviewer",
+            VerificationReason = "Duplicate approval click"
+        });
+
+        // Assert: No new event was emitted for the no-op
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            It.IsAny<string>(),
+            "ClientActionStatusChanged",
+            It.IsAny<object>()),
+            Times.Exactly(2));
+    }
+
+    // =========================================================================
+    // Staff-defined stage tasks: create rules, edit, cancel
+    // =========================================================================
+
+    private static ClientAction MakePendingTask(Guid engagementId, string tenantId, int stage = 1, string sourceType = ClientActionSourceType.Manual) => new()
+    {
+        ActionId = Guid.NewGuid(),
+        EngagementId = engagementId,
+        TenantId = tenantId,
+        Title = "Kickoff call notes",
+        Type = ClientActionType.CustomTask,
+        Status = ClientActionStatus.Pending,
+        StageNumber = stage,
+        AssignedToRole = "Client",
+        SourceType = sourceType,
+        Source = "StaffManual",
+        ActivatedAt = DateTime.UtcNow.AddDays(-1)
+    };
+
+    [Fact]
+    public async Task CreateActionAsync_UnknownEngagement_ThrowsKeyNotFound()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => service.CreateActionAsync(Guid.NewGuid(), "tenant-001",
+            new CreateClientActionDto { Title = "Task", Type = "CustomTask", Source = "StaffManual" }));
+    }
+
+    [Fact]
+    public async Task CreateActionAsync_PastStage_ThrowsArgumentException_CurrentAndLaterAllowed()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001", EngagementStage.Verification); // stage 3
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.CreateActionAsync(engagementId, "tenant-001",
+            new CreateClientActionDto { Title = "Too late", Type = "CustomTask", Source = "StaffManual", StageNumber = 2 }));
+
+        var current = await service.CreateActionAsync(engagementId, "tenant-001",
+            new CreateClientActionDto { Title = "Now", Type = "CustomTask", Source = "StaffManual", StageNumber = 3 });
+        var later = await service.CreateActionAsync(engagementId, "tenant-001",
+            new CreateClientActionDto { Title = "Later", Type = "CustomTask", Source = "StaffManual", StageNumber = 5 });
+
+        Assert.NotNull(current.ActivatedAt);
+        Assert.Null(later.ActivatedAt);
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_PendingTask_UpdatesFields_AndPublishesChangedFields()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001");
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        var audit = new Mock<IAuditPublisher>();
+        var service = new ClientActionService(db, audit.Object);
+        var deadline = new DateTime(2026, 10, 30, 0, 0, 0, DateTimeKind.Utc);
+
+        var result = await service.UpdateActionAsync(engagementId, task.ActionId, "tenant-001",
+            new UpdateClientActionDto { Title = "  Kickoff summary ", DeadlineUtc = deadline, StageNumber = 2, AssignedToRole = "staff" },
+            "staff-1");
+
+        Assert.Equal("Kickoff summary", result!.Title);
+        Assert.Equal(deadline, result.DeadlineUtc);
+        Assert.Equal(2, result.StageNumber);
+        Assert.Null(result.ActivatedAt); // moved to a later stage: waits until that stage starts
+        Assert.Equal("Staff", result.AssignedToRole);
+        audit.Verify(a => a.PublishEventAsync(engagementId, "tenant-001", "staff-1", "ClientActionUpdated", It.IsAny<object>()), Times.Once());
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_NoChanges_DoesNotPublish_ClearDeadlineRemovesIt()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001");
+        task.DeadlineUtc = DateTime.UtcNow.AddDays(3);
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        var audit = new Mock<IAuditPublisher>();
+        var service = new ClientActionService(db, audit.Object);
+
+        await service.UpdateActionAsync(engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { Title = task.Title }, "staff-1");
+        audit.Verify(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), "ClientActionUpdated", It.IsAny<object>()), Times.Never());
+
+        var cleared = await service.UpdateActionAsync(engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { ClearDeadline = true }, "staff-1");
+        Assert.Null(cleared!.DeadlineUtc);
+    }
+
+    [Theory]
+    [InlineData("CustomTask", "KycDocument")]
+    [InlineData("DocumentUpload", "CustomTask")]
+    public async Task UpdateActionAsync_TypeChangeOnAnUntouchedPendingTask_IsApplied(string from, string to)
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001");
+        task.Type = from;
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        var audit = new Mock<IAuditPublisher>();
+        object? payload = null;
+        audit.Setup(a => a.PublishEventAsync(engagementId, "tenant-001", "staff-1", "ClientActionUpdated", It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, _, p) => payload = p)
+            .Returns(Task.CompletedTask);
+
+        var result = await new ClientActionService(db, audit.Object).UpdateActionAsync(
+            engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { Type = to.ToLowerInvariant() }, "staff-1");
+
+        Assert.Equal(to, result!.Type); // canonical casing
+        Assert.Contains("type", System.Text.Json.JsonSerializer.Serialize(payload));
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_TypeChangeAfterADocumentWasUploaded_IsRefused()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var linked = MakePendingTask(engagementId, "tenant-001");
+        linked.Type = "KycDocument";
+        linked.LinkedDocumentId = Guid.NewGuid();
+        linked.SourceType = ClientActionSourceType.Document;
+        var rejectedBefore = MakePendingTask(engagementId, "tenant-001"); // back to Pending after a rejected upload
+        rejectedBefore.Type = "KycDocument";
+        rejectedBefore.SourceMetadata = $"{{\"documentId\":\"{Guid.NewGuid()}\",\"verificationStatus\":\"Rejected\"}}";
+        db.ClientActions.AddRange(linked, rejectedBefore);
+        await db.SaveChangesAsync();
+        var service = CreateService(db);
+
+        foreach (var task in new[] { linked, rejectedBefore })
+        {
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.UpdateActionAsync(engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { Type = "CustomTask" }, "staff-1"));
+            Assert.Contains("uploaded", ex.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData("Requirement")]  // requirement tasks are created through the Requirements API
+    [InlineData("Approval")]     // condition tasks are created through the Conditions API
+    [InlineData("Banana")]
+    public async Task UpdateActionAsync_TypeOutsideTheStaffSelectableList_IsRejected(string type)
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001");
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            CreateService(db).UpdateActionAsync(engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { Type = type }, "staff-1"));
+    }
+
+    [Theory]
+    [InlineData(ClientActionStatus.Uploaded)]
+    [InlineData(ClientActionStatus.Completed)]
+    [InlineData(ClientActionStatus.Cancelled)]
+    public async Task UpdateActionAsync_NonPendingTask_ThrowsInvalidOperation(string status)
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001");
+        task.Status = status;
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateActionAsync(engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { Title = "x" }, "staff-1"));
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_MoveToPastStage_ThrowsArgument_OtherTenant_ReturnsNull()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001", EngagementStage.DocumentCollection); // stage 2
+        var task = MakePendingTask(engagementId, "tenant-001", stage: 3);
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.UpdateActionAsync(engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { StageNumber = 1 }, "staff-1"));
+        Assert.Null(await service.UpdateActionAsync(engagementId, task.ActionId, "tenant-other", new UpdateClientActionDto { Title = "x" }, "staff-1"));
+    }
+
+    // =========================================================================
+    // Audit detail: events say which task and exactly what changed
+    // =========================================================================
+
+    private static (Mock<IAuditPublisher> Mock, List<(string Type, object Payload)> Events) CapturingAudit()
+    {
+        var events = new List<(string, object)>();
+        var mock = new Mock<IAuditPublisher>();
+        mock.Setup(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, type, payload) => events.Add((type, payload)))
+            .Returns(Task.CompletedTask);
+        return (mock, events);
+    }
+
+    [Fact]
+    public async Task CreateActionAsync_PublishesClientActionCreated_WithTitleAndCreator()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var (audit, events) = CapturingAudit();
+
+        await new ClientActionService(db, audit.Object).CreateActionAsync(engagementId, "tenant-001", new CreateClientActionDto
+        {
+            Title = "Upload passport",
+            Type = "KycDocument",
+            Source = "StaffManual",
+            StageNumber = 1,
+            CreatedBy = "staff-1"
+        });
+
+        var created = Assert.Single(events, e => e.Type == "ClientActionCreated");
+        Assert.Equal("Upload passport", System.Text.Json.JsonSerializer.SerializeToElement(created.Payload).GetProperty("title").GetString());
+        audit.Verify(a => a.PublishEventAsync(engagementId, "tenant-001", "staff-1", "ClientActionCreated", It.IsAny<object>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_EventRecordsTheOldAndNewValues()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001");
+        task.Title = "Old title";
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        var (audit, events) = CapturingAudit();
+
+        await new ClientActionService(db, audit.Object).UpdateActionAsync(engagementId, task.ActionId, "tenant-001",
+            new UpdateClientActionDto { Title = "New title", Type = "KycDocument" }, "staff-1");
+
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(Assert.Single(events, e => e.Type == "ClientActionUpdated").Payload);
+        var changes = json.GetProperty("changes").EnumerateArray().ToDictionary(c => c.GetProperty("field").GetString()!);
+        Assert.Equal("Old title", changes["title"].GetProperty("from").GetString());
+        Assert.Equal("New title", changes["title"].GetProperty("to").GetString());
+        Assert.Equal("CustomTask", changes["type"].GetProperty("from").GetString());
+        Assert.Equal("KycDocument", changes["type"].GetProperty("to").GetString());
+    }
+
+    [Fact]
+    public async Task PreviewStandardChecklist_SavesNothing_AndMatchesWhatApplyAdds()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001", EngagementStage.DocumentCollection);
+        var audit = new Mock<IAuditPublisher>();
+        var service = new ClientActionService(db, audit.Object);
+
+        var preview = await service.PreviewStandardChecklistAsync(engagementId, "tenant-001");
+
+        Assert.NotEmpty(preview!);
+        Assert.All(preview!, t => Assert.True(t.StageNumber >= 2)); // current (2) and later stages only
+        Assert.Empty(db.ClientActions);
+        audit.Verify(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()), Times.Never());
+
+        var added = await service.ApplyStandardChecklistAsync(engagementId, "tenant-001", "staff-1");
+        Assert.Equal(preview!.Select(t => (t.StageNumber, t.Title)), added!.Select(t => (t.StageNumber, t.Title)));
+        Assert.Empty((await service.PreviewStandardChecklistAsync(engagementId, "tenant-001"))!); // nothing left to add
+    }
+
+    // =========================================================================
+    // Request Information: edit while unanswered, and convert a plain task into a question
+    // =========================================================================
+
+    private static async Task<(ClientAction Task, Requirement Requirement)> SeedQuestionAsync(
+        WorkflowDbContext db, Guid engagementId, string requirementStatus = RequirementStatus.Requested)
+    {
+        var requirement = new Requirement
+        {
+            RequirementId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = "tenant-001",
+            Type = ClientActionService.RequestedInformationRequirementType,
+            Status = requirementStatus,
+            StageNumber = 1
+        };
+        var task = MakePendingTask(engagementId, "tenant-001", sourceType: ClientActionSourceType.Requirement);
+        task.Type = ClientActionType.Requirement;
+        task.LinkedRequirementId = requirement.RequirementId;
+        db.Requirements.Add(requirement);
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        return (task, requirement);
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_UnansweredQuestion_CanBeEdited_AndItsStageIsKeptInSync()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var (task, requirement) = await SeedQuestionAsync(db, engagementId);
+
+        var result = await CreateService(db).UpdateActionAsync(engagementId, task.ActionId, "tenant-001",
+            new UpdateClientActionDto { Title = "What is your source of funds?", Description = "Salary, savings, ...", StageNumber = 2 }, "staff-1");
+
+        Assert.Equal("What is your source of funds?", result!.Title);
+        Assert.Equal(2, result.StageNumber);
+        Assert.Equal(2, (await db.Requirements.SingleAsync(r => r.RequirementId == requirement.RequirementId)).StageNumber);
+    }
+
+    [Theory]
+    [InlineData(RequirementStatus.Submitted)]
+    [InlineData(RequirementStatus.Approved)]
+    public async Task UpdateActionAsync_AnsweredQuestion_IsLocked(string requirementStatus)
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var (task, _) = await SeedQuestionAsync(db, engagementId, requirementStatus);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => CreateService(db).UpdateActionAsync(
+            engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { Title = "x" }, "staff-1"));
+        Assert.Contains("already answered", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_Question_CannotBeReassignedOrRetyped()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var (task, _) = await SeedQuestionAsync(db, engagementId);
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UpdateActionAsync(
+            engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { AssignedToRole = "Staff" }, "staff-1"));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UpdateActionAsync(
+            engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { Type = "CustomTask" }, "staff-1"));
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_ConvertToRequestInformation_CreatesTheQuestion_NotifiesTheClient_AndCanBeAnswered()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001");
+        task.AssignedToRole = "Staff";
+        task.IsInternalOnly = true;
+        task.ActivatedAt = DateTime.UtcNow;
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        var audit = new Mock<IAuditPublisher>();
+        object? requested = null;
+        audit.Setup(a => a.PublishEventAsync(engagementId, "tenant-001", "staff-1", "RequirementRequested", It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, _, p) => requested = p)
+            .Returns(Task.CompletedTask);
+
+        var result = await new ClientActionService(db, audit.Object).UpdateActionAsync(engagementId, task.ActionId, "tenant-001",
+            new UpdateClientActionDto { Type = ClientActionType.RequestInformation }, "staff-1");
+
+        var requirement = await db.Requirements.SingleAsync();
+        Assert.Equal(RequirementStatus.Requested, requirement.Status);
+        Assert.Equal(task.StageNumber, requirement.StageNumber);
+        Assert.Equal(requirement.RequirementId, result!.LinkedRequirementId);
+        Assert.Equal(ClientActionType.Requirement, result.Type);
+        Assert.Equal("Client", result.AssignedToRole); // a question is always the client's
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(requested);
+        Assert.Equal("client-1", json.GetProperty("clientId").GetString());
+
+        // The client answers it through the normal requirement flow; the task completes.
+        var answered = await new RequirementService(db, audit.Object).SubmitRequirementAsync(
+            engagementId, requirement.RequirementId, "tenant-001", new SubmitRequirementDto { Value = "Salary" }, callerClientId: "client-1");
+        Assert.Equal(RequirementStatus.Submitted, answered!.Status);
+        Assert.Equal(ClientActionStatus.Completed, (await db.ClientActions.AsNoTracking().SingleAsync(a => a.ActionId == task.ActionId)).Status);
+    }
+
+    [Fact]
+    public async Task UpdateActionAsync_ConvertToRequestInformation_IsRefusedAfterAnUpload_OrForStaff()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var uploaded = MakePendingTask(engagementId, "tenant-001");
+        uploaded.SourceMetadata = $"{{\"documentId\":\"{Guid.NewGuid()}\"}}";
+        var plain = MakePendingTask(engagementId, "tenant-001");
+        db.ClientActions.AddRange(uploaded, plain);
+        await db.SaveChangesAsync();
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateActionAsync(
+            engagementId, uploaded.ActionId, "tenant-001", new UpdateClientActionDto { Type = ClientActionType.RequestInformation }, "staff-1"));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UpdateActionAsync(
+            engagementId, plain.ActionId, "tenant-001",
+            new UpdateClientActionDto { Type = ClientActionType.RequestInformation, AssignedToRole = "Staff" }, "staff-1"));
+        Assert.Empty(db.Requirements);
+    }
+
+    [Theory]
+    [InlineData(ClientActionSourceType.Requirement)]
+    [InlineData(ClientActionSourceType.Condition)]
+    public async Task UpdateAndCancel_SourceLinkedTasks_AreRefused(string sourceType)
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001", sourceType: sourceType);
+        if (sourceType == ClientActionSourceType.Requirement) task.LinkedRequirementId = Guid.NewGuid();
+        else task.LinkedConditionId = Guid.NewGuid();
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateActionAsync(engagementId, task.ActionId, "tenant-001", new UpdateClientActionDto { Title = "x" }, "staff-1"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CancelActionAsync(engagementId, task.ActionId, "tenant-001", "not needed", "staff-1"));
+    }
+
+    [Fact]
+    public async Task CancelActionAsync_PendingTask_BecomesCancelled_IsRetained_AndIsIdempotent()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001");
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        var audit = new Mock<IAuditPublisher>();
+        var service = new ClientActionService(db, audit.Object);
+
+        var first = await service.CancelActionAsync(engagementId, task.ActionId, "tenant-001", "Added by mistake", "staff-1");
+        var second = await service.CancelActionAsync(engagementId, task.ActionId, "tenant-001", "Added by mistake", "staff-1");
+
+        Assert.Equal(ClientActionStatus.Cancelled, first!.Status);
+        Assert.Equal(ClientActionStatus.Cancelled, second!.Status);
+        Assert.NotNull(await db.ClientActions.FindAsync(task.ActionId)); // never deleted (AC4)
+        audit.Verify(a => a.PublishEventAsync(engagementId, "tenant-001", "staff-1", "ClientActionStatusChanged", It.IsAny<object>()), Times.Once());
+    }
+
+    [Fact]
+    public async Task CancelActionAsync_CompletedTask_ThrowsInvalidOperation_MissingReason_ThrowsArgument()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001");
+        task.Status = ClientActionStatus.Completed;
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        var service = CreateService(db);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.CancelActionAsync(engagementId, task.ActionId, "tenant-001", "late", "staff-1"));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.CancelActionAsync(engagementId, task.ActionId, "tenant-001", "  ", "staff-1"));
+    }
+
+    [Fact]
+    public async Task CancelActionAsync_UnblocksTheStageGate()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var task = MakePendingTask(engagementId, "tenant-001");
+        db.ClientActions.Add(task);
+        await db.SaveChangesAsync();
+        var service = CreateService(db);
+
+        var conditions = new Mock<IConditionReader>();
+        conditions.Setup(c => c.GetActiveConditionsAsync(engagementId, "tenant-001", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<EngagementCondition>());
+        var gate = new GateEvaluator(new Mock<IDocumentComplianceClient>().Object, conditions.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GateEvaluator>.Instance, db);
+
+        Assert.False((await gate.EvaluateAsync(engagementId, "tenant-001", EngagementStage.DocumentCollection)).IsSatisfied);
+
+        await service.CancelActionAsync(engagementId, task.ActionId, "tenant-001", "Added by mistake", "staff-1");
+
+        Assert.True((await gate.EvaluateAsync(engagementId, "tenant-001", EngagementStage.DocumentCollection)).IsSatisfied);
+    }
+
+    // =========================================================================
+    // C5: which tasks a Client may complete itself
+    // =========================================================================
+
+    public static IEnumerable<object?[]> ClientCompletionCases() => new[]
+    {
+        new object?[] { "Client", false, ClientActionType.CustomTask, false, false, true },   // own plain task
+        new object?[] { "Staff", false, ClientActionType.CustomTask, false, false, false },   // staff task
+        new object?[] { "Client", true, ClientActionType.CustomTask, false, false, false },   // internal
+        new object?[] { "Client", false, ClientActionType.KycDocument, false, false, false }, // evidence type
+        new object?[] { "Client", false, ClientActionType.CustomTask, true, false, false },   // linked document
+        new object?[] { "Client", false, ClientActionType.Approval, false, true, false },     // condition task
+    };
+
+    [Theory]
+    [MemberData(nameof(ClientCompletionCases))]
+    public async Task GetClientCompletionBlockReasonAsync_AllowsOnlyOwnPlainTasks(
+        string assignedTo, bool internalOnly, string type, bool linkedDocument, bool conditionLinked, bool allowed)
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        await SeedEngagementAsync(db, engagementId, "tenant-001");
+        var action = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = "tenant-001",
+            Title = "Task",
+            Type = type,
+            Status = ClientActionStatus.Pending,
+            StageNumber = 1,
+            AssignedToRole = assignedTo,
+            IsInternalOnly = internalOnly,
+            LinkedDocumentId = linkedDocument ? Guid.NewGuid() : null,
+            LinkedConditionId = conditionLinked ? Guid.NewGuid() : null,
+            SourceType = conditionLinked ? ClientActionSourceType.Condition : ClientActionSourceType.Manual
+        };
+        db.ClientActions.Add(action);
+        await db.SaveChangesAsync();
+
+        var reason = await CreateService(db).GetClientCompletionBlockReasonAsync(engagementId, action.ActionId, "tenant-001");
+
+        Assert.Equal(allowed, reason == null);
+    }
+
+    [Fact]
+    public async Task GetClientCompletionBlockReasonAsync_UnknownOrOtherTenantAction_ReturnsNull_SoCompleteReports404()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var service = CreateService(db);
+
+        Assert.Null(await service.GetClientCompletionBlockReasonAsync(Guid.NewGuid(), Guid.NewGuid(), "tenant-001"));
     }
 }

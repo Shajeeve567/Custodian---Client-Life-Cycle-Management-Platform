@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Custodian.Audit.DTOs;
+using Custodian.Shared.Messaging;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
 
@@ -19,9 +21,12 @@ public class HashChainEndpointTests : IClassFixture<WebApplicationFactory<Progra
     private readonly WebApplicationFactory<Program> _factory;
     private static readonly bool DbReachable = ProbeMySql();
 
+    // Audit writes are service-only: the test host is given an ingestion key and the client sends it.
+    private const string IngestionKey = "integration-test-ingestion-key-0123456789";
+
     public HashChainEndpointTests(WebApplicationFactory<Program> factory)
     {
-        _factory = factory;
+        _factory = factory.WithWebHostBuilder(b => b.UseSetting(AuditIngestion.ConfigKey, IngestionKey));
     }
 
     [SkippableFact]
@@ -152,6 +157,7 @@ public class HashChainEndpointTests : IClassFixture<WebApplicationFactory<Progra
     private HttpClient BuildClient(string tenant)
     {
         var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add(AuditIngestion.HeaderName, IngestionKey);
         client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", TestTokenFactory.CreateOwnerToken(tenant));
         client.DefaultRequestHeaders.Add("X-Tenant-Id", tenant);

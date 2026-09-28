@@ -232,4 +232,38 @@ public class EngagementRepositoryTests
         var existsInDb = await context.Engagements.FindAsync(engagementId);
         Assert.Null(existsInDb);
     }
+
+    [Fact]
+    public async Task DeleteAsync_RemovesTheEngagementsTasksRequirementsConditionsAndStalls_OnlyForThatEngagement()
+    {
+        // M3: deleting a draft used to leave its tasks, requirements and conditions orphaned.
+        using var context = CreateDbContext(Guid.NewGuid().ToString());
+        var repository = new EngagementRepository(context);
+        var draft = Guid.NewGuid();
+        var other = Guid.NewGuid();
+        const string tenant = "tenant-001";
+
+        foreach (var id in new[] { draft, other })
+        {
+            context.Engagements.Add(new Engagement { EngagementId = id, TenantId = tenant, ClientId = "c1", StaffId = "s1", Status = EngagementStatus.Draft });
+            context.ClientActions.Add(new ClientAction { ActionId = Guid.NewGuid(), EngagementId = id, TenantId = tenant, Title = "Task", Type = "CustomTask", Source = "Test" });
+            context.Requirements.Add(new Requirement { RequirementId = Guid.NewGuid(), EngagementId = id, TenantId = tenant, Type = "SourceOfFunds" });
+            context.EngagementConditions.Add(new EngagementCondition { EngagementId = id, TenantId = tenant, Type = ConditionType.Approval, Title = "Sign-off", CreatedBy = "s1" });
+            context.StallRecords.Add(new StallRecord { EngagementId = id, TenantId = tenant, ActionId = Guid.NewGuid() });
+        }
+        await context.SaveChangesAsync();
+
+        Assert.True(await repository.DeleteAsync(draft, tenant));
+
+        Assert.DoesNotContain(context.Engagements, e => e.EngagementId == draft);
+        Assert.DoesNotContain(context.ClientActions, a => a.EngagementId == draft);
+        Assert.DoesNotContain(context.Requirements, r => r.EngagementId == draft);
+        Assert.DoesNotContain(context.EngagementConditions, c => c.EngagementId == draft);
+        Assert.DoesNotContain(context.StallRecords, r => r.EngagementId == draft);
+
+        Assert.Single(context.ClientActions, a => a.EngagementId == other);
+        Assert.Single(context.Requirements, r => r.EngagementId == other);
+        Assert.Single(context.EngagementConditions, c => c.EngagementId == other);
+        Assert.Single(context.StallRecords, r => r.EngagementId == other);
+    }
 }

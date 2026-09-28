@@ -4,6 +4,8 @@ using Custodian.Workflow.Controllers;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Stall;
+using Custodian.Workflow.Services.Gates;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -15,28 +17,25 @@ namespace Custodian.Workflow.Tests.Unit;
 public class ClientActionsControllerTests
 {
     private readonly Mock<IClientActionService> _mockService;
-    private readonly Mock<IStallDetectionService> _mockStall;
     private readonly Mock<IStallActionsProvider> _mockStallActions;
-    private readonly Mock<IStallEventDeduplicator> _mockStallDedup;
-    private readonly Mock<IAuditPublisher> _mockAuditPublisher;
+    private readonly Mock<IStallRecorder> _mockStallRecorder;
+    private readonly Mock<IDocumentComplianceClient> _mockDocumentClient;
     private readonly Mock<ILogger<ClientActionsController>> _mockLogger;
     private readonly ClientActionsController _controller;
 
     public ClientActionsControllerTests()
     {
         _mockService = new Mock<IClientActionService>();
-        _mockStall = new Mock<IStallDetectionService>();
         _mockStallActions = new Mock<IStallActionsProvider>();
-        _mockStallDedup = new Mock<IStallEventDeduplicator>();
-        _mockAuditPublisher = new Mock<IAuditPublisher>();
+        _mockStallRecorder = new Mock<IStallRecorder>();
+        _mockDocumentClient = new Mock<IDocumentComplianceClient>();
         _mockLogger = new Mock<ILogger<ClientActionsController>>();
 
         _controller = new ClientActionsController(
             _mockService.Object,
-            _mockStall.Object,
             _mockStallActions.Object,
-            _mockStallDedup.Object,
-            _mockAuditPublisher.Object,
+            _mockStallRecorder.Object,
+            _mockDocumentClient.Object,
             _mockLogger.Object);
     }
 
@@ -344,6 +343,9 @@ public class ClientActionsControllerTests
         var actionId = Guid.NewGuid();
         var dto = new UploadActionEvidenceDto { UploaderActor = "client-user-1", DocumentId = Guid.NewGuid() };
         var expectedResponse = new ClientActionResponseDto { ActionId = actionId, Status = ClientActionStatus.Uploaded };
+        // The document's status is read from Documents, not taken from the request.
+        _mockDocumentClient.Setup(d => d.GetDocumentsAsync(engagementId, "tenant-001", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new DocumentSummaryDto { DocumentId = dto.DocumentId.Value, ComplianceStatus = "Compliant", VerificationStatus = "Unverified" } });
 
         _mockService.Setup(s => s.UploadEvidenceAsync(engagementId, actionId, "tenant-001", dto))
                     .ReturnsAsync(expectedResponse);
@@ -956,5 +958,412 @@ public class ClientActionsControllerTests
         // Assert: 200 OK
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
         Assert.Equal(200, okResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateAction_InvalidOperationException_Returns409Conflict()
+    {
+        // Arrange
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+        SetupTenantHeader(tenantId);
+
+        var dto = new CreateClientActionDto
+        {
+            Title = "Submit Tax Return",
+            Type = ClientActionType.DocumentUpload
+        };
+
+        _mockService.Setup(s => s.CreateActionAsync(engagementId, tenantId, dto))
+            .ThrowsAsync(new InvalidOperationException("Cannot create action for an engagement with status 'Closed'."));
+
+        // Act
+        var result = await _controller.CreateAction(engagementId, dto, tenantId: null);
+
+        // Assert: 409 Conflict
+        var conflictResult = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(409, conflictResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task CompleteAction_InvalidOperationException_Returns409Conflict()
+    {
+        // Arrange
+        var tenantId = "tenant-001";
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        SetupTenantHeader(tenantId);
+
+        var dto = new CompleteClientActionDto
+        {
+            CompletedByActor = "StaffMember"
+        };
+
+        _mockService.Setup(s => s.CompleteActionAsync(engagementId, actionId, tenantId, dto))
+            .ThrowsAsync(new InvalidOperationException("Cannot transition from Cancelled to Completed."));
+
+        // Act
+        var result = await _controller.CompleteAction(engagementId, actionId, dto, tenantId: null);
+
+        // Assert: 409 Conflict
+        var conflictResult = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(409, conflictResult.StatusCode);
+    }
+
+    // =========================================================================
+    // Staff-defined stage tasks: create/edit/cancel/checklist are Owner/Staff only
+    // =========================================================================
+
+    private void SetupRole(string role, string tenantId = "tenant-001", string? clientId = null)
+    {
+        var claims = new List<Claim>
+        {
+            new("tenant_id", tenantId),
+            new(ClaimTypes.Role, role),
+            new(ClaimTypes.NameIdentifier, $"{role.ToLowerInvariant()}-user-1")
+        };
+        if (clientId != null)
+        {
+            claims.Add(new Claim("client_id", clientId));
+        }
+
+        var httpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(claims, "TestAuth")) };
+        httpContext.Request.Headers["X-Tenant-ID"] = tenantId;
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+    }
+
+    [Fact]
+    public async Task CreateAction_ClientOwningEngagement_Returns403_ClientsCannotDefineTasks()
+    {
+        SetupRole("Client", clientId: "client-owner");
+        var engagementId = Guid.NewGuid();
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, "tenant-001", "client-owner")).ReturnsAsync(true);
+
+        var result = await _controller.CreateAction(engagementId, new CreateClientActionDto { Title = "Self task", Type = "CustomTask", Source = "Client" }, tenantId: null);
+
+        Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(s => s.CreateActionAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CreateClientActionDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAction_UnknownEngagement_Returns404()
+    {
+        SetupRole("Staff");
+        var engagementId = Guid.NewGuid();
+        _mockService.Setup(s => s.CreateActionAsync(engagementId, "tenant-001", It.IsAny<CreateClientActionDto>()))
+            .ThrowsAsync(new KeyNotFoundException("Engagement not found."));
+
+        var result = await _controller.CreateAction(engagementId, new CreateClientActionDto { Title = "Task", Type = "CustomTask", Source = "StaffManual" }, tenantId: null);
+
+        Assert.IsType<NotFoundObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task CreateAction_PastStage_Returns400()
+    {
+        SetupRole("Staff");
+        var engagementId = Guid.NewGuid();
+        _mockService.Setup(s => s.CreateActionAsync(engagementId, "tenant-001", It.IsAny<CreateClientActionDto>()))
+            .ThrowsAsync(new ArgumentException("Tasks can only be added to the current stage (3) or a later one."));
+
+        var result = await _controller.CreateAction(engagementId, new CreateClientActionDto { Title = "Task", Type = "CustomTask", Source = "StaffManual", StageNumber = 1 }, tenantId: null);
+
+        Assert.IsType<BadRequestObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task ApplyStandardChecklist_Staff_Returns200_WithActorFromJwt()
+    {
+        SetupRole("Staff");
+        var engagementId = Guid.NewGuid();
+        _mockService.Setup(s => s.ApplyStandardChecklistAsync(engagementId, "tenant-001", "staff-user-1"))
+            .ReturnsAsync(new List<ClientActionResponseDto> { new() { Title = "Client Intake" } });
+
+        var result = await _controller.ApplyStandardChecklist(engagementId, tenantId: null);
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Single(Assert.IsAssignableFrom<IEnumerable<ClientActionResponseDto>>(ok.Value));
+    }
+
+    [Fact]
+    public async Task ApplyStandardChecklist_UnknownEngagement_Returns404_Closed_Returns409()
+    {
+        SetupRole("Owner");
+        var missing = Guid.NewGuid();
+        var closed = Guid.NewGuid();
+        _mockService.Setup(s => s.ApplyStandardChecklistAsync(missing, "tenant-001", It.IsAny<string>()))
+            .ReturnsAsync((List<ClientActionResponseDto>?)null);
+        _mockService.Setup(s => s.ApplyStandardChecklistAsync(closed, "tenant-001", It.IsAny<string>()))
+            .ThrowsAsync(new InvalidOperationException("closed"));
+
+        Assert.IsType<NotFoundObjectResult>((await _controller.ApplyStandardChecklist(missing, tenantId: null)).Result);
+        Assert.IsType<ConflictObjectResult>((await _controller.ApplyStandardChecklist(closed, tenantId: null)).Result);
+    }
+
+    [Fact]
+    public async Task UpdateAction_Staff_Returns200_NotFound404_NotPending409()
+    {
+        SetupRole("Staff");
+        var engagementId = Guid.NewGuid();
+        var ok = Guid.NewGuid();
+        var missing = Guid.NewGuid();
+        var completed = Guid.NewGuid();
+        var dto = new UpdateClientActionDto { Title = "Renamed" };
+        _mockService.Setup(s => s.UpdateActionAsync(engagementId, ok, "tenant-001", dto, "staff-user-1"))
+            .ReturnsAsync(new ClientActionResponseDto { ActionId = ok, Title = "Renamed" });
+        _mockService.Setup(s => s.UpdateActionAsync(engagementId, missing, "tenant-001", dto, It.IsAny<string>()))
+            .ReturnsAsync((ClientActionResponseDto?)null);
+        _mockService.Setup(s => s.UpdateActionAsync(engagementId, completed, "tenant-001", dto, It.IsAny<string>()))
+            .ThrowsAsync(new InvalidOperationException("Only Pending tasks can be edited."));
+
+        Assert.IsType<OkObjectResult>((await _controller.UpdateAction(engagementId, ok, dto, tenantId: null)).Result);
+        Assert.IsType<NotFoundObjectResult>((await _controller.UpdateAction(engagementId, missing, dto, tenantId: null)).Result);
+        Assert.IsType<ConflictObjectResult>((await _controller.UpdateAction(engagementId, completed, dto, tenantId: null)).Result);
+    }
+
+    [Fact]
+    public async Task CancelAction_Staff_Returns200_CompletedTask409()
+    {
+        SetupRole("Owner");
+        var engagementId = Guid.NewGuid();
+        var pending = Guid.NewGuid();
+        var completed = Guid.NewGuid();
+        _mockService.Setup(s => s.CancelActionAsync(engagementId, pending, "tenant-001", "No longer required", "owner-user-1"))
+            .ReturnsAsync(new ClientActionResponseDto { ActionId = pending, Status = ClientActionStatus.Cancelled });
+        _mockService.Setup(s => s.CancelActionAsync(engagementId, completed, "tenant-001", It.IsAny<string>(), It.IsAny<string>()))
+            .ThrowsAsync(new InvalidOperationException("Completed is terminal."));
+
+        var dto = new CancelClientActionDto { Reason = "No longer required" };
+        Assert.IsType<OkObjectResult>((await _controller.CancelAction(engagementId, pending, dto, tenantId: null)).Result);
+        Assert.IsType<ConflictObjectResult>((await _controller.CancelAction(engagementId, completed, dto, tenantId: null)).Result);
+    }
+
+    [Fact]
+    public async Task StaffTaskEndpoints_ClientRole_Return403_AndNeverCallService()
+    {
+        SetupRole("Client", clientId: "client-owner");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, "tenant-001", "client-owner")).ReturnsAsync(true);
+
+        Assert.IsType<ForbidResult>((await _controller.ApplyStandardChecklist(engagementId, tenantId: null)).Result);
+        Assert.IsType<ForbidResult>((await _controller.UpdateAction(engagementId, actionId, new UpdateClientActionDto { Title = "x" }, tenantId: null)).Result);
+        Assert.IsType<ForbidResult>((await _controller.CancelAction(engagementId, actionId, new CancelClientActionDto { Reason = "x" }, tenantId: null)).Result);
+
+        _mockService.Verify(s => s.ApplyStandardChecklistAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        _mockService.Verify(s => s.UpdateActionAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UpdateClientActionDto>(), It.IsAny<string>()), Times.Never);
+        _mockService.Verify(s => s.CancelActionAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StaffTaskEndpoints_CrossTenantQuery_Return403()
+    {
+        SetupRole("Staff", tenantId: "tenant-001");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+
+        Assert.IsType<ForbidResult>((await _controller.ApplyStandardChecklist(engagementId, tenantId: "tenant-other")).Result);
+        Assert.IsType<ForbidResult>((await _controller.UpdateAction(engagementId, actionId, new UpdateClientActionDto { Title = "x" }, tenantId: "tenant-other")).Result);
+        Assert.IsType<ForbidResult>((await _controller.CancelAction(engagementId, actionId, new CancelClientActionDto { Reason = "x" }, tenantId: "tenant-other")).Result);
+    }
+
+    // =========================================================================
+    // Security hardening: C4 (trusted evidence status), C5 (client completion), M5 (actor from JWT)
+    // =========================================================================
+
+    private void DocumentsReturn(Guid engagementId, params DocumentSummaryDto[] docs) =>
+        _mockDocumentClient.Setup(d => d.GetDocumentsAsync(engagementId, "tenant-001", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(docs);
+
+    // Returns a getter for the DTO the controller finally passed to the service.
+    private Func<UploadActionEvidenceDto?> CaptureUpload(Guid engagementId, Guid actionId)
+    {
+        UploadActionEvidenceDto? captured = null;
+        _mockService.Setup(s => s.UploadEvidenceAsync(engagementId, actionId, "tenant-001", It.IsAny<UploadActionEvidenceDto>()))
+            .Callback<Guid, Guid, string, UploadActionEvidenceDto>((_, _, _, dto) => captured = dto)
+            .ReturnsAsync(new ClientActionResponseDto { ActionId = actionId, Status = ClientActionStatus.Uploaded });
+        return () => captured;
+    }
+
+    [Fact]
+    public async Task C4_ClientClaimingVerified_IsIgnored_StatusComesFromDocuments()
+    {
+        SetupRole("Client", clientId: "client-owner");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, "tenant-001", "client-owner")).ReturnsAsync(true);
+        DocumentsReturn(engagementId, new DocumentSummaryDto { DocumentId = documentId, ComplianceStatus = "Compliant", VerificationStatus = "Unverified" });
+        var sentDto = CaptureUpload(engagementId, actionId);
+
+        var forged = new UploadActionEvidenceDto
+        {
+            UploaderActor = "someone-else",
+            DocumentId = documentId,
+            ComplianceStatus = "Compliant",
+            VerificationStatus = "Verified",
+            VerifiedBy = "fake-staff",
+            VerificationReason = "trust me"
+        };
+
+        var result = await _controller.UploadEvidence(engagementId, actionId, forged, tenantId: null);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        var sent = sentDto()!;
+        Assert.Null(sent.VerificationStatus);   // not Verified: stays awaiting staff review
+        Assert.Null(sent.VerifiedBy);
+        Assert.Null(sent.VerificationReason);
+        Assert.Equal("Compliant", sent.ComplianceStatus);
+        Assert.Equal("client-user-1", sent.UploaderActor); // from the JWT, not the body
+    }
+
+    [Fact]
+    public async Task C4_ComplianceRejection_ComesFromDocuments_NotFromTheCaller()
+    {
+        SetupRole("Client", clientId: "client-owner");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, "tenant-001", "client-owner")).ReturnsAsync(true);
+        DocumentsReturn(engagementId, new DocumentSummaryDto
+        {
+            DocumentId = documentId, ComplianceStatus = "Rejected", VerificationStatus = "Unverified", RejectionReason = "Document expired"
+        });
+        var sentDto = CaptureUpload(engagementId, actionId);
+
+        await _controller.UploadEvidence(engagementId, actionId,
+            new UploadActionEvidenceDto { UploaderActor = "x", DocumentId = documentId, ComplianceStatus = "Compliant", RejectionReason = "n/a" },
+            tenantId: null);
+
+        var sent = sentDto()!;
+        Assert.Equal("Rejected", sent.ComplianceStatus);
+        Assert.Equal("Document expired", sent.RejectionReason);
+    }
+
+    [Fact]
+    public async Task C4_UnknownDocument_Returns400_AndRecordsNothing()
+    {
+        SetupRole("Staff");
+        var engagementId = Guid.NewGuid();
+        DocumentsReturn(engagementId, new DocumentSummaryDto { DocumentId = Guid.NewGuid(), ComplianceStatus = "Compliant" });
+
+        var result = await _controller.UploadEvidence(engagementId, Guid.NewGuid(),
+            new UploadActionEvidenceDto { UploaderActor = "x", DocumentId = Guid.NewGuid() }, tenantId: null);
+
+        Assert.IsType<BadRequestObjectResult>(result.Result);
+        _mockService.Verify(s => s.UploadEvidenceAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UploadActionEvidenceDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task C4_DocumentsUnavailable_Returns503_FailClosed()
+    {
+        SetupRole("Staff");
+        var engagementId = Guid.NewGuid();
+        _mockDocumentClient.Setup(d => d.GetDocumentsAsync(engagementId, "tenant-001", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DocumentComplianceUnavailableException("down"));
+
+        var result = await _controller.UploadEvidence(engagementId, Guid.NewGuid(),
+            new UploadActionEvidenceDto { UploaderActor = "x", DocumentId = Guid.NewGuid() }, tenantId: null);
+
+        Assert.Equal(503, Assert.IsType<ObjectResult>(result.Result).StatusCode);
+        _mockService.Verify(s => s.UploadEvidenceAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UploadActionEvidenceDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task C5_ClientCompletingABlockedTask_Returns403WithReason_AndCompletesNothing()
+    {
+        SetupRole("Client", clientId: "client-owner");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, "tenant-001", "client-owner")).ReturnsAsync(true);
+        _mockService.Setup(s => s.GetClientCompletionBlockReasonAsync(engagementId, actionId, "tenant-001"))
+            .ReturnsAsync("This task is handled by the Custodian team.");
+
+        var result = await _controller.CompleteAction(engagementId, actionId, new CompleteClientActionDto { CompletedByActor = "x" }, tenantId: null);
+
+        var forbidden = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(403, forbidden.StatusCode);
+        _mockService.Verify(s => s.CompleteActionAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CompleteClientActionDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task C5_ClientCompletingOwnPlainTask_Succeeds_WithActorFromJwt()
+    {
+        SetupRole("Client", clientId: "client-owner");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        CompleteClientActionDto? sent = null;
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, "tenant-001", "client-owner")).ReturnsAsync(true);
+        _mockService.Setup(s => s.GetClientCompletionBlockReasonAsync(engagementId, actionId, "tenant-001")).ReturnsAsync((string?)null);
+        _mockService.Setup(s => s.CompleteActionAsync(engagementId, actionId, "tenant-001", It.IsAny<CompleteClientActionDto>()))
+            .Callback<Guid, Guid, string, CompleteClientActionDto>((_, _, _, dto) => sent = dto)
+            .ReturnsAsync(new ClientActionResponseDto { ActionId = actionId, Status = ClientActionStatus.Completed });
+
+        var result = await _controller.CompleteAction(engagementId, actionId, new CompleteClientActionDto { CompletedByActor = "impersonated-staff" }, tenantId: null);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal("client-user-1", sent!.CompletedByActor);
+    }
+
+    [Fact]
+    public async Task M5_StaffReview_UsesJwtActor_NotBody()
+    {
+        SetupRole("Staff");
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        ReviewActionDto? sent = null;
+        _mockService.Setup(s => s.ReviewActionAsync(engagementId, actionId, "tenant-001", It.IsAny<ReviewActionDto>()))
+            .Callback<Guid, Guid, string, ReviewActionDto>((_, _, _, dto) => sent = dto)
+            .ReturnsAsync(new ClientActionResponseDto { ActionId = actionId });
+
+        await _controller.ReviewAction(engagementId, actionId, new ReviewActionDto { Status = ClientActionStatus.Completed, ReviewerActor = "someone-else" }, tenantId: null);
+
+        Assert.Equal("staff-user-1", sent!.ReviewerActor);
+    }
+
+    // =========================================================================
+    // Clients act only on tasks whose stage has started (409 "not yet")
+    // =========================================================================
+
+    private (Guid EngagementId, Guid ActionId) SetupOwningClientWithNotYetAvailableTask()
+    {
+        var httpContext = new DefaultHttpContext();
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", "tenant-001"),
+            new Claim(ClaimTypes.Role, "Client"),
+            new Claim("client_id", "client-1")
+        }, "TestAuth"));
+        _controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var engagementId = Guid.NewGuid();
+        var actionId = Guid.NewGuid();
+        _mockService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, "tenant-001", "client-1")).ReturnsAsync(true);
+        _mockService.Setup(s => s.GetClientAvailabilityBlockReasonAsync(engagementId, actionId, "tenant-001"))
+            .ReturnsAsync("This task opens in Stage 3.");
+        return (engagementId, actionId);
+    }
+
+    [Fact]
+    public async Task CompleteAction_ClientOnATaskWhoseStageHasNotStarted_Returns409()
+    {
+        var (engagementId, actionId) = SetupOwningClientWithNotYetAvailableTask();
+
+        var result = await _controller.CompleteAction(engagementId, actionId, new CompleteClientActionDto { CompletedByActor = "client-1" }, tenantId: null);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Contains("Stage 3", conflict.Value!.ToString());
+        _mockService.Verify(s => s.CompleteActionAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CompleteClientActionDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UploadEvidence_ClientOnATaskWhoseStageHasNotStarted_Returns409()
+    {
+        var (engagementId, actionId) = SetupOwningClientWithNotYetAvailableTask();
+
+        var result = await _controller.UploadEvidence(engagementId, actionId, new UploadActionEvidenceDto { UploaderActor = "client-1", DocumentId = Guid.NewGuid() }, tenantId: null);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        _mockService.Verify(s => s.UploadEvidenceAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<UploadActionEvidenceDto>()), Times.Never);
     }
 }

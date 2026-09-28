@@ -74,6 +74,12 @@ public class RequirementService : IRequirementService
 
         _dbContext.Requirements.Add(requirement);
 
+        // Decides whether the mirrored task is actionable now (Started engagement, stage reached) and
+        // gives Identity the clientId for the "information requested" notification.
+        var engagement = await _dbContext.Engagements
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId);
+
         // Mirror into a ClientAction so this shows up in the existing Next Action selection
         // (ClientPortalService.SelectStageBasedActions) without any change to that service —
         // it already knows how to surface a Pending, Client-assigned action.
@@ -84,19 +90,25 @@ public class RequirementService : IRequirementService
             TenantId = tenantId,
             Title = !string.IsNullOrWhiteSpace(dto.Title) ? dto.Title! : $"Provide: {dto.Type}",
             Description = dto.Description,
-            Type = "Requirement",
+            Type = ClientActionType.Requirement,
             Status = ClientActionStatus.Pending,
             StageNumber = dto.StageNumber ?? 1,
             DeadlineUtc = dto.DeadlineUtc,
             Source = "RequirementSync",
+            SourceType = ClientActionSourceType.Requirement,
             IsInternalOnly = false,
             AssignedToRole = dto.AssignedToRole,
             CreatedAt = now,
+            UpdatedAt = now,
+            ActivatedAt = StageActivation.ActivatedAtFor(engagement, dto.StageNumber ?? 1, now),
             LinkedRequirementId = requirement.RequirementId
         };
 
         _dbContext.ClientActions.Add(mirroredAction);
         await _dbContext.SaveChangesAsync();
+
+        // clientId and title let Identity address and word the client notification.
+        var clientId = engagement?.ClientId;
 
         await _auditPublisher.PublishEventAsync(
             engagementId,
@@ -106,6 +118,9 @@ public class RequirementService : IRequirementService
             new
             {
                 requirementId = requirement.RequirementId,
+                clientId,
+                title = mirroredAction.Title,
+                assignedToRole = requirement.AssignedToRole,
                 requirementType = requirement.Type,
                 stageNumber = requirement.StageNumber,
                 requestedBy = requirement.RequestedBy,
@@ -135,6 +150,27 @@ public class RequirementService : IRequirementService
             return null;
         }
 
+        var mirroredAction = await _dbContext.ClientActions
+            .FirstOrDefaultAsync(a => a.LinkedRequirementId == requirementId && a.EngagementId == engagementId && a.TenantId == tenantId);
+
+        // A client answers only once the requirement's stage has started (same rule as client tasks).
+        if (!string.IsNullOrWhiteSpace(callerClientId))
+        {
+            var engagementStatus = await _dbContext.Engagements
+                .AsNoTracking()
+                .Where(e => e.EngagementId == engagementId && e.TenantId == tenantId)
+                .Select(e => (EngagementStatus?)e.Status)
+                .FirstOrDefaultAsync();
+            var notYetReason = ClientActionService.ClientAvailabilityBlockReason(
+                engagementStatus,
+                mirroredAction?.ActivatedAt,
+                mirroredAction?.StageNumber ?? requirement.StageNumber ?? 1);
+            if (notYetReason != null)
+            {
+                throw new ClientActionNotAvailableException(notYetReason);
+            }
+        }
+
         var now = DateTime.UtcNow;
         requirement.Value = dto.Value;
         requirement.Status = RequirementStatus.Submitted;
@@ -142,14 +178,10 @@ public class RequirementService : IRequirementService
 
         // Clear the mirrored ClientAction so it drops out of Next Action — same convention as
         // completing any other client-facing action.
-        var mirroredAction = await _dbContext.ClientActions
-            .FirstOrDefaultAsync(a => a.LinkedRequirementId == requirementId && a.EngagementId == engagementId && a.TenantId == tenantId);
 
         if (mirroredAction != null)
         {
-            mirroredAction.Status = ClientActionStatus.Completed;
-            mirroredAction.CompletedByActor = dto.SubmittedByActor;
-            mirroredAction.CompletedAt = now;
+            await ApplyActionStatusAsync(mirroredAction, ClientActionStatus.Completed, dto.SubmittedByActor, reason: null);
         }
 
         await _dbContext.SaveChangesAsync();
@@ -162,6 +194,7 @@ public class RequirementService : IRequirementService
             new
             {
                 requirementId = requirement.RequirementId,
+                title = mirroredAction?.Title,
                 requirementType = requirement.Type,
                 submittedAt = requirement.SubmittedAt
                 // Deliberately excludes the submitted Value: this event flows through a shared
@@ -217,12 +250,26 @@ public class RequirementService : IRequirementService
             // Resurface it in Next Action, same as a rejected evidence action.
             if (mirroredAction != null)
             {
-                mirroredAction.Status = ClientActionStatus.Rejected;
-                mirroredAction.CompletedAt = null;
+                await ApplyActionStatusAsync(mirroredAction, ClientActionStatus.Rejected, dto.ReviewerActor, requirement.RejectionReason);
             }
         }
 
         await _dbContext.SaveChangesAsync();
+
+        // The staff decision on the client's answer (the answer itself stays out of the shared topic).
+        await _auditPublisher.PublishEventAsync(
+            engagementId,
+            tenantId,
+            dto.ReviewerActor,
+            "RequirementReviewed",
+            new
+            {
+                requirementId = requirement.RequirementId,
+                title = mirroredAction?.Title,
+                decision = requirement.Status,
+                rejectionReason = requirement.RejectionReason,
+                reviewedAt = requirement.ReviewedAt
+            });
 
         return MapToResponseDto(requirement, isClientView: false);
     }
@@ -239,6 +286,55 @@ public class RequirementService : IRequirementService
             e.EngagementId == engagementId &&
             e.TenantId == tenantId &&
             e.ClientId == callerClientId);
+    }
+
+    private async Task<bool> ApplyActionStatusAsync(ClientAction action, string newStatus, string? actor, string? reason)
+    {
+        if (string.Equals(action.Status, newStatus, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        ClientActionStateMachine.EnsureCanTransition(action.Status, newStatus);
+
+        var fromStatus = action.Status;
+        action.Status = newStatus;
+        var now = DateTime.UtcNow;
+        action.UpdatedAt = now;
+
+        action.CompletedByActor = actor ?? action.CompletedByActor;
+        if (string.Equals(newStatus, ClientActionStatus.Completed, StringComparison.OrdinalIgnoreCase))
+        {
+            action.CompletedAt = now;
+        }
+        else
+        {
+            action.CompletedAt = null;
+            if (string.Equals(newStatus, ClientActionStatus.Pending, StringComparison.OrdinalIgnoreCase))
+            {
+                action.CompletedByActor = null;
+            }
+        }
+
+        Guid? sourceId = action.LinkedRequirementId ?? action.LinkedDocumentId ?? action.LinkedConditionId ?? action.LinkedMeetingId;
+
+        await _auditPublisher.PublishEventAsync(
+            action.EngagementId,
+            action.TenantId,
+            actor ?? "System",
+            "ClientActionStatusChanged",
+            new
+            {
+                actionId = action.ActionId,
+                title = action.Title,
+                fromStatus,
+                toStatus = newStatus,
+                sourceType = action.SourceType,
+                sourceId,
+                reason
+            });
+
+        return true;
     }
 
     private static RequirementResponseDto MapToResponseDto(Requirement entity, bool isClientView) => new()

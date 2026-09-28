@@ -117,6 +117,18 @@ public sealed class KafkaNotificationConsumer : BackgroundService
             var mapper = scope.ServiceProvider.GetRequiredService<Custodian.Identity.Services.Notifications.Mappers.IEventToMessageMapper>();
 
             var mapped = mapper.MapToClientSafeMessage(envelope);
+            if (mapped == null)
+            {
+                // Not client-facing (internal task, checklist or audit-only event): nothing to send.
+                return;
+            }
+
+            if (mapped.ClientId == Guid.Empty && string.IsNullOrWhiteSpace(mapped.ClientEmail))
+            {
+                _logger.LogWarning("Client-facing event {EventType} {EventId} has no clientId; notification not sent.",
+                    envelope.EventType, envelope.EventId);
+                return;
+            }
             var tenantId = StringToGuid(envelope.TenantId);
             var context = new NotificationContext
             {

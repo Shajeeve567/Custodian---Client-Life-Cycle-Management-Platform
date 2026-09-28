@@ -3,6 +3,7 @@ using System.Text;
 using Custodian.Documents.Controllers;
 using Custodian.Documents.DTOs;
 using Custodian.Documents.Services;
+using Custodian.Documents.Services.EngagementAccess;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -16,6 +17,7 @@ public class DocumentsControllerTests
     private readonly Mock<IDocumentService> _documentServiceMock;
     private readonly Mock<IStorageService> _storageServiceMock;
     private readonly Mock<ILogger<DocumentsController>> _loggerMock;
+    private readonly Mock<IEngagementAccessClient> _engagementAccessMock;
     private readonly DocumentsController _controller;
 
     public DocumentsControllerTests()
@@ -23,7 +25,12 @@ public class DocumentsControllerTests
         _documentServiceMock = new Mock<IDocumentService>();
         _storageServiceMock = new Mock<IStorageService>();
         _loggerMock = new Mock<ILogger<DocumentsController>>();
-        _controller = new DocumentsController(_documentServiceMock.Object, _storageServiceMock.Object, _loggerMock.Object);
+        // Ownership is Workflow's; allow by default so existing tests keep testing Documents' own logic.
+        _engagementAccessMock = new Mock<IEngagementAccessClient>();
+        _engagementAccessMock
+            .Setup(a => a.CanAccessEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _controller = new DocumentsController(_documentServiceMock.Object, _storageServiceMock.Object, _loggerMock.Object, _engagementAccessMock.Object);
 
         // Setup HttpContext for Controller
         _controller.ControllerContext = new ControllerContext
@@ -828,5 +835,101 @@ public class DocumentsControllerTests
 
         Assert.IsType<NotFoundObjectResult>(actionResult.Result);
     }
-}
 
+    // =========================================================================
+    // C7: a Client may only reach documents of an engagement it owns (ownership is Workflow's)
+    // =========================================================================
+
+    private (DocumentsController Controller, Mock<IEngagementAccessClient> Access, Mock<IDocumentService> Service) ControllerFor(
+        string role, string tenantId = "tenant-001")
+    {
+        var service = new Mock<IDocumentService>();
+        var access = new Mock<IEngagementAccessClient>();
+        var controller = new DocumentsController(service.Object, _storageServiceMock.Object, _loggerMock.Object, access.Object);
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", tenantId),
+            new Claim(ClaimTypes.Role, role),
+            new Claim(ClaimTypes.NameIdentifier, $"{role.ToLowerInvariant()}-user-1")
+        }, "TestAuth"));
+        controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = user } };
+        return (controller, access, service);
+    }
+
+    [Fact]
+    public async Task C7_ClientNotOwningEngagement_CannotListDocuments()
+    {
+        var (controller, access, service) = ControllerFor("Client");
+        var engagementId = Guid.NewGuid();
+        access.Setup(a => a.CanAccessEngagementAsync(engagementId, "tenant-001", It.IsAny<CancellationToken>())).ReturnsAsync(false);
+
+        var result = await controller.GetDocumentsByEngagement(engagementId, null, null);
+
+        Assert.IsType<ForbidResult>(result.Result);
+        service.Verify(s => s.GetDocumentsByEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task C7_ClientOwningEngagement_CanListDocuments()
+    {
+        var (controller, access, service) = ControllerFor("Client");
+        var engagementId = Guid.NewGuid();
+        access.Setup(a => a.CanAccessEngagementAsync(engagementId, "tenant-001", It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        service.Setup(s => s.GetDocumentsByEngagementAsync(engagementId, "tenant-001")).ReturnsAsync(Array.Empty<DocumentResponseDto>());
+
+        var result = await controller.GetDocumentsByEngagement(engagementId, null, null);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task C7_WorkflowUnavailable_Returns503_FailClosed()
+    {
+        var (controller, access, service) = ControllerFor("Client");
+        var engagementId = Guid.NewGuid();
+        access.Setup(a => a.CanAccessEngagementAsync(engagementId, "tenant-001", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new EngagementAccessUnavailableException("down"));
+
+        var result = await controller.GetDocumentsByEngagement(engagementId, null, null);
+
+        Assert.Equal(503, Assert.IsType<ObjectResult>(result.Result).StatusCode);
+        service.Verify(s => s.GetDocumentsByEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("Owner")]
+    [InlineData("Staff")]
+    public async Task C7_StaffAndOwner_ActAcrossTenant_WithoutOwnershipLookup(string role)
+    {
+        var (controller, access, service) = ControllerFor(role);
+        var engagementId = Guid.NewGuid();
+        service.Setup(s => s.GetDocumentsByEngagementAsync(engagementId, "tenant-001")).ReturnsAsync(Array.Empty<DocumentResponseDto>());
+
+        var result = await controller.GetDocumentsByEngagement(engagementId, null, null);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        access.Verify(a => a.CanAccessEngagementAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task C7_ClientNotOwningEngagement_CannotUpload_AndM5_UploaderComesFromJwt()
+    {
+        var engagementId = Guid.NewGuid();
+        var file = new FormFile(new MemoryStream(Encoding.UTF8.GetBytes("%PDF-1.4")), 0, 8, "file", "doc.pdf");
+
+        var (denied, deniedAccess, deniedService) = ControllerFor("Client");
+        deniedAccess.Setup(a => a.CanAccessEngagementAsync(engagementId, "tenant-001", It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        var blocked = await denied.UploadDocument(engagementId, new DocumentUploadDto { File = file, Type = "KYC_PASSPORT", UploaderId = "x" }, null);
+        Assert.IsType<ForbidResult>(blocked.Result);
+        deniedService.Verify(s => s.UploadDocumentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<DocumentUploadDto>()), Times.Never);
+
+        var (allowed, allowedAccess, allowedService) = ControllerFor("Client");
+        allowedAccess.Setup(a => a.CanAccessEngagementAsync(engagementId, "tenant-001", It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        DocumentUploadDto? sent = null;
+        allowedService.Setup(s => s.UploadDocumentAsync(engagementId, "tenant-001", It.IsAny<DocumentUploadDto>()))
+            .Callback<Guid, string, DocumentUploadDto>((_, _, dto) => sent = dto)
+            .ReturnsAsync(new DocumentResponseDto { DocumentId = Guid.NewGuid() });
+        await allowed.UploadDocument(engagementId, new DocumentUploadDto { File = file, Type = "KYC_PASSPORT", UploaderId = "impersonated" }, null);
+        Assert.Equal("client-user-1", sent!.UploaderId);
+    }
+}

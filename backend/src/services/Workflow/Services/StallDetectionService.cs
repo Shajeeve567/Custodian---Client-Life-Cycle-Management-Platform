@@ -1,7 +1,6 @@
 using Custodian.Workflow.Configuration;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
-using Microsoft.AspNetCore.Cors;
 using Microsoft.Extensions.Options;
 
 namespace Custodian.Workflow.Services;
@@ -23,11 +22,29 @@ public sealed class StallDetectionService : IStallDetectionService
 
     public StallStatusDto Evaluate(ClientAction action, Guid engagementId, DateTime nowUtc)
     {
+        // SLA applies only to a "current" action (CSTD-33 definition, CSTD-21 model):
+        // open (not Completed/Cancelled) and already actionable (ActivatedAt set when its stage
+        // started). A future-stage task is not yet due, so it has no SLA deadline and never stalls.
+        if (!IsSlaApplicable(action))
+        {
+            return new StallStatusDto
+            {
+                EngagementId = engagementId,
+                IsStalled = false,
+                ActionId = action.ActionId,
+                ActionTitle = action.Title,
+                StageNumber = action.StageNumber,
+                DeadlineUtc = action.DeadlineUtc,
+                HoursOverdue = null,
+                EvaluatedAtUtc = nowUtc
+            };
+        }
+
         var deadline = ResolveEffectiveDeadline(action);
 
-        // Completed actions are never stalled
-        // Clearing stall is implicit in the status
-        var isStalled = action.Status != ClientActionStatus.Completed && nowUtc > deadline;
+        // Strictly after the deadline (at the exact instant it is not yet overdue).
+        // Clearing a stall is implicit in the status: completing/cancelling makes it not applicable.
+        var isStalled = nowUtc > deadline;
 
         return new StallStatusDto
         {
@@ -54,6 +71,8 @@ public sealed class StallDetectionService : IStallDetectionService
             .Where(a => a.AssignedToRole == "Client")
             .Where(a => !a.IsInternalOnly)
             .Where(a => a.Status == ClientActionStatus.Pending || a.Status == ClientActionStatus.Rejected)
+            // Only actions whose stage has started; future-stage tasks are not the current blocker.
+            .Where(a => a.ActivatedAt.HasValue)
             .OrderBy(a => a.StageNumber)
             .ThenBy(a => ResolveEffectiveDeadline(a))
             .FirstOrDefault();
@@ -80,7 +99,15 @@ public sealed class StallDetectionService : IStallDetectionService
             return action.DeadlineUtc.Value;
         }
 
-        return action.CreatedAt.Add(_sla.RevolveFor(action.StageNumber));
+        // The SLA clock starts when the action became actionable (CSTD-21 ActivatedAt), not when it
+        // was created: a task created on day 1 for stage 4 only starts its clock when stage 4 starts.
+        var clockStart = action.ActivatedAt ?? action.CreatedAt;
+        return clockStart.Add(_sla.RevolveFor(action.StageNumber));
     }
+
+    public static bool IsSlaApplicable(ClientAction action) =>
+        action.Status != ClientActionStatus.Completed &&
+        action.Status != ClientActionStatus.Cancelled &&
+        action.ActivatedAt.HasValue;
 }
 

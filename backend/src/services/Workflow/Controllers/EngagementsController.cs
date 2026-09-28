@@ -2,7 +2,9 @@ using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
 using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
+using Custodian.Workflow.Services.Stall;
 using Custodian.Workflow.Services.Gates;
+using Custodian.Workflow.Services.NextAction;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -17,20 +19,27 @@ public class EngagementsController : ControllerBase
     private readonly IAuditPublisher _auditPublisher;
     private readonly IGateEvaluator _gateEvaluator;
     private readonly IClientActionService? _actionService;
+    private readonly INextActionService? _nextActionService;
+    private readonly IStallRecorder? _stallRecorder;
 
     public EngagementsController(
         IEngagementRepository repository,
         IAuditPublisher auditPublisher,
         IGateEvaluator gateEvaluator,
-        IClientActionService? actionService = null)
+        IClientActionService? actionService = null,
+        INextActionService? nextActionService = null,
+        IStallRecorder? stallRecorder = null)
     {
         _repository = repository;
         _auditPublisher = auditPublisher;
         _gateEvaluator = gateEvaluator;
         _actionService = actionService;
+        _nextActionService = nextActionService;
+        _stallRecorder = stallRecorder;
     }
 
     [HttpPost]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<EngagementResponse>> CreateEngagement([FromBody] CreateEngagementRequest request)
     {
         if (!ModelState.IsValid)
@@ -62,18 +71,8 @@ public class EngagementsController : ControllerBase
 
         var created = await _repository.CreateAsync(engagement);
 
-        // Seed default 5-stage lifecycle actions for the new engagement
-        if (_actionService != null)
-        {
-            try
-            {
-                await _actionService.EnsureLifecycleActionsAsync(created.EngagementId, effectiveTenantId);
-            }
-            catch
-            {
-                // Fallback gracefully
-            }
-        }
+        // No tasks are seeded: staff define each stage's tasks, or explicitly apply the standard
+        // checklist (POST /api/engagements/{id}/actions/standard-checklist).
 
         // Subtask Genesis Event: Publish Genesis Event to Audit Service
         await _auditPublisher.PublishGenesisEventAsync(created, effectiveTenantId);
@@ -97,12 +96,57 @@ public class EngagementsController : ControllerBase
 
         var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
 
-        if (engagement == null)
+        // A Client may only read its own engagement; answer 404 so other engagements' existence isn't revealed.
+        if (engagement == null || (IsClientCaller() && !IsOwnedByCaller(engagement)))
         {
             return NotFound();
         }
 
         return Ok(MapToResponse(engagement));
+    }
+
+    /// <summary>
+    /// CSTD-19 (19-N2): Deterministically evaluates and returns the highest-priority next action
+    /// and ordered blockers for staff/owner workspace view.
+    /// Freshness (19-N5): computed on every read from live state, with no cache. Mutation endpoints do
+    /// not return the next action; clients re-fetch this endpoint (or the portal dashboard) after a change.
+    /// </summary>
+    [HttpGet("{id}/next-action")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<NextActionResult>> GetNextAction(
+        Guid id,
+        [FromQuery] string? tenantId,
+        CancellationToken ct = default)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest("tenantId parameter or JWT tenant claim is required for tenant isolation.");
+        }
+
+        var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
+        if (engagement == null)
+        {
+            return NotFound(new { message = $"Engagement '{id}' was not found in tenant '{effectiveTenantId}'." });
+        }
+
+        if (_nextActionService == null)
+        {
+            return StatusCode(500, new { message = "Next action evaluation service is not configured." });
+        }
+
+        var result = await _nextActionService.GetNextActionAsync(id, effectiveTenantId, NextActionView.Staff, ct);
+        if (result == null)
+        {
+            return NotFound(new { message = $"Next action could not be evaluated for engagement '{id}'." });
+        }
+
+        return Ok(result);
     }
 
     [HttpGet]
@@ -121,10 +165,17 @@ public class EngagementsController : ControllerBase
 
         var engagements = await _repository.GetAllByTenantAsync(effectiveTenantId);
 
+        // Owner/Staff see the whole tenant; a Client sees only its own engagements.
+        if (IsClientCaller())
+        {
+            engagements = engagements.Where(IsOwnedByCaller).ToList();
+        }
+
         return Ok(engagements.Select(MapToResponse));
     }
 
     [HttpPut("{id}/status")]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<EngagementResponse>> UpdateStatus(Guid id, [FromBody] UpdateEngagementStatusRequest request)
     {
         if (!ModelState.IsValid)
@@ -164,6 +215,7 @@ public class EngagementsController : ControllerBase
             });
         }
 
+        var previousStatus = engagement.Status;
         engagement.Status = newStatus;
         if (newStatus == EngagementStatus.Closed || newStatus == EngagementStatus.Cancelled)
         {
@@ -171,10 +223,45 @@ public class EngagementsController : ControllerBase
         }
 
         var updated = await _repository.UpdateAsync(engagement);
+
+        // Starting the engagement opens its current stage (normally stage 1): tasks added while it was a
+        // draft become actionable now, so their SLA clocks start at the start, not at creation.
+        if (_actionService != null && previousStatus == EngagementStatus.Draft && newStatus == EngagementStatus.Started)
+        {
+            for (var stageNumber = 1; stageNumber <= (int)updated.Stage + 1; stageNumber++)
+            {
+                await _actionService.ActivateStageActionsAsync(updated.EngagementId, effectiveTenantId, stageNumber);
+            }
+        }
+
+        // CSTD-33: a closed or cancelled engagement is no longer stalled.
+        if (_stallRecorder != null && (newStatus == EngagementStatus.Closed || newStatus == EngagementStatus.Cancelled))
+        {
+            await _stallRecorder.ResolveForEngagementAsync(updated.EngagementId, effectiveTenantId, StallResolution.EngagementClosed);
+        }
+
+        // Audit expects StatusChange events; Identity welcomes the client when an engagement starts.
+        if (previousStatus != newStatus)
+        {
+            await _auditPublisher.PublishEventAsync(
+                updated.EngagementId,
+                effectiveTenantId,
+                ResolveActor(),
+                "StatusChange",
+                new
+                {
+                    clientId = updated.ClientId,
+                    fromStatus = previousStatus.ToString(),
+                    toStatus = newStatus.ToString(),
+                    changedAt = DateTime.UtcNow
+                });
+        }
+
         return Ok(MapToResponse(updated));
     }
 
     [HttpPut("{id}/stage")]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<ActionResult<EngagementResponse>> UpdateStage(Guid id, [FromBody] UpdateEngagementStageRequest request)
     {
         if (!ModelState.IsValid)
@@ -206,6 +293,15 @@ public class EngagementsController : ControllerBase
             return Conflict(new
             {
                 message = $"Engagement in status '{engagement.Status}' cannot advance stage."
+            });
+        }
+
+        // A draft has not started: its stages open only after it is started (PUT /status Started).
+        if (engagement.Status == EngagementStatus.Draft)
+        {
+            return Conflict(new
+            {
+                message = "Start the engagement before advancing its stage."
             });
         }
 
@@ -241,6 +337,12 @@ public class EngagementsController : ControllerBase
         engagement.Stage = newStage;
 
         var updated = await _repository.UpdateAsync(engagement);
+        int newStageNumber = (int)newStage + 1;
+
+        if (_actionService != null)
+        {
+            await _actionService.ActivateStageActionsAsync(updated.EngagementId, effectiveTenantId, newStageNumber);
+        }
 
         // Subtask Audit: Publish Stage Change Event to Audit Service
         await _auditPublisher.PublishEventAsync(
@@ -250,6 +352,7 @@ public class EngagementsController : ControllerBase
             "StageChange",
             new
             {
+                clientId = updated.ClientId,
                 fromStage = previousStage.ToString(),
                 toStage = newStage.ToString(),
                 changedAt = DateTime.UtcNow
@@ -259,6 +362,7 @@ public class EngagementsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize(Roles = "Owner,Staff")]
     public async Task<IActionResult> DeleteEngagement(Guid id, [FromQuery] string? tenantId)
     {
         var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
@@ -298,6 +402,25 @@ public class EngagementsController : ControllerBase
     /// Strictly rejects cross-tenant requests where a caller specifies a different tenant ID than their JWT claim.
     /// Falls back to request parameter only in unauthenticated test contexts.
     /// </summary>
+    private bool IsClientCaller() => User?.IsInRole("Client") == true;
+
+    private string ResolveActor() =>
+        User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+        ?? User?.FindFirst("sub")?.Value
+        ?? "System";
+
+    // Client identity comes only from the JWT (client_id, else sub) — never from the request.
+    private bool IsOwnedByCaller(Engagement engagement)
+    {
+        var callerClientId = User?.FindFirst("client_id")?.Value
+            ?? User?.FindFirst("clientId")?.Value
+            ?? User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? User?.FindFirst("sub")?.Value;
+
+        return !string.IsNullOrWhiteSpace(callerClientId) &&
+               string.Equals(engagement.ClientId, callerClientId.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
     private (string? TenantId, bool IsForbidden) TryResolveTenantId(string? requestTenantId)
     {
         var jwtTenantId = User?.FindFirst("tenant_id")?.Value ?? User?.FindFirst("tenantId")?.Value;

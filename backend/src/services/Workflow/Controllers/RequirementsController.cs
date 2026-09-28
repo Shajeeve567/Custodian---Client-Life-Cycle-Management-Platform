@@ -127,7 +127,7 @@ public class RequirementsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        dto.RequestedByActor ??= ResolveActor();
+        dto.RequestedByActor = ResolveActor() ?? dto.RequestedByActor; // actor from the JWT, not the body
 
         try
         {
@@ -178,9 +178,18 @@ public class RequirementsController : ControllerBase
             }
         }
 
-        dto.SubmittedByActor ??= ResolveActor();
+        dto.SubmittedByActor = ResolveActor() ?? dto.SubmittedByActor; // actor from the JWT, not the body
 
-        var result = await _requirementService.SubmitRequirementAsync(engagementId, requirementId, effectiveTenantId, dto, callerClientId);
+        RequirementResponseDto? result;
+        try
+        {
+            result = await _requirementService.SubmitRequirementAsync(engagementId, requirementId, effectiveTenantId, dto, callerClientId);
+        }
+        catch (ClientActionNotAvailableException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+
         if (result == null)
         {
             return NotFound(new { message = $"Requirement '{requirementId}' was not found for engagement '{engagementId}' and tenant '{effectiveTenantId}'." });
@@ -222,7 +231,7 @@ public class RequirementsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        dto.ReviewerActor ??= ResolveActor() ?? string.Empty;
+        dto.ReviewerActor = ResolveActor() ?? dto.ReviewerActor ?? string.Empty; // actor from the JWT, not the body
 
         try
         {
@@ -251,12 +260,6 @@ public class RequirementsController : ControllerBase
             return isStaff ? null : Forbid();
         }
 
-        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Role", out var roleHeader))
-        {
-            var role = roleHeader.ToString();
-            var isStaff = role.Equals("Owner", StringComparison.OrdinalIgnoreCase) || role.Equals("Staff", StringComparison.OrdinalIgnoreCase);
-            return isStaff ? null : Forbid();
-        }
 
         return null;
     }
@@ -294,10 +297,6 @@ public class RequirementsController : ControllerBase
             return actor.Trim();
         }
 
-        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Id", out var userHeader))
-        {
-            return userHeader.ToString().Trim();
-        }
 
         return null;
     }

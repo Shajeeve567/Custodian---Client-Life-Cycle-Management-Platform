@@ -39,18 +39,18 @@ public sealed class StallQueueProvider : IStallQueueProvider
             return Array.Empty<EngagementWithActions>();
         }
 
-        // Fetch all of the tenant's actions, then filter in memory.
-        // Pomelo/EF Core 9 doesn't translate primitive-collection Contains
-        // (ids.Contains(...)) without enabling primitive collection support,
-        // so we avoid the construct entirely. Per-tenant action volume is
-        // small — this is a queue view, not a bulk export.
+        // Fetch the tenant's open actions (finished ones can never stall), then filter to the active
+        // engagements in memory. Pomelo/EF Core 9 doesn't translate primitive-collection Contains
+        // (ids.Contains(...)) without enabling primitive collection support, so we avoid the construct.
         var activeEngagementIds = engagements
             .Select(e => e.EngagementId)
             .ToHashSet();
 
         var actions = await _dbContext.ClientActions
             .AsNoTracking()
-            .Where(a => a.TenantId == tenantId)
+            .Where(a => a.TenantId == tenantId &&
+                        a.Status != ClientActionStatus.Completed &&
+                        a.Status != ClientActionStatus.Cancelled)
             .ToListAsync(ct);
 
         var actionsByEngagement = actions

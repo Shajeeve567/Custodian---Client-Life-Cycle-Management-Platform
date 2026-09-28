@@ -1,5 +1,6 @@
 using Custodian.Documents.DTOs;
 using Custodian.Documents.Services;
+using Custodian.Documents.Services.EngagementAccess;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -15,15 +16,18 @@ public class DocumentsController : ControllerBase
     private readonly IDocumentService _documentService;
     private readonly IStorageService _storageService;
     private readonly ILogger<DocumentsController> _logger;
+    private readonly IEngagementAccessClient _engagementAccess;
 
     public DocumentsController(
         IDocumentService documentService,
         IStorageService storageService,
-        ILogger<DocumentsController> logger)
+        ILogger<DocumentsController> logger,
+        IEngagementAccessClient engagementAccess)
     {
         _documentService = documentService;
         _storageService = storageService;
         _logger = logger;
+        _engagementAccess = engagementAccess;
     }
 
     /// <summary>
@@ -47,6 +51,12 @@ public class DocumentsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
+        var accessDenied = await EnsureClientCanAccessEngagementAsync(engagementId, effectiveTenantId);
+        if (accessDenied != null)
+        {
+            return accessDenied;
+        }
+
         if (!ModelState.IsValid)
         {
             return BadRequest(ModelState);
@@ -54,6 +64,8 @@ public class DocumentsController : ControllerBase
 
         try
         {
+            // Uploader identity comes from the JWT, not the form.
+            uploadDto.UploaderId = ResolveStaffActor() ?? uploadDto.UploaderId;
             var result = await _documentService.UploadDocumentAsync(engagementId, effectiveTenantId, uploadDto);
             return CreatedAtAction(
                 nameof(GetDocumentById),
@@ -87,6 +99,12 @@ public class DocumentsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
+        var accessDenied = await EnsureClientCanAccessEngagementAsync(engagementId, effectiveTenantId);
+        if (accessDenied != null)
+        {
+            return accessDenied;
+        }
+
         var results = filter != null
             ? await _documentService.GetDocumentsByEngagementAsync(engagementId, effectiveTenantId, filter)
             : await _documentService.GetDocumentsByEngagementAsync(engagementId, effectiveTenantId);
@@ -112,6 +130,12 @@ public class DocumentsController : ControllerBase
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var accessDenied = await EnsureClientCanAccessEngagementAsync(engagementId, effectiveTenantId);
+        if (accessDenied != null)
+        {
+            return accessDenied;
         }
 
         var result = includeDeleted
@@ -145,6 +169,12 @@ public class DocumentsController : ControllerBase
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
         {
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var accessDenied = await EnsureClientCanAccessEngagementAsync(engagementId, effectiveTenantId);
+        if (accessDenied != null)
+        {
+            return accessDenied;
         }
 
         var metadata = includeDeleted
@@ -200,7 +230,7 @@ public class DocumentsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        dto.StaffActor ??= ResolveStaffActor();
+        dto.StaffActor = ResolveStaffActor() ?? dto.StaffActor; // actor from the JWT, not the body
 
         try
         {
@@ -259,7 +289,7 @@ public class DocumentsController : ControllerBase
             return BadRequest(ModelState);
         }
 
-        dto.StaffActor ??= ResolveStaffActor();
+        dto.StaffActor = ResolveStaffActor() ?? dto.StaffActor; // actor from the JWT, not the body
 
         try
         {
@@ -398,16 +428,33 @@ public class DocumentsController : ControllerBase
             return isStaff ? null : Forbid();
         }
 
-        // 2. Check X-User-Role header fallback for direct testing / service-to-service calls
-        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Role", out var roleHeader))
-        {
-            var role = roleHeader.ToString();
-            var isStaff = role.Equals("Owner", StringComparison.OrdinalIgnoreCase) || role.Equals("Staff", StringComparison.OrdinalIgnoreCase);
-            return isStaff ? null : Forbid();
-        }
 
         // 3. Neither authenticated claim nor valid role header found
         return Unauthorized(new { message = "Authentication required. Only authorized staff can verify or reject documents." });
+    }
+
+    /// <summary>
+    /// A Client may only touch documents of an engagement it owns (ownership is Workflow's). Owner and
+    /// Staff act across their tenant. Returns 403 when denied and 503 when Workflow cannot confirm (fail closed).
+    /// </summary>
+    private async Task<ActionResult?> EnsureClientCanAccessEngagementAsync(Guid engagementId, string tenantId)
+    {
+        if (User?.IsInRole("Client") != true)
+        {
+            return null;
+        }
+
+        try
+        {
+            var allowed = await _engagementAccess.CanAccessEngagementAsync(engagementId, tenantId, HttpContext?.RequestAborted ?? default);
+            return allowed ? null : Forbid();
+        }
+        catch (EngagementAccessUnavailableException ex)
+        {
+            _logger.LogWarning(ex, "Could not confirm client access to engagement {EngagementId}", engagementId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { message = "Unable to confirm access to this engagement right now. Please try again shortly." });
+        }
     }
 
     private string? ResolveStaffActor()
@@ -422,10 +469,6 @@ public class DocumentsController : ControllerBase
             return actor.Trim();
         }
 
-        if (Request?.Headers != null && Request.Headers.TryGetValue("X-User-Id", out var userHeader))
-        {
-            return userHeader.ToString().Trim();
-        }
 
         return "StaffUser";
     }

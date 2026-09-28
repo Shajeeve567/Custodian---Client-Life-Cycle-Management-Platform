@@ -22,4 +22,23 @@ public interface IAuditEventRepository
     /// hash when appending a new event to this engagement's chain.
     /// </summary>
     Task<AuditEvent?> GetLatestForEngagementAsync(Guid tenantId, Guid engagementId);
+
+    /// <summary>
+    /// Appends one event to its engagement's chain as a single atomic step: inside one transaction it
+    /// checks the event id is new (idempotency), locks the engagement's chain head, builds the event
+    /// from the head's hash via <paramref name="buildEvent"/>, inserts it and moves the head. Concurrent
+    /// appends to the same engagement are serialised, so the chain never forks.
+    /// </summary>
+    /// <param name="buildEvent">Builds the event (including its hash) from the previous hash.</param>
+    /// <returns>The recorded event, and whether it was created now (false: it already existed).</returns>
+    /// <exception cref="AuditChainConflictException">The event id or the engagement's chain belongs to another tenant.</exception>
+    Task<ChainAppendResult> AppendToChainAsync(Guid tenantId, Guid engagementId, Guid eventId, Func<string, AuditEvent> buildEvent);
+}
+
+public sealed record ChainAppendResult(AuditEvent Event, bool Created);
+
+/// <summary>An append that conflicts with another tenant's event id or chain. Never retried.</summary>
+public sealed class AuditChainConflictException : InvalidOperationException
+{
+    public AuditChainConflictException(string message) : base(message) { }
 }
