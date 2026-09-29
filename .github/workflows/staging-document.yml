@@ -2,7 +2,7 @@ name: Deploy — Document Service
 
 on:
   push:
-    branches: [main]
+    branches: [dev]
     paths:
       - 'backend/src/services/Documents/**'
       - '.github/workflows/deploy-document.yml'
@@ -36,6 +36,6 @@ jobs:
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
-          app-name: ${{ secrets.AZURE_APP_NAME }}
-          publish-profile: ${{ secrets.AZURE_PUBLISH_PROFILE }}
+          app-name: ${{ secrets.AZURE_DOCUMENT_APP_NAME }}
+          publish-profile: ${{ secrets.AZURE_DOCUMENT_PUBLISH_PROFILE }}
           package: ./publish/documents
