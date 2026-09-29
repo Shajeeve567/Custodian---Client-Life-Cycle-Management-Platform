@@ -8,6 +8,7 @@
 [Ll]ogs/
 [Tt]mp/
 *.log
+*.dotnet
 *.bin
 *.dll
 *.exe
