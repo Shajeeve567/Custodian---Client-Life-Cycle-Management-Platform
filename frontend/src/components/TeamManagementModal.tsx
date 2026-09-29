@@ -19,6 +19,33 @@ import {
     Check
 } from 'lucide-react';
 
+type WorkspaceRole = 'Owner' | 'Staff' | 'Client' | 'Unknown';
+
+// Identity sends roles as names ("Owner"); older payloads used the enum number (Owner=0, Staff=1, Client=2).
+const ROLE_BY_VALUE: Record<string, WorkspaceRole> = {
+    Owner: 'Owner', '0': 'Owner',
+    Staff: 'Staff', '1': 'Staff',
+    Client: 'Client', '2': 'Client',
+};
+const ROLE_ORDER: WorkspaceRole[] = ['Owner', 'Staff', 'Client', 'Unknown'];
+const ROLE_BADGE: Record<WorkspaceRole, string> = {
+    Owner: 'bg-purple-100 text-purple-700 border border-purple-200',
+    Staff: 'bg-indigo-100 text-indigo-700 border border-indigo-200',
+    Client: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+    Unknown: 'bg-slate-100 text-slate-600 border border-slate-200',
+};
+
+/** The user's role in this workspace only: a membership in another workspace says nothing about this one. */
+const roleInWorkspace = (user: UserAccountResponse, tenantId?: string | null): WorkspaceRole => {
+    const membership = user.memberships?.find((m) => m.tenantId === tenantId);
+    return membership ? ROLE_BY_VALUE[String(membership.role)] ?? 'Unknown' : 'Unknown';
+};
+
+const isActive = (user: UserAccountResponse) => {
+    const status = String(user.status);
+    return status === 'Active' || status === '0';
+};
+
 interface TeamManagementModalProps {
     isOpen: boolean;
     onClose: () => void;
@@ -251,7 +278,7 @@ export const TeamManagementModal: React.FC<TeamManagementModalProps> = ({ isOpen
                 {/* Team Roster List */}
                 <div>
                     <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                        Active Workspace Roster ({users.length})
+                        Workspace Members ({users.length})
                     </h3>
 
                     {generalError && (
@@ -280,11 +307,11 @@ export const TeamManagementModal: React.FC<TeamManagementModalProps> = ({ isOpen
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {users.map((u) => {
-                                        // Determine role from current workspace membership or fallback
-                                        const myMembership = u.memberships?.find((m: any) => m.tenantId === tenantId) || u.memberships?.[0];
-                                        const roleName = myMembership ? String(myMembership.role) : 'Staff';
-                                        const isOwnerRole = roleName === 'Owner' || roleName === '0';
+                                    {[...users]
+                                        .map((u) => ({ u, memberRole: roleInWorkspace(u, tenantId) }))
+                                        .sort((a, b) => ROLE_ORDER.indexOf(a.memberRole) - ROLE_ORDER.indexOf(b.memberRole) || a.u.email.localeCompare(b.u.email))
+                                        .map(({ u, memberRole }) => {
+                                        const active = isActive(u);
 
                                         return (
                                             <tr key={u.id} className="border-b border-slate-100 hover:bg-slate-50/50">
@@ -292,18 +319,14 @@ export const TeamManagementModal: React.FC<TeamManagementModalProps> = ({ isOpen
                                                     {u.email}
                                                 </td>
                                                 <td className="p-2.5">
-                                                    <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
-                                                        isOwnerRole
-                                                            ? 'bg-purple-100 text-purple-700 border border-purple-200'
-                                                            : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
-                                                    }`}>
-                                                        {isOwnerRole ? 'Owner' : 'Staff'}
+                                                    <span className={`px-2 py-0.5 rounded text-xs font-semibold ${ROLE_BADGE[memberRole]}`}>
+                                                        {memberRole}
                                                     </span>
                                                 </td>
                                                 <td className="p-2.5">
-                                                    <span className="inline-flex items-center gap-1 text-emerald-700">
-                                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
-                                                        Active
+                                                    <span className={`inline-flex items-center gap-1 ${active ? 'text-emerald-700' : 'text-slate-500'}`}>
+                                                        <span className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-emerald-600' : 'bg-slate-400'}`}></span>
+                                                        {active ? 'Active' : 'Deactivated'}
                                                     </span>
                                                 </td>
                                                 <td className="p-2.5 text-slate-500">

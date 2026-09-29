@@ -2,12 +2,14 @@ using System.Text.Json;
 using Custodian.Audit.Data;
 using Custodian.Audit.Repositories;
 using Custodian.Audit.Services;
+using Custodian.Audit.Services.HashChain;
 using Custodian.Audit.Services.Kafka;
 using Custodian.Shared.Messaging;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Moq;
 using Xunit;
 
 namespace Custodian.Audit.Tests.Unit;
@@ -25,6 +27,7 @@ public class KafkaAuditEventConsumerTests
         services.AddDbContext<AuditDbContext>(opt => opt.UseInMemoryDatabase(dbName));
         services.AddScoped<IAuditEventRepository, AuditEventRepository>();
         services.AddScoped<IAuditEventService, AuditEventService>();
+        services.AddScoped<IHashChainService, HashChainService>();
         return services.BuildServiceProvider();
     }
 
@@ -105,6 +108,97 @@ public class KafkaAuditEventConsumerTests
     }
 
     [Fact]
+    public async Task ProcessMessageAsync_ActionOverdueEvent_RecordsAuditEvent()
+    {
+        // Arrange: CSTD-33 stall detection publishes action.overdue once per stall (deduplicated upstream)
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+
+        var json = BuildEnvelopeJson("action.overdue", engagementId, "System", new
+        {
+            clientId = "client-001",
+            actionId = Guid.NewGuid(),
+            actionTitle = "Upload passport",
+            stageNumber = 2,
+            deadlineUtc = DateTime.UtcNow.AddDays(-1),
+            hoursOverdue = 24
+        });
+
+        // Act
+        await consumer.ProcessMessageAsync(json);
+
+        // Assert
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var stored = await db.Events.SingleOrDefaultAsync(e => e.EngagementId == engagementId);
+
+        Assert.NotNull(stored);
+        Assert.Equal("action.overdue", stored!.Type);
+        Assert.Equal("System", stored.Actor);
+    }
+
+    [Theory]
+    [InlineData("ClientActionUpdated")]
+    [InlineData("StandardChecklistApplied")]
+    public async Task ProcessMessageAsync_StageTaskEvent_RecordsAuditEvent(string eventType)
+    {
+        // Arrange: staff-defined stage task events (edit, opt-in standard checklist)
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+
+        var json = BuildEnvelopeJson(eventType, engagementId, "staff-actor", new
+        {
+            actionId = Guid.NewGuid(),
+            changedFields = new[] { "title" }
+        });
+
+        // Act
+        await consumer.ProcessMessageAsync(json);
+
+        // Assert
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var stored = await db.Events.SingleOrDefaultAsync(e => e.EngagementId == engagementId);
+
+        Assert.NotNull(stored);
+        Assert.Equal(eventType, stored!.Type);
+        Assert.Equal("staff-actor", stored.Actor);
+    }
+
+    [Theory]
+    [InlineData("ConditionAttached")]
+    [InlineData("ConditionUpdated")]
+    [InlineData("ConditionDeactivated")]
+    public async Task ProcessMessageAsync_ConditionEvent_RecordsAuditEvent(string eventType)
+    {
+        // Arrange: CSTD-24 (Engagement Condition Management) events
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+
+        var json = BuildEnvelopeJson(eventType, engagementId, "staff-actor", new
+        {
+            conditionId = Guid.NewGuid(),
+            type = "Approval",
+            title = "Scope approval"
+        });
+
+        // Act
+        await consumer.ProcessMessageAsync(json);
+
+        // Assert
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var stored = await db.Events.SingleOrDefaultAsync(e => e.EngagementId == engagementId);
+
+        Assert.NotNull(stored);
+        Assert.Equal(eventType, stored.Type);
+        Assert.Equal("staff-actor", stored.Actor);
+    }
+
+    [Fact]
     public async Task ProcessMessageAsync_UnhandledEventType_IsIgnored()
     {
         // Arrange: an event type this consumer doesn't care about (e.g. Identity's notification stream)
@@ -112,15 +206,42 @@ public class KafkaAuditEventConsumerTests
         var consumer = CreateConsumer(provider);
         var engagementId = Guid.NewGuid();
 
-        var json = BuildEnvelopeJson("document.verified", engagementId, "System", new { documentName = "id.pdf" });
+        var json = BuildEnvelopeJson("user.created", engagementId, "System", new { email = "someone@example.com" });
 
         // Act
         await consumer.ProcessMessageAsync(json);
 
-        // Assert: nothing recorded — this consumer only handles Genesis/StatusChange/StageChange
+        // Assert: nothing recorded — this consumer only handles engagement and document events
         using var scope = provider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
         Assert.Empty(db.Events);
+    }
+
+    [Theory]
+    [InlineData("document.verified")]
+    [InlineData("document.verification_rejected")]
+    [InlineData("document.metadata_updated")]
+    [InlineData("document.soft_deleted")]
+    [InlineData("StallResolved")] // CSTD-33: pairs with action.overdue via stallId
+    [InlineData("document.uploaded")]
+    [InlineData("ClientActionCreated")]
+    [InlineData("RequirementReviewed")]
+    [InlineData("intervention.recovered")] // CSTD-35 AC5: intervention history is audited
+    [InlineData("ResponsibleStaffChanged")]
+    public async Task ProcessMessageAsync_DocumentServiceEvent_IsRecorded(string eventType)
+    {
+        // H1: Documents now publishes to Kafka; previously its HTTP events were rejected (401) and lost.
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+
+        await consumer.ProcessMessageAsync(BuildEnvelopeJson(eventType, engagementId, "staff-1", new { documentId = Guid.NewGuid() }));
+
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var recorded = Assert.Single(db.Events);
+        Assert.Equal(eventType, recorded.Type);
+        Assert.Equal(engagementId, recorded.EngagementId);
     }
 
     [Fact]
@@ -159,5 +280,55 @@ public class KafkaAuditEventConsumerTests
 
         // Act & Assert: malformed messages are logged and discarded, not thrown
         await consumer.ProcessMessageAsync("not valid json at all");
+    }
+
+    // M7: a failure that may be transient must leave the offset uncommitted so the event is retried.
+    private static KafkaAuditEventConsumer ConsumerWithService(IAuditEventService service)
+    {
+        var services = new ServiceCollection();
+        services.AddScoped(_ => service);
+        var provider = services.BuildServiceProvider();
+        return new KafkaAuditEventConsumer(
+            Options.Create(new KafkaOptions()),
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<KafkaAuditEventConsumer>.Instance);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenRecordingFails_ReturnsFalseSoTheOffsetIsNotCommitted()
+    {
+        var service = new Mock<IAuditEventService>();
+        service.Setup(s => s.RecordEventAsync(It.IsAny<Custodian.Audit.DTOs.CreateAuditEventRequest>(), It.IsAny<Guid>()))
+            .ThrowsAsync(new TimeoutException("database unavailable"));
+
+        var handled = await ConsumerWithService(service.Object)
+            .HandleAsync(BuildEnvelopeJson("StageChange", Guid.NewGuid(), "System", new { toStage = "DocumentCollection" }));
+
+        Assert.False(handled);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InvalidOrConflictingEvent_IsSkippedAndCommitted()
+    {
+        // Retrying can't fix these, so they must not block the partition.
+        var service = new Mock<IAuditEventService>();
+        service.SetupSequence(s => s.RecordEventAsync(It.IsAny<Custodian.Audit.DTOs.CreateAuditEventRequest>(), It.IsAny<Guid>()))
+            .ThrowsAsync(new ArgumentException("Actor is required."))
+            .ThrowsAsync(new AuditChainConflictException("Engagement belongs to another tenant."));
+        var consumer = ConsumerWithService(service.Object);
+        var message = BuildEnvelopeJson("StageChange", Guid.NewGuid(), "System", new { toStage = "DocumentCollection" });
+
+        Assert.True(await consumer.HandleAsync(message));
+        Assert.True(await consumer.HandleAsync(message));
+        Assert.True(await consumer.HandleAsync("not json"));
+    }
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(3, 4)]
+    [InlineData(20, 60)]
+    public void RetryDelay_GrowsAndIsCapped(int failures, int expectedSeconds)
+    {
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), KafkaAuditEventConsumer.RetryDelay(failures));
     }
 }

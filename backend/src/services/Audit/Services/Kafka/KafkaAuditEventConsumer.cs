@@ -22,9 +22,37 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
         "Genesis",
         "StatusChange",
         "StageChange",
+        // Owner handed the engagement to another responsible staff member (who then gains access to it).
+        "ResponsibleStaffChanged",
         // CSTD-16 (Requirements Collection)
         "RequirementRequested",
-        "RequirementSubmitted"
+        "RequirementSubmitted",
+        "RequirementReviewed",
+        // CSTD-21 (Client Action Model)
+        "ClientActionStatusChanged",
+        "ClientActionCreated",
+        // Staff-defined stage tasks
+        "ClientActionUpdated",
+        "StandardChecklistApplied",
+        // CSTD-33 (Action SLA & Stall Detection). Dot-case to match what Workflow publishes
+        // and what Identity's notification mapper expects.
+        "action.overdue",
+        // Published once when a persisted stall ends (action completed/cancelled/submitted, deadline
+        // extended, engagement closed); pairs with action.overdue via stallId.
+        "StallResolved",
+        // CSTD-24 (Engagement Condition Management)
+        "ConditionAttached",
+        "ConditionUpdated",
+        "ConditionDeactivated",
+        // CSTD-35 (Intervention & Recovery). Dot-case as Workflow publishes it; Identity reads the same
+        // event for the client-safe "back on track" notification.
+        "intervention.recovered",
+        // CSTD-27/28 (Documents), published by the Documents service since it moved to Kafka
+        EventTypes.DocumentUploaded,
+        EventTypes.DocumentVerified,
+        EventTypes.DocumentVerificationRejected,
+        EventTypes.DocumentMetadataUpdated,
+        EventTypes.DocumentSoftDeleted
     };
 
     private readonly KafkaOptions _kafkaOptions;
@@ -77,6 +105,7 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
         {
             using var consumer = new ConsumerBuilder<string, string>(config).Build();
             consumer.Subscribe(_kafkaOptions.Topic);
+            var consecutiveFailures = 0;
             _logger.LogInformation("Subscribed to Kafka topic: {Topic} as group {GroupId}", _kafkaOptions.Topic, _kafkaOptions.GroupId);
 
             while (!stoppingToken.IsCancellationRequested)
@@ -89,11 +118,24 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
                         continue;
                     }
 
-                    await ProcessMessageAsync(consumeResult.Message.Value, stoppingToken);
-
                     // Commit offset only after successful handling (at-least-once delivery;
                     // RecordEventAsync's idempotency check is what makes redelivery safe).
-                    consumer.Commit(consumeResult);
+                    if (await HandleAsync(consumeResult.Message.Value, stoppingToken))
+                    {
+                        consumer.Commit(consumeResult);
+                        consecutiveFailures = 0;
+                    }
+                    else
+                    {
+                        // Not committed: rewind so the event is recorded later instead of lost.
+                        consecutiveFailures++;
+                        var delay = RetryDelay(consecutiveFailures);
+                        _logger.LogWarning(
+                            "Retrying Kafka message at {TopicPartitionOffset} in {Delay} (attempt {Attempt}); offset not committed.",
+                            consumeResult.TopicPartitionOffset, delay, consecutiveFailures);
+                        consumer.Seek(consumeResult.TopicPartitionOffset);
+                        await Task.Delay(delay, stoppingToken);
+                    }
                 }
                 catch (ConsumeException ex)
                 {
@@ -117,6 +159,34 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
         }
     }
 
+    /// <summary>Delay before retrying a message that failed: 1s, 2s, 4s ... capped at 60s.</summary>
+    public static TimeSpan RetryDelay(int consecutiveFailures) =>
+        TimeSpan.FromSeconds(Math.Min(60, Math.Pow(2, Math.Clamp(consecutiveFailures, 1, 7) - 1)));
+
+    /// <summary>
+    /// Handles one message. True when it is done (recorded, a duplicate, or deliberately skipped) and its
+    /// offset may be committed; false when recording failed (e.g. database unavailable) and the message
+    /// must be retried. Previously every failure was committed, so the audit event was silently lost.
+    /// </summary>
+    public async Task<bool> HandleAsync(string messageJson, CancellationToken ct = default)
+    {
+        try
+        {
+            await ProcessMessageAsync(messageJson, ct);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Failed to record Kafka audit event; it will be retried.");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Records one message. Malformed messages and events the service rejects as invalid (missing
+    /// fields, bad payload, another tenant's id or chain) are logged and skipped: retrying cannot fix
+    /// them. Any other failure is thrown so the message is retried.
+    /// </summary>
     public async Task ProcessMessageAsync(string messageJson, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(messageJson))
@@ -124,9 +194,11 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
             return;
         }
 
+        KafkaEnvelope? envelope;
+        EngagementEventPayload enrichedPayload;
         try
         {
-            var envelope = JsonSerializer.Deserialize<KafkaEnvelope>(messageJson, new JsonSerializerOptions
+            envelope = JsonSerializer.Deserialize<KafkaEnvelope>(messageJson, new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
             });
@@ -139,41 +211,45 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
 
             // This topic is shared with other consumers (e.g. Identity's notification
             // consumer reads the same stream for different event types) — only handle
-            // the event types Workflow publishes for engagement audit tracking.
+            // the event types published for engagement audit tracking.
             if (!HandledEventTypes.Contains(envelope.EventType))
             {
                 return;
             }
 
-            var enrichedPayload = envelope.ReadPayload<EngagementEventPayload>();
-            var tenantId = ResolveTenantId(envelope.TenantId);
-            var eventId = Guid.TryParse(envelope.EventId, out var parsedEventId) ? parsedEventId : (Guid?)null;
+            enrichedPayload = envelope.ReadPayload<EngagementEventPayload>();
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            _logger.LogWarning(ex, "Discarding malformed Kafka audit message.");
+            return;
+        }
 
-            var request = new CreateAuditEventRequest
-            {
-                EventId = eventId,
-                EngagementId = enrichedPayload.EngagementId,
-                TenantId = tenantId,
-                Actor = enrichedPayload.Actor,
-                Type = envelope.EventType,
-                Payload = JsonSerializer.Serialize(enrichedPayload.Data)
-            };
+        var tenantId = ResolveTenantId(envelope.TenantId);
+        var eventId = Guid.TryParse(envelope.EventId, out var parsedEventId) ? parsedEventId : (Guid?)null;
 
-            using var scope = _scopeFactory.CreateScope();
-            var eventService = scope.ServiceProvider.GetRequiredService<IAuditEventService>();
+        var request = new CreateAuditEventRequest
+        {
+            EventId = eventId,
+            EngagementId = enrichedPayload.EngagementId,
+            TenantId = tenantId,
+            Actor = enrichedPayload.Actor,
+            Type = envelope.EventType,
+            Payload = JsonSerializer.Serialize(enrichedPayload.Data)
+        };
+
+        using var scope = _scopeFactory.CreateScope();
+        var eventService = scope.ServiceProvider.GetRequiredService<IAuditEventService>();
+        try
+        {
             await eventService.RecordEventAsync(request, tenantId);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is ArgumentException or Custodian.Audit.Repositories.AuditChainConflictException)
         {
-            _logger.LogError(ex, "Failed to process Kafka audit envelope message");
+            _logger.LogWarning(ex, "Discarding invalid {EventType} audit event {EventId}.", envelope.EventType, envelope.EventId);
         }
     }
 
-    /// <summary>
-    /// Mirrors AuditEventsController.StringToGuid: envelope.TenantId is a plain
-    /// string that may or may not be a real Guid, so parse it if possible, else
-    /// deterministically hash it into one (same fallback the HTTP path already uses).
-    /// </summary>
     private static Guid ResolveTenantId(string tenantId)
     {
         if (Guid.TryParse(tenantId, out var parsed))

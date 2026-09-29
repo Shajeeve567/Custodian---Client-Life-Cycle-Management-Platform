@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'backend/src/services/Identity/**'
+      # Shared auth/messaging code is compiled into every service
+      - 'backend/src/shared/**'
       - '.github/workflows/deploy-identity.yml'
 
 jobs:
@@ -27,8 +29,9 @@ jobs:
       - name: Build
         run: dotnet build backend/src/services/Identity --no-restore --configuration Release
 
+      # The service project has no tests; run its test project (it also builds the service).
       - name: Test
-        run: dotnet test backend/src/services/Identity --no-build --configuration Release --verbosity normal
+        run: dotnet test backend/tests/Identity.Tests --configuration Release --verbosity normal
 
       - name: Publish
         run: dotnet publish backend/src/services/Identity --configuration Release --output ./publish/identity

@@ -117,3 +117,15 @@ Docker Compose provides the main supporting infrastructure for local development
 * Backend services
 
 Developers can run and test individual services while making changes on their feature branches.
+
+### Kafka is required for the full flow
+
+Workflow and Documents publish their events to Kafka (`Audit:Transport=Kafka` in `appsettings.json`). Audit records them, Identity turns client-facing ones into notifications, and Workflow's consumer applies document verification results to the linked tasks. When running services with `dotnet run`, start a broker first:
+
+```bash
+docker compose up -d kafka kafka-ui
+```
+
+Without a broker, each event fails after the producer timeout (about 10 seconds, which also delays the request that produced it) and is logged as an error. Each service logs its audit transport and allowed CORS origins at startup; check those lines first when events or browser calls go missing. `Audit__Transport=Http` (with `AuditIngestion__ApiKey` set on Audit and the publisher) still records audit events without Kafka, but notifications and document sync then receive nothing.
+
+In Development any browser origin is allowed. Deployed environments must list the frontend origin in `Cors__AllowedOrigins__0` (see `docs/deployment/azure-backend.md`).

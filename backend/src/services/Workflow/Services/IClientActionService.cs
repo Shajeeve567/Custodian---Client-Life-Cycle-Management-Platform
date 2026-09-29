@@ -1,4 +1,5 @@
 using Custodian.Workflow.DTOs;
+using Custodian.Workflow.Models;
 
 namespace Custodian.Workflow.Services;
 
@@ -6,11 +7,43 @@ public interface IClientActionService
 {
     Task<IEnumerable<ClientActionResponseDto>> GetActionsByEngagementAsync(Guid engagementId, string tenantId, bool isClientView, string? statusFilter = null);
     Task<ClientActionResponseDto> CreateActionAsync(Guid engagementId, string tenantId, CreateClientActionDto dto);
+    Task<ClientAction> CreateLinkedActionAsync(Guid engagementId, string tenantId, CreateLinkedActionDto dto);
+    Task<ClientAction> CreateLinkedActionAsync(
+        Guid engagementId,
+        string tenantId,
+        string sourceType,
+        Guid sourceId,
+        string title,
+        string? description = null,
+        string? type = null,
+        int stageNumber = 1,
+        DateTime? deadlineUtc = null,
+        string? assignedToRole = "Client",
+        bool isInternalOnly = false,
+        string? sourceMetadata = null);
+    Task CancelActionsForSourceAsync(Guid engagementId, string tenantId, string sourceType, Guid sourceId, string actor, string reason);
+    /// <summary>
+    /// Why a Client may not complete this action directly, or null when it may (or the action does not
+    /// exist, which CompleteActionAsync reports as 404). Clients complete only their own plain tasks:
+    /// staff/internal tasks, evidence tasks (need staff verification) and condition tasks are refused.
+    /// </summary>
+    Task<string?> GetClientCompletionBlockReasonAsync(Guid engagementId, Guid actionId, string tenantId);
+
+    /// <summary>
+    /// Why a client cannot act on this task YET, or null when they can: the engagement has not been
+    /// started, or the task's stage has not been reached (no ActivatedAt). Staff are not subject to it.
+    /// </summary>
+    Task<string?> GetClientAvailabilityBlockReasonAsync(Guid engagementId, Guid actionId, string tenantId);
     Task<ClientActionResponseDto?> CompleteActionAsync(Guid engagementId, Guid actionId, string tenantId, CompleteClientActionDto dto);
     Task<ClientActionResponseDto?> UploadEvidenceAsync(Guid engagementId, Guid actionId, string tenantId, UploadActionEvidenceDto dto);
     Task<ClientActionResponseDto?> ReviewActionAsync(Guid engagementId, Guid actionId, string tenantId, ReviewActionDto dto);
     Task<ClientActionResponseDto?> ApplyVerificationOutcomeAsync(Guid engagementId, Guid actionId, string tenantId, ApplyActionVerificationDto dto);
-    Task<List<ClientActionResponseDto>> EnsureLifecycleActionsAsync(Guid engagementId, string tenantId);
+    /// <summary>What <see cref="ApplyStandardChecklistAsync"/> would add right now, without saving anything.</summary>
+    Task<List<ClientActionResponseDto>?> PreviewStandardChecklistAsync(Guid engagementId, string tenantId);
+    Task<List<ClientActionResponseDto>?> ApplyStandardChecklistAsync(Guid engagementId, string tenantId, string actor);
+    Task<ClientActionResponseDto?> UpdateActionAsync(Guid engagementId, Guid actionId, string tenantId, UpdateClientActionDto dto, string actor);
+    Task<ClientActionResponseDto?> CancelActionAsync(Guid engagementId, Guid actionId, string tenantId, string reason, string actor);
+    Task ActivateStageActionsAsync(Guid engagementId, string tenantId, int stageNumber);
 
     /// <summary>
     /// IDOR protection (CSTD-22 fix, extended here): confirms the engagement identified by

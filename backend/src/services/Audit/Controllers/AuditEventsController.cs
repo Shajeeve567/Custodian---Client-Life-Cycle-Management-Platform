@@ -1,8 +1,13 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
+using Custodian.Shared.Messaging;
 using Custodian.Audit.DTOs;
 using Custodian.Audit.Services;
+using Custodian.Audit.Services.EngagementAccess;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace Custodian.Audit.Controllers;
 
@@ -12,21 +17,67 @@ namespace Custodian.Audit.Controllers;
 [Route("api/events")]
 public class AuditEventsController : ControllerBase
 {
-    private readonly IAuditEventService _eventService;
+    private const string EngagementNotFound = "Engagement not found.";
 
-    public AuditEventsController(IAuditEventService eventService)
+    private readonly IAuditEventService _eventService;
+    private readonly AuditIngestionOptions _ingestion;
+    private readonly IEngagementAccessClient? _engagementAccess;
+
+    public AuditEventsController(
+        IAuditEventService eventService,
+        IOptions<AuditIngestionOptions>? ingestionOptions = null,
+        IEngagementAccessClient? engagementAccess = null)
     {
         _eventService = eventService;
+        _ingestion = ingestionOptions?.Value ?? new AuditIngestionOptions();
+        _engagementAccess = engagementAccess;
+    }
+
+    /// <summary>
+    /// Staff (not Owners) only see the audit trail of engagements they are the responsible staff for;
+    /// Workflow owns that assignment and is asked as the caller.
+    /// </summary>
+    private bool IsAssignmentRestricted => User?.IsInRole("Staff") == true && User?.IsInRole("Owner") != true;
+
+    private static ObjectResult AccessUnavailable() => new(new
+    {
+        message = "Unable to confirm access to this engagement right now. Please try again shortly."
+    }) { StatusCode = StatusCodes.Status503ServiceUnavailable };
+
+    /// <summary>Null when the caller may read the engagement's trail; 404 when hidden; 503 when unconfirmed (fail closed).</summary>
+    private async Task<ActionResult?> EnsureCanReadEngagementAsync(Guid engagementId, Guid tenantId)
+    {
+        if (!IsAssignmentRestricted) return null;
+        if (_engagementAccess is null) return AccessUnavailable();
+
+        try
+        {
+            var allowed = await _engagementAccess.CanAccessEngagementAsync(engagementId, tenantId, HttpContext?.RequestAborted ?? default);
+            return allowed ? null : NotFound(new { message = EngagementNotFound });
+        }
+        catch (EngagementAccessUnavailableException)
+        {
+            return AccessUnavailable();
+        }
     }
 
     /// <summary>
     /// Ingests a new append-only domain event.
     /// </summary>
     [HttpPost]
+    [AllowAnonymous] // authenticated by the service ingestion key below, not by a user token
     public async Task<ActionResult<AuditEventResponse>> CreateEvent(
         [FromBody] CreateAuditEventRequest request,
         [FromQuery] string? tenantId)
     {
+        // Only services may write to the tamper-evident log. A user token (any role) is not enough:
+        // otherwise anyone signed in could append forged events to an engagement's chain.
+        if (!HasValidIngestionKey())
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new { message = "Audit events can only be written by Custodian services." });
+        }
+
         var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId, request.TenantId);
         if (isForbidden)
         {
@@ -47,11 +98,17 @@ public class AuditEventsController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
+        catch (Custodian.Audit.Repositories.AuditChainConflictException ex)
+        {
+            // The event id or the engagement's chain belongs to another tenant.
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     /// <summary>
     /// Gets all audit events for a specific engagement within the caller's tenant.
     /// </summary>
+    [Authorize(Roles = "Owner,Staff")] // staff only; Staff further limited to engagements they are responsible for
     [HttpGet("engagement/{engagementId:guid}")]
     public async Task<ActionResult<IEnumerable<AuditEventResponse>>> GetEventsByEngagement(
         Guid engagementId,
@@ -68,15 +125,29 @@ public class AuditEventsController : ControllerBase
             return BadRequest(new { message = "Tenant ID could not be resolved from JWT claim or query parameters." });
         }
 
+        var denied = await EnsureCanReadEngagementAsync(engagementId, effectiveTenantId);
+        if (denied != null)
+        {
+            return denied;
+        }
+
         var results = await _eventService.GetEventsByEngagementAsync(engagementId, effectiveTenantId);
         return Ok(results);
     }
 
     /// <summary>
-    /// Verifies the cryptographic SHA-256 hash chain for the caller's tenant.
+    /// Verifies the SHA-256 hash chain for a single engagement within the caller's
+    /// tenant. Chains are scoped per (tenant, engagement), so each engagement
+    /// starts from genesis independently. Any mismatch — payload edit, actor
+    /// change, timestamp tamper, previous-hash substitution — breaks verification
+    /// at the first bad event.
     /// </summary>
+    [Authorize(Roles = "Owner,Staff")] // staff only; Staff further limited to engagements they are responsible for
     [HttpGet("verify")]
-    public async Task<ActionResult> VerifyChain([FromQuery] string? tenantId)
+    public async Task<ActionResult<ChainVerificationResult>> VerifyChain(
+        [FromQuery] Guid engagementId,
+        [FromQuery] string? tenantId
+    )
     {
         var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
         if (isForbidden)
@@ -86,16 +157,28 @@ public class AuditEventsController : ControllerBase
 
         if (effectiveTenantId == Guid.Empty)
         {
-            return BadRequest(new { message = "Tenant ID could not be resolved." });
+            return BadRequest(new { message = "Tenant ID could not be resolved" });
         }
 
-        var events = (await _eventService.GetEventsByTenantAsync(effectiveTenantId)).ToList();
-        return Ok(new { isVerified = true, count = events.Count });
+        if (engagementId == Guid.Empty)
+        {
+            return BadRequest(new { message = "engagementId is required" });
+        }
+
+        var denied = await EnsureCanReadEngagementAsync(engagementId, effectiveTenantId);
+        if (denied != null)
+        {
+            return denied;
+        }
+
+        var result = await _eventService.VerifyChainAsync(effectiveTenantId, engagementId);
+        return Ok(result);
     }
 
     /// <summary>
     /// Gets a single audit event by ID within the caller's tenant.
     /// </summary>
+    [Authorize(Roles = "Owner,Staff")] // staff only; Staff further limited to engagements they are responsible for
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<AuditEventResponse>> GetEventById(
         Guid id,
@@ -118,12 +201,24 @@ public class AuditEventsController : ControllerBase
             return NotFound(new { message = $"Audit event with ID '{id}' was not found for tenant '{effectiveTenantId}'." });
         }
 
+        // An event of an engagement the caller may not open is reported as not found.
+        var denied = await EnsureCanReadEngagementAsync(result.EngagementId, effectiveTenantId);
+        if (denied is NotFoundObjectResult)
+        {
+            return NotFound(new { message = $"Audit event with ID '{id}' was not found for tenant '{effectiveTenantId}'." });
+        }
+        if (denied != null)
+        {
+            return denied;
+        }
+
         return Ok(result);
     }
 
     /// <summary>
     /// Gets all audit events for the caller's tenant.
     /// </summary>
+    [Authorize(Roles = "Owner,Staff")] // staff only; Staff further limited to engagements they are responsible for
     [HttpGet]
     public async Task<ActionResult<IEnumerable<AuditEventResponse>>> GetEvents(
         [FromQuery] string? tenantId)
@@ -140,7 +235,25 @@ public class AuditEventsController : ControllerBase
         }
 
         var results = await _eventService.GetEventsByTenantAsync(effectiveTenantId);
-        return Ok(results);
+        if (!IsAssignmentRestricted)
+        {
+            return Ok(results);
+        }
+
+        if (_engagementAccess is null)
+        {
+            return AccessUnavailable();
+        }
+
+        try
+        {
+            var visible = await _engagementAccess.GetAccessibleEngagementIdsAsync(effectiveTenantId, HttpContext?.RequestAborted ?? default);
+            return Ok(results.Where(e => visible.Contains(e.EngagementId)).ToList());
+        }
+        catch (EngagementAccessUnavailableException)
+        {
+            return AccessUnavailable();
+        }
     }
 
     /// <summary>
@@ -148,6 +261,24 @@ public class AuditEventsController : ControllerBase
     /// Strictly rejects cross-tenant requests where a caller specifies a different tenant ID than their JWT claim.
     /// Falls back to request header/query parameter only in unauthenticated test mock contexts.
     /// </summary>
+    private bool HasValidIngestionKey()
+    {
+        if (!AuditIngestion.IsUsableKey(_ingestion.ApiKey))
+        {
+            return false; // fail closed when no real key is configured (blank, short or placeholder)
+        }
+
+        var supplied = Request?.Headers[AuditIngestion.HeaderName].ToString();
+        if (string.IsNullOrEmpty(supplied))
+        {
+            return false;
+        }
+
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(supplied),
+            Encoding.UTF8.GetBytes(_ingestion.ApiKey!));
+    }
+
     private (Guid TenantId, bool IsForbidden) TryResolveTenantId(string? tenantIdQuery = null, params Guid?[] fallbackTenantIds)
     {
         var claim = User?.FindFirst("tenant_id") ?? User?.FindFirst("tenantId");
@@ -155,7 +286,6 @@ public class AuditEventsController : ControllerBase
         {
             var jwtTenantGuid = StringToGuid(claim.Value.Trim());
 
-            // Check if query parameter conflicts with JWT claim
             if (!string.IsNullOrWhiteSpace(tenantIdQuery))
             {
                 var queryTenantGuid = StringToGuid(tenantIdQuery.Trim());
@@ -165,7 +295,6 @@ public class AuditEventsController : ControllerBase
                 }
             }
 
-            // Check if header conflicts with JWT claim
             if (Request?.Headers.TryGetValue("X-Tenant-Id", out var tenantHeader) == true && !string.IsNullOrWhiteSpace(tenantHeader.ToString()))
             {
                 var headerTenantGuid = StringToGuid(tenantHeader.ToString().Trim());
@@ -175,7 +304,6 @@ public class AuditEventsController : ControllerBase
                 }
             }
 
-            // Check if explicit fallback (e.g. from body payload) conflicts with JWT claim
             foreach (var fallback in fallbackTenantIds)
             {
                 if (fallback.HasValue && fallback.Value != Guid.Empty && fallback.Value != jwtTenantGuid)

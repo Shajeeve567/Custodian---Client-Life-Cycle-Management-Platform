@@ -85,6 +85,45 @@ public class RequirementServiceTests
     }
 
     [Fact]
+    public async Task RequestRequirementAsync_EventCarriesClientIdTitleAndAssignee_ForClientNotification()
+    {
+        // H2: Identity needs clientId to address the "document requested" notification.
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        const string tenantId = "tenant-001";
+        db.Engagements.Add(new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            ClientId = "client-7",
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.DocumentCollection
+        });
+        await db.SaveChangesAsync();
+
+        object? payload = null;
+        var auditPublisher = new Mock<IAuditPublisher>();
+        auditPublisher
+            .Setup(a => a.PublishEventAsync(engagementId, tenantId, It.IsAny<string>(), "RequirementRequested", It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, _, p) => payload = p)
+            .Returns(Task.CompletedTask);
+        var service = new RequirementService(db, auditPublisher.Object);
+
+        await service.RequestRequirementAsync(engagementId, tenantId, new RequestRequirementDto
+        {
+            Type = "SourceOfFunds",
+            Title = "Bank statement",
+            AssignedToRole = "Client"
+        });
+
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(payload);
+        Assert.Equal("client-7", json.GetProperty("clientId").GetString());
+        Assert.Equal("Bank statement", json.GetProperty("title").GetString());
+        Assert.Equal("Client", json.GetProperty("assignedToRole").GetString());
+    }
+
+    [Fact]
     public async Task RequestRequirementAsync_PublishesRequirementRequestedEvent_WithoutValue()
     {
         // Arrange
@@ -429,7 +468,8 @@ public class RequirementServiceTests
             EngagementId = engagementId,
             TenantId = tenantId,
             ClientId = "client-owner",
-            StaffId = "staff-1"
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started
         });
         await db.SaveChangesAsync();
         var requested = await service.RequestRequirementAsync(engagementId, tenantId, new RequestRequirementDto { Type = "SourceOfFunds" });
@@ -443,6 +483,70 @@ public class RequirementServiceTests
         Assert.NotNull(result);
         Assert.Equal(RequirementStatus.Submitted, result!.Status);
         Assert.Equal("Salary income", result.Value);
+    }
+
+    [Theory]
+    [InlineData(EngagementStatus.Draft, 1)]   // engagement not started
+    [InlineData(EngagementStatus.Started, 3)] // requirement for a later stage
+    public async Task SubmitRequirementAsync_ClientBeforeTheStageStarts_IsRefused(EngagementStatus status, int stage)
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        const string tenantId = "tenant-001";
+        var service = new RequirementService(db, new Mock<IAuditPublisher>().Object);
+        db.Engagements.Add(new Engagement { EngagementId = engagementId, TenantId = tenantId, ClientId = "client-owner", StaffId = "staff-1", Status = status });
+        await db.SaveChangesAsync();
+        var requested = await service.RequestRequirementAsync(engagementId, tenantId, new RequestRequirementDto { Type = "SourceOfFunds", StageNumber = stage });
+
+        await Assert.ThrowsAsync<ClientActionNotAvailableException>(() => service.SubmitRequirementAsync(
+            engagementId, requested.RequirementId, tenantId, new SubmitRequirementDto { Value = "Salary" }, callerClientId: "client-owner"));
+
+        // Staff can still record an answer on the client's behalf.
+        var staffResult = await service.SubmitRequirementAsync(engagementId, requested.RequirementId, tenantId, new SubmitRequirementDto { Value = "Salary" });
+        Assert.NotNull(staffResult);
+    }
+
+    [Theory]
+    [InlineData(EngagementStatus.Draft, 1, false)]
+    [InlineData(EngagementStatus.Started, 1, true)]
+    [InlineData(EngagementStatus.Started, 2, false)]
+    public async Task RequestRequirementAsync_MirroredTaskIsActiveOnlyOnceItsStageHasStarted(EngagementStatus status, int stage, bool expectActive)
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        db.Engagements.Add(new Engagement { EngagementId = engagementId, TenantId = "tenant-001", ClientId = "c1", StaffId = "s1", Status = status, Stage = EngagementStage.Onboarding });
+        await db.SaveChangesAsync();
+
+        var requested = await new RequirementService(db, new Mock<IAuditPublisher>().Object)
+            .RequestRequirementAsync(engagementId, "tenant-001", new RequestRequirementDto { Type = "SourceOfFunds", StageNumber = stage });
+
+        var mirrored = await db.ClientActions.SingleAsync(a => a.LinkedRequirementId == requested.RequirementId);
+        Assert.Equal(expectActive, mirrored.ActivatedAt.HasValue);
+    }
+
+    [Fact]
+    public async Task ReviewRequirementAsync_PublishesRequirementReviewed_WithDecisionAndReason()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        db.Engagements.Add(new Engagement { EngagementId = engagementId, TenantId = "tenant-001", ClientId = "c1", StaffId = "s1", Status = EngagementStatus.Started });
+        await db.SaveChangesAsync();
+        object? reviewed = null;
+        var audit = new Mock<IAuditPublisher>();
+        audit.Setup(a => a.PublishEventAsync(engagementId, "tenant-001", "staff-9", "RequirementReviewed", It.IsAny<object>()))
+            .Callback<Guid, string, string, string, object>((_, _, _, _, p) => reviewed = p)
+            .Returns(Task.CompletedTask);
+        var service = new RequirementService(db, audit.Object);
+        var requested = await service.RequestRequirementAsync(engagementId, "tenant-001", new RequestRequirementDto { Type = "SourceOfFunds", Title = "Source of funds?" });
+        await service.SubmitRequirementAsync(engagementId, requested.RequirementId, "tenant-001", new SubmitRequirementDto { Value = "Salary" });
+
+        await service.ReviewRequirementAsync(engagementId, requested.RequirementId, "tenant-001",
+            new ReviewRequirementDto { Status = RequirementReviewStatus.Rejected, ReviewerActor = "staff-9", RejectionReason = "Please give the employer's name." });
+
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(reviewed);
+        Assert.Equal("Source of funds?", json.GetProperty("title").GetString());
+        Assert.Equal(RequirementStatus.Rejected, json.GetProperty("decision").GetString());
+        Assert.Equal("Please give the employer's name.", json.GetProperty("rejectionReason").GetString());
     }
 
     [Fact]

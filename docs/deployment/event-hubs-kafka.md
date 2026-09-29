@@ -88,6 +88,17 @@ Kafka__SaslUsername=$ConnectionString
 Kafka__SaslPassword=<EVENT_HUBS_CONNECTION_STRING>
 ```
 
+### Workflow Service (Document Events Consumer)
+
+Workflow also consumes document verification events (`document.verified`, `document.verification_rejected`) to update the linked client action (CSTD-19, 19-N5). It reuses the producer's broker and SASL variables above and adds:
+
+```bash
+Kafka__ConsumerEnabled=false   # set to true once the Documents service publishes to Kafka
+Kafka__GroupId=custodian-workflow
+```
+
+> The Documents service currently sends these events to Audit over HTTP only, so the consumer ships disabled. Until Documents publishes to Kafka, the frontend dual call (Documents verify/reject, then Workflow `applyVerification`) remains the live path.
+
 ### Audit Service (Consumer)
 
 Set the following runtime environment variables when running the Audit service:

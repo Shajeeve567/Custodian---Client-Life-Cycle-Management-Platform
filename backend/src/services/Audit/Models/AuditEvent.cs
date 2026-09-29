@@ -36,7 +36,7 @@ public class AuditEvent
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
 
     [Required]
-    [Column("payload", TypeName = "json")]
+    [Column("payload", TypeName = "longtext")]
     public string Payload { get; set; } = "{}";
 
     [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
@@ -46,4 +46,13 @@ public class AuditEvent
     [Column("hash")]
     [MaxLength(64)]
     public string? Hash { get; set; }
+
+    /// <summary>
+    /// Hash of the immediately preceding event in the same tenant's chain,
+    /// or the genesis constant for the tenant's first event.
+    /// Immutable after insert.
+    /// </summary>
+    [Column("previous_hash")]
+    [MaxLength(64)]
+    public string? PreviousHash { get; set; }
 }

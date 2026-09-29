@@ -78,6 +78,9 @@ namespace Audit.Data.Migrations
 
                     b.HasKey("EventId");
 
+                    b.HasIndex(new[] { "SequenceNumber" }, "idx_sequence_number")
+                        .IsUnique();
+
                     b.HasIndex(new[] { "EngagementId" }, "idx_engagement_id");
 
                     b.HasIndex(new[] { "TenantId", "EngagementId" }, "idx_tenant_engagement");

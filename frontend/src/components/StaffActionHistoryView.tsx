@@ -89,17 +89,29 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
         }
     };
 
-    const getStatusBadge = (status: string) => {
-        switch (status.toLowerCase()) {
-            case 'completed':
-                return <span className="action-badge badge-completed">✓ Completed</span>;
-            case 'pending':
-                return <span className="action-badge badge-pending">⏳ Pending</span>;
-            case 'overdue':
-                return <span className="action-badge badge-overdue">⚠ Overdue</span>;
-            default:
-                return <span className="action-badge badge-default">{status}</span>;
-        }
+    const getStatusBadge = (status: string, deadlineUtc?: string | null) => {
+        const isOverdue = deadlineUtc && new Date(deadlineUtc) < new Date() && status.toLowerCase() !== 'completed' && status.toLowerCase() !== 'cancelled';
+        return (
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                {isOverdue && <span className="action-badge badge-overdue">⚠ Overdue</span>}
+                {(() => {
+                    switch (status.toLowerCase()) {
+                        case 'completed':
+                            return <span className="action-badge badge-completed">✓ Completed</span>;
+                        case 'uploaded':
+                            return <span className="action-badge badge-uploaded">📤 Uploaded</span>;
+                        case 'pending':
+                            return <span className="action-badge badge-pending">⏳ Pending</span>;
+                        case 'rejected':
+                            return <span className="action-badge badge-rejected">✕ Rejected</span>;
+                        case 'cancelled':
+                            return <span className="action-badge badge-cancelled">🚫 No longer required</span>;
+                        default:
+                            return <span className="action-badge badge-default">{status}</span>;
+                    }
+                })()}
+            </div>
+        );
     };
 
     const formatMetadata = (jsonString?: string) => {
@@ -152,7 +164,10 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
                         >
                             <option value="All">All Actions</option>
                             <option value="Pending">Pending</option>
+                            <option value="Uploaded">Uploaded</option>
                             <option value="Completed">Completed</option>
+                            <option value="Rejected">Rejected</option>
+                            <option value="Cancelled">Cancelled</option>
                         </select>
                     </div>
 
@@ -196,11 +211,13 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
                         <div
                             key={action.actionId}
                             className={`action-card ${action.isInternalOnly ? 'internal-card' : ''
-                                } ${action.status === 'Completed' ? 'completed-card' : ''}`}
+                                } ${action.status === 'Completed' ? 'completed-card' : ''
+                                } ${action.status === 'Cancelled' ? 'cancelled-card' : ''}`}
                         >
                             <div className="action-card-header">
                                 <div className="action-title-group">
                                     <span className="action-type-tag">{action.type}</span>
+                                    <span className="action-source-tag">{action.sourceType || 'Manual'}</span>
                                     <h3 className="action-item-title">{action.title}</h3>
                                     {action.isInternalOnly && (
                                         <span className="internal-only-badge">🔒 Staff Internal</span>
@@ -213,7 +230,7 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
                                     {action.verificationStatus === 'Rejected' && (
                                         <span className="action-badge badge-rejected">✕ Rejected</span>
                                     )}
-                                    {getStatusBadge(action.status)}
+                                    {getStatusBadge(action.status, action.deadlineUtc)}
                                 </div>
                             </div>
 
@@ -230,12 +247,12 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
                             {/* Action Meta Info */}
                             <div className="action-meta-footer">
                                 <div className="meta-col">
-                                    <span className="meta-label">Source Step:</span>
-                                    <span className="meta-value">{action.source}</span>
+                                    <span className="meta-label">Source:</span>
+                                    <span className="meta-value">{action.sourceType || 'Manual'} ({action.source})</span>
                                 </div>
                                 <div className="meta-col">
                                     <span className="meta-label">Assigned Role:</span>
-                                    <span className="meta-value">{action.assignedToRole}</span>
+                                    <span className="meta-value">{action.assignedToRole || 'Client'}</span>
                                 </div>
                                 <div className="meta-col">
                                     <span className="meta-label">Created:</span>
@@ -243,6 +260,22 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
                                         {new Date(action.createdAt).toLocaleString()}
                                     </span>
                                 </div>
+                                {action.activatedAt && (
+                                    <div className="meta-col">
+                                        <span className="meta-label">Activated:</span>
+                                        <span className="meta-value">
+                                            {new Date(action.activatedAt).toLocaleString()}
+                                        </span>
+                                    </div>
+                                )}
+                                {action.deadlineUtc && (
+                                    <div className="meta-col">
+                                        <span className="meta-label">Deadline:</span>
+                                        <span className="meta-value">
+                                            {new Date(action.deadlineUtc).toLocaleDateString()}
+                                        </span>
+                                    </div>
+                                )}
 
                                 {action.status === 'Completed' && (
                                     <>

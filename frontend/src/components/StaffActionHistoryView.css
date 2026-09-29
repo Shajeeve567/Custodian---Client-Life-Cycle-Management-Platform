@@ -159,6 +159,13 @@
   opacity: 0.92;
 }
 
+.cancelled-card {
+  opacity: 0.6;
+  filter: grayscale(40%);
+  background-color: #172033;
+  border-style: dashed;
+}
+
 .action-card-header {
   display: flex;
   justify-content: space-between;
@@ -181,6 +188,16 @@
   padding: 2px 8px;
   border-radius: 4px;
   text-transform: uppercase;
+}
+
+.action-source-tag {
+  background-color: #1e1b4b;
+  color: #a5b4fc;
+  border: 1px solid #4338ca;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
 }
 
 .action-item-title {
@@ -209,6 +226,16 @@
 .badge-completed {
   background-color: #064e3b;
   color: #34d399;
+}
+
+.badge-uploaded {
+  background-color: #1e3a8a;
+  color: #93c5fd;
+}
+
+.badge-cancelled {
+  background-color: #334155;
+  color: #94a3b8;
 }
 
 .badge-pending {
