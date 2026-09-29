@@ -163,49 +163,166 @@ public class EventToClientSafeMessageMapperTests
         Assert.Contains("Identity Verification Step", result.Message);
     }
 
-    [Fact]
-    public void Map_InterventionRecovered_ShouldReturnStageProgressionMessage()
+    // CSTD-35: interventions notify the client only for a positive outcome, with a generic message
+    // (never the staff-only reason).
+    [Theory]
+    [InlineData("Recovered")]
+    [InlineData("Progressing")]
+    public void Map_InterventionRecovered_PositiveOutcome_ShouldReturnBackOnTrackMessage(string outcome)
     {
         var clientId = Guid.NewGuid();
         var envelope = CreateEnvelope("intervention.recovered", new
         {
             clientId,
-            stageName = "Compliance Review"
+            outcome,
+            reason = "Internal: client ignored three emails"
         });
 
         var result = _mapper.MapToClientSafeMessage(envelope);
 
-        Assert.Equal(clientId, result.ClientId);
-        Assert.Contains("Progressing to Next Stage", result.Subject);
-        Assert.Contains("Compliance Review", result.Message);
+        Assert.NotNull(result);
+        Assert.Equal(clientId, result!.ClientId);
+        Assert.Contains("Back on track", result.Subject);
+        Assert.DoesNotContain("ignored", result.Message);
     }
 
-    [Fact]
-    public void Map_UnknownEvent_ShouldReturnSafeGenericMessageWithoutLeakingPayload()
+    [Theory]
+    [InlineData("NoChange")]
+    [InlineData("Escalated")]
+    [InlineData(null)]
+    public void Map_InterventionRecovered_OtherOutcome_IsNotSent(string? outcome)
     {
-        var clientId = Guid.NewGuid();
-        var envelope = CreateEnvelope("internal.system.metric.recorded", new
+        var envelope = CreateEnvelope("intervention.recovered", new { clientId = Guid.NewGuid(), outcome });
+
+        Assert.Null(_mapper.MapToClientSafeMessage(envelope));
+    }
+
+    [Theory]
+    [InlineData("internal.system.metric.recorded")]
+    [InlineData("ClientActionUpdated")]
+    [InlineData("StandardChecklistApplied")]
+    [InlineData("ConditionUpdated")]
+    [InlineData("document.metadata_updated")]
+    [InlineData("Genesis")] // engagement created as a Draft: the client is welcomed when it starts
+    public void Map_NonClientFacingEvent_IsNotSent(string eventType)
+    {
+        var envelope = CreateEnvelope(eventType, new
         {
-            clientId,
+            clientId = Guid.NewGuid(),
             internalMetricId = 9999,
             stackTrace = "secret server information"
         });
 
-        var result = _mapper.MapToClientSafeMessage(envelope);
-
-        Assert.Equal(clientId, result.ClientId);
-        Assert.Equal("Update on your Custodian Engagement", result.Subject);
-        Assert.DoesNotContain("secret server information", result.Message);
-        Assert.Contains("update was made to your onboarding engagement", result.Message);
+        Assert.Null(_mapper.MapToClientSafeMessage(envelope));
     }
 
     [Fact]
-    public void Map_NullEnvelope_ShouldReturnSafeDefaultWithoutThrowing()
+    public void Map_NullEnvelope_ReturnsNullWithoutThrowing()
     {
-        var result = _mapper.MapToClientSafeMessage(null!);
+        Assert.Null(_mapper.MapToClientSafeMessage(null!));
+    }
+
+    // H2: the names Workflow and Documents actually publish, with fields wrapped in EngagementEventPayload.Data.
+    private static KafkaEnvelope Wrapped(string eventType, object data) =>
+        CreateEnvelope(eventType, new EngagementEventPayload(Guid.NewGuid(), "staff-1", JsonSerializer.SerializeToElement(data)));
+
+    [Fact]
+    public void Map_WorkflowRequirementRequested_ForClient_ReturnsRequestMessage()
+    {
+        var clientId = Guid.NewGuid();
+        var result = _mapper.MapToClientSafeMessage(Wrapped("RequirementRequested", new
+        {
+            clientId,
+            title = "Provide: Bank statement",
+            assignedToRole = "Client",
+            requirementType = "BankStatement"
+        }));
 
         Assert.NotNull(result);
-        Assert.Equal("Update on your Custodian Engagement", result.Subject);
-        Assert.Contains("An update was made", result.Message);
+        Assert.Equal(clientId, result!.ClientId);
+        Assert.Contains("Provide: Bank statement", result.Subject);
+    }
+
+    [Fact]
+    public void Map_WorkflowRequirementRequested_ForStaff_IsNotSent()
+    {
+        Assert.Null(_mapper.MapToClientSafeMessage(Wrapped("RequirementRequested", new
+        {
+            clientId = Guid.NewGuid(),
+            title = "Internal review",
+            assignedToRole = "Staff"
+        })));
+    }
+
+    [Theory]
+    [InlineData("Approval", "Approval Required")]
+    [InlineData("Payment", "Payment Condition Update")]
+    public void Map_WorkflowConditionAttached_UsesConditionType(string type, string expectedSubject)
+    {
+        var result = _mapper.MapToClientSafeMessage(Wrapped("ConditionAttached", new
+        {
+            clientId = Guid.NewGuid(),
+            type,
+            title = "Scope sign-off"
+        }));
+
+        Assert.NotNull(result);
+        Assert.Contains(expectedSubject, result!.Subject);
+        Assert.Contains("Scope sign-off", result.Subject);
+    }
+
+    [Fact]
+    public void Map_WorkflowStageChange_ShowsReadableStageName()
+    {
+        var result = _mapper.MapToClientSafeMessage(Wrapped("StageChange", new
+        {
+            clientId = Guid.NewGuid(),
+            fromStage = "Onboarding",
+            toStage = "DocumentCollection"
+        }));
+
+        Assert.NotNull(result);
+        Assert.Contains("Document Collection", result!.Message);
+    }
+
+    [Theory]
+    [InlineData("Started", true)]
+    [InlineData("Closed", false)]
+    [InlineData("Cancelled", false)]
+    public void Map_WorkflowStatusChange_WelcomesOnlyWhenStarted(string toStatus, bool expectWelcome)
+    {
+        var result = _mapper.MapToClientSafeMessage(Wrapped("StatusChange", new
+        {
+            clientId = Guid.NewGuid(),
+            fromStatus = "Draft",
+            toStatus
+        }));
+
+        if (expectWelcome)
+        {
+            Assert.NotNull(result);
+            Assert.Contains("Welcome", result!.Subject);
+        }
+        else
+        {
+            Assert.Null(result);
+        }
+    }
+
+    [Fact]
+    public void Map_DocumentsVerificationRejected_IncludesFileNameAndReason()
+    {
+        var clientId = Guid.NewGuid();
+        var result = _mapper.MapToClientSafeMessage(Wrapped("document.verification_rejected", new
+        {
+            clientId,
+            fileName = "passport.pdf",
+            rejectionReason = "The scan is cut off."
+        }));
+
+        Assert.NotNull(result);
+        Assert.Equal(clientId, result!.ClientId);
+        Assert.Contains("passport.pdf", result.Message);
+        Assert.Contains("The scan is cut off.", result.Message);
     }
 }

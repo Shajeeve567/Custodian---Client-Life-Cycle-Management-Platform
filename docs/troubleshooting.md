@@ -123,19 +123,15 @@ In certain network environments (e.g., enterprise, campus, or firewall-monitored
 
 ---
 
-## 9. Known Deferred Reliability Item: Audit Consumer Offset Commit on Processing Failure
+## 9. Kafka Consumers: Retry Instead of Committing Failed Messages
 
-> **Status:** Known reliability hardening item / deferred to next sprint.
+> **Status:** Fixed (Audit `KafkaAuditEventConsumer` and Workflow `DocumentEventsConsumer`).
 
-**Issue Description:**
-In the current implementation of `KafkaAuditEventConsumer`, the message processing call `ProcessMessageAsync` internally catches general exceptions (`catch (Exception ex)`), logs the error, and returns without rethrowing. As a result, the outer consumption loop in `ExecuteAsync` considers message execution complete and proceeds to call `consumer.Commit(consumeResult)`.
+Both consumers commit a message's offset only when it is done:
 
-**Impact & Risk:**
-If a transient downstream processing failure occurs (such as a temporary Azure MySQL database connection timeout or transient deadlock), the error is logged, but the Kafka consumer offset is still advanced and committed to Azure Event Hubs. Consequently, the affected audit event will not be redelivered or retried by the same consumer group once the database recovers, presenting a risk of missing records in the audit log during outages.
+* **Recorded / applied**, or a **duplicate** (idempotent redelivery): committed.
+* **Cannot succeed on retry** (unparseable JSON, missing ids, an event the service rejects as invalid, or one that conflicts with another tenant's chain): logged at Warning, skipped and committed, so it does not block the partition.
+* **Any other failure** (for example Azure MySQL unavailable or a timeout): logged at Error and **not committed**. The consumer seeks back to the message and retries it after 1s, 2s, 4s … capped at 60s, until it succeeds.
 
-**Current State & Scope:**
-* Basic poison message / malformed JSON handling is present (unparseable envelopes are logged and discarded without crashing the service).
-* Dedicated dead-letter queue (DLQ) behavior and secondary retry topics are not yet implemented.
-* No separate failure topic exists.
-* Remediation (propagating transient DB exceptions, deferring commit, and applying consumer retry/backoff policies) is tracked as a planned reliability hardening item for the upcoming sprint.
+A message that keeps failing therefore holds up its partition (with a log entry every retry) instead of being lost. There is still no dead-letter topic: if a message fails permanently for a reason not listed above, fix the cause or skip it deliberately.
 

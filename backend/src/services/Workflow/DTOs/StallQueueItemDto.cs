@@ -25,7 +25,19 @@ public class StallQueueItemDto
     /// </summary>
     public string NextAction { get; set; } = string.Empty;
 
+    /// <summary>Who owns the next action (Client | Staff) when it comes from the next-action engine; null otherwise.</summary>
+    public string? NextActionResponsibleParty { get; set; }
+
     public DateTime DeadlineUtc { get; set; }
     public int HoursOverdue { get; set; }
+
+    /// <summary>When the engagement's earliest open stall was first detected (persisted stall record).</summary>
+    public DateTime StalledSinceUtc { get; set; }
+
+    /// <summary>Open stall episodes on the engagement.</summary>
+    public int OpenStallCount { get; set; }
+
+    /// <summary>CSTD-34-2: hours overdue x weight (stage-gating blockers weigh more). The queue is sorted by it.</summary>
+    public double UrgencyScore { get; set; }
     public DateTime EvaluatedAtUtc { get; set; }
 }

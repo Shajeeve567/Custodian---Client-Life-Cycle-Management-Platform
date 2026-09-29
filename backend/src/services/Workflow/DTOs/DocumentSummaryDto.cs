@@ -13,5 +13,6 @@ public sealed class DocumentSummaryDto
     public string Type { get; set; } = string.Empty;
     public string ComplianceStatus { get; set; } = string.Empty;
     public string VerificationStatus { get; set; } = string.Empty;
+    public string? RejectionReason { get; set; }
     public bool IsDeleted { get; set; }
 }

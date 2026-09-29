@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { DashboardLayout } from '../components/DashboardLayout';
 import { WorkflowApi, IdentityApi, ApiError } from '../services/api';
-import { StallQueueItem, ClientProfile, UserAccountResponse } from '../types';
+import { StallQueueItem, ClientProfile, UserAccountResponse, EngagementStage } from '../types';
+import { RecordInterventionModal } from '../components/RecordInterventionModal';
 import {
     AlertTriangle,
     Clock,
@@ -26,6 +27,11 @@ function urgencyClasses(hours: number): string {
     return 'bg-slate-50 border-slate-200 text-slate-700';
 }
 
+const STAGES: EngagementStage[] = ['Onboarding', 'DocumentCollection', 'Verification', 'Execution', 'Closure'];
+
+// The backend caps a page at 100; the queue is expected to stay well below that.
+const PAGE_SIZE = 100;
+
 function initials(name: string): string {
     return name
         .split(' ')
@@ -40,12 +46,19 @@ export const StallQueuePage: React.FC = () => {
     const { tenantId, token } = useAuth();
 
     const [items, setItems] = useState<StallQueueItem[]>([]);
+    const [totalCount, setTotalCount] = useState(0);
+    const [mineOnly, setMineOnly] = useState(false);
+    const [stage, setStage] = useState<EngagementStage | ''>('');
     const [clients, setClients] = useState<ClientProfile[]>([]);
     const [team, setTeam] = useState<UserAccountResponse[]>([]);
 
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+
+    // Intervention & recovery state
+    const [interveningOn, setInterveningOn] = useState<StallQueueItem | null>(null);
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         if (!tenantId) return;
@@ -56,14 +69,15 @@ export const StallQueuePage: React.FC = () => {
             // Enrichment fetches are best-effort: if Identity is unreachable,
             // fall back to shortened IDs for display rather than failing the page.
             const [queue, clientList, teamList] = await Promise.all([
-                WorkflowApi.getStallQueue(tenantId),
+                WorkflowApi.getStallQueue(tenantId, { mine: mineOnly, stage, pageSize: PAGE_SIZE }),
                 IdentityApi.getClients(token || undefined).catch(() => [] as ClientProfile[]),
                 token
                     ? IdentityApi.getUsers(token).catch(() => [] as UserAccountResponse[])
                     : Promise.resolve([] as UserAccountResponse[]),
             ]);
 
-            setItems(queue);
+            setItems(queue.items);
+            setTotalCount(queue.totalCount);
             setClients(clientList);
             setTeam(teamList);
             setLastRefreshed(new Date());
@@ -73,7 +87,7 @@ export const StallQueuePage: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [tenantId, token]);
+    }, [tenantId, token, mineOnly, stage]);
 
     useEffect(() => {
         load();
@@ -90,6 +104,9 @@ export const StallQueuePage: React.FC = () => {
     };
 
     const hasItems = items.length > 0;
+
+    // Diagnostic: confirm the modal render path is reachable on this render pass.
+    console.log('[StallQueue] render. interveningOn=', interveningOn, 'tenantId=', tenantId);
 
     return (
         <DashboardLayout>
@@ -120,6 +137,14 @@ export const StallQueuePage: React.FC = () => {
                     </button>
                 </div>
 
+                {/* Success banner */}
+                {successMessage && (
+                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-800 flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>{successMessage}</span>
+                    </div>
+                )}
+
                 {/* Summary KPI cards */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="bg-white/85 backdrop-blur-md p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
@@ -129,7 +154,7 @@ export const StallQueuePage: React.FC = () => {
                                 <AlertTriangle className="w-4 h-4" />
                             </div>
                         </div>
-                        <div className="text-2xl font-bold text-slate-900">{items.length}</div>
+                        <div className="text-2xl font-bold text-slate-900">{totalCount}</div>
                         <p className="text-xs text-slate-500">Awaiting staff intervention</p>
                     </div>
 
@@ -160,6 +185,35 @@ export const StallQueuePage: React.FC = () => {
                         </div>
                         <p className="text-xs text-slate-500">Live data — manual refresh</p>
                     </div>
+                </div>
+
+                {/* Filters */}
+                <div className="flex flex-wrap items-center gap-3">
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer select-none">
+                        <input
+                            type="checkbox"
+                            checked={mineOnly}
+                            onChange={(e) => setMineOnly(e.target.checked)}
+                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        Mine only
+                    </label>
+                    <select
+                        value={stage}
+                        onChange={(e) => setStage(e.target.value as EngagementStage | '')}
+                        aria-label="Filter by stage"
+                        className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700"
+                    >
+                        <option value="">All stages</option>
+                        {STAGES.map((s) => (
+                            <option key={s} value={s}>{s.replace(/([a-z])([A-Z])/g, '$1 $2')}</option>
+                        ))}
+                    </select>
+                    {totalCount > items.length && (
+                        <span className="text-xs text-slate-500">
+                            Showing the {items.length} most urgent of {totalCount}
+                        </span>
+                    )}
                 </div>
 
                 {/* Content */}
@@ -194,7 +248,9 @@ export const StallQueuePage: React.FC = () => {
                         <div>
                             <h3 className="text-base font-bold text-slate-900">All engagements on track</h3>
                             <p className="text-sm text-slate-500 max-w-sm mx-auto mt-1">
-                                No client-facing actions are overdue. This queue populates automatically when an engagement stalls.
+                                {mineOnly || stage
+                                    ? 'No stalled engagements match these filters.'
+                                    : 'No client-facing actions are overdue. This queue populates automatically when an engagement stalls.'}
                             </p>
                         </div>
                     </div>
@@ -209,6 +265,7 @@ export const StallQueuePage: React.FC = () => {
                                         <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Next Action</th>
                                         <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Overdue</th>
                                         <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Responsible Staff</th>
+                                        <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
@@ -240,6 +297,11 @@ export const StallQueuePage: React.FC = () => {
                                                 </td>
                                                 <td className="px-4 py-4 align-top">
                                                     <div className="text-xs text-slate-700 max-w-[240px]">{item.nextAction}</div>
+                                                    {item.nextActionResponsibleParty && (
+                                                        <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mt-0.5">
+                                                            Waiting on {item.nextActionResponsibleParty}
+                                                        </div>
+                                                    )}
                                                 </td>
                                                 <td className="px-4 py-4 align-top">
                                                     <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border ${urgencyClasses(item.hoursOverdue)}`}>
@@ -249,12 +311,28 @@ export const StallQueuePage: React.FC = () => {
                                                     <div className="text-[10px] text-slate-400 mt-1">
                                                         due {new Date(item.deadlineUtc).toLocaleDateString()}
                                                     </div>
+                                                    <div className="text-[10px] text-slate-400">
+                                                        stalled since {new Date(item.stalledSinceUtc).toLocaleString()}
+                                                    </div>
                                                 </td>
                                                 <td className="px-4 py-4 align-top">
                                                     <div className="flex items-center gap-1.5 text-xs text-slate-700">
                                                         <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                                                         <span className="truncate max-w-[160px]">{resolveStaffName(item.staffId)}</span>
                                                     </div>
+                                                </td>
+                                                <td className="px-4 py-4 align-top">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            console.log('[StallQueue] Record Intervention clicked. item=', item);
+                                                            console.log('[StallQueue] tenantId=', tenantId);
+                                                            setInterveningOn(item);
+                                                        }}
+                                                        className="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-xs font-bold transition inline-flex items-center gap-1.5 whitespace-nowrap"
+                                                    >
+                                                        Record Intervention
+                                                    </button>
                                                 </td>
                                             </tr>
                                         );
@@ -265,6 +343,25 @@ export const StallQueuePage: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {/* Intervention modal */}
+            {interveningOn && tenantId && (
+                <RecordInterventionModal
+                    isOpen={!!interveningOn}
+                    onClose={() => setInterveningOn(null)}
+                    onRecorded={() => {
+                        const label = resolveClientName(interveningOn.clientId);
+                        setSuccessMessage(`Intervention recorded for ${label}.`);
+                        setTimeout(() => setSuccessMessage(null), 5000);
+                        load();
+                    }}
+                    tenantId={tenantId}
+                    engagementId={interveningOn.engagementId}
+                    engagementLabel={`${resolveClientName(interveningOn.clientId)} — ENG-${interveningOn.engagementId.slice(0, 6).toUpperCase()}`}
+                    blockerActionId={(interveningOn as any).blockerActionId ?? null}
+                    blockerActionTitle={interveningOn.blockerActionTitle}
+                />
+            )}
         </DashboardLayout>
     );
 };

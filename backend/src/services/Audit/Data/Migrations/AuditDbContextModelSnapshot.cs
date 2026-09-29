@@ -48,7 +48,7 @@ namespace Audit.Data.Migrations
 
                     b.Property<string>("Payload")
                         .IsRequired()
-                        .HasColumnType("json")
+                        .HasColumnType("longtext")
                         .HasColumnName("payload");
 
                     b.Property<string>("PreviousHash")
@@ -94,6 +94,39 @@ namespace Audit.Data.Migrations
                     b.HasIndex(new[] { "Type" }, "idx_type");
 
                     b.ToTable("events", (string)null);
+                });
+
+            modelBuilder.Entity("Custodian.Audit.Models.EngagementChainHead", b =>
+                {
+                    b.Property<Guid>("EngagementId")
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(36)
+                        .HasColumnType("char(36)")
+                        .HasColumnName("engagement_id");
+
+                    b.Property<Guid?>("LastEventId")
+                        .HasMaxLength(36)
+                        .HasColumnType("char(36)")
+                        .HasColumnName("last_event_id");
+
+                    b.Property<string>("LastHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("last_hash");
+
+                    b.Property<Guid>("TenantId")
+                        .HasMaxLength(36)
+                        .HasColumnType("char(36)")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("EngagementId");
+
+                    b.ToTable("engagement_chain_heads", (string)null);
                 });
 #pragma warning restore 612, 618
         }

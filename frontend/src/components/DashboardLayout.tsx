@@ -72,6 +72,16 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                                     >
                                         Stall Queue
                                     </Link>
+                                    <Link
+                                        to="/reports"
+                                        className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition ${
+                                            location.pathname === '/reports'
+                                                ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                                                : 'border-slate-200 hover:bg-slate-50 text-slate-600'
+                                        }`}
+                                    >
+                                        Reports
+                                    </Link>
 
                                     {location.pathname === '/portal' ? (
                                         <Link
@@ -148,6 +158,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                                 <Link to="/stall-queue" className="hover:text-indigo-600 font-medium transition">Stall Queue</Link>
                                 <Link to="/documents" className="hover:text-indigo-600 font-medium transition">Document Vault</Link>
                                 <Link to="/audit" className="hover:text-indigo-600 font-medium transition">Audit Log</Link>
+                                <Link to="/reports" className="hover:text-indigo-600 font-medium transition">Reports</Link>
                             </>
                         )}
                         <span>© 2025 Custodian</span>

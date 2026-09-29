@@ -8,6 +8,71 @@ public static class ClientActionStatus
     public const string Uploaded = "Uploaded";
     public const string Completed = "Completed";
     public const string Rejected = "Rejected";
+    public const string Cancelled = "Cancelled";
+}
+
+public static class ClientActionSourceType
+{
+    public const string Requirement = "Requirement";
+    public const string Document = "Document";
+    public const string Condition = "Condition";
+    public const string Meeting = "Meeting";
+    public const string Lifecycle = "Lifecycle";
+    public const string Manual = "Manual";
+
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        Requirement,
+        Document,
+        Condition,
+        Meeting,
+        Lifecycle,
+        Manual
+    };
+}
+
+public static class ClientActionType
+{
+    public const string DocumentUpload = "DocumentUpload";
+    public const string KycDocument = "KycDocument";
+    public const string SignAgreement = "SignAgreement";
+    public const string ProofOfAddress = "ProofOfAddress";
+    public const string CustomTask = "CustomTask";
+    public const string Requirement = "Requirement";
+    public const string Approval = "Approval";
+    public const string Payment = "Payment";
+    public const string Meeting = "Meeting";
+
+    /// <summary>
+    /// Types whose completion requires the client to upload evidence that staff then verify.
+    /// Used by the next-action engine (rank 4) and to stop clients self-completing evidence tasks.
+    /// </summary>
+    public static readonly IReadOnlySet<string> EvidenceTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        DocumentUpload,
+        KycDocument,
+        SignAgreement,
+        ProofOfAddress
+    };
+
+    /// <summary>
+    /// Edit Task form value that converts a plain task into a question for the client (a requirement).
+    /// Never stored: the converted task's Type becomes <see cref="Requirement"/>.
+    /// </summary>
+    public const string RequestInformation = "RequestInformation";
+
+    /// <summary>Types staff can pick in the Add/Edit Task form (plain task + the evidence types).</summary>
+    public static readonly IReadOnlySet<string> StaffSelectableTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        CustomTask,
+        DocumentUpload,
+        KycDocument,
+        SignAgreement,
+        ProofOfAddress
+    };
+
+    public static bool IsEvidence(ClientAction action) =>
+        action.LinkedDocumentId.HasValue || EvidenceTypes.Contains(action.Type ?? string.Empty);
 }
 
 public class ClientAction
@@ -30,7 +95,7 @@ public class ClientAction
 
     [Required]
     [MaxLength(50)]
-    public string Type { get; set; } = "DocumentUpload";
+    public string Type { get; set; } = ClientActionType.DocumentUpload;
 
     [Required]
     [MaxLength(30)]
@@ -41,9 +106,19 @@ public class ClientAction
 
     public DateTime? DeadlineUtc { get; set; }
 
+    /// <summary>
+    /// When this action became actionable (start time for SLA calculations).
+    /// Null if the action belongs to a stage that has not yet started.
+    /// </summary>
+    public DateTime? ActivatedAt { get; set; }
+
     [Required]
     [MaxLength(100)]
     public string Source { get; set; } = string.Empty;
+
+    [Required]
+    [MaxLength(30)]
+    public string SourceType { get; set; } = ClientActionSourceType.Manual;
 
     public bool IsInternalOnly { get; set; } = false;
 
@@ -57,6 +132,8 @@ public class ClientAction
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
     public string? SourceMetadata { get; set; }
 
     /// <summary>
@@ -64,4 +141,10 @@ public class ClientAction
     /// surfaces through the existing Next Action selection. Null for every other action type.
     /// </summary>
     public Guid? LinkedRequirementId { get; set; }
+
+    public Guid? LinkedDocumentId { get; set; }
+
+    public Guid? LinkedConditionId { get; set; }
+
+    public Guid? LinkedMeetingId { get; set; }
 }

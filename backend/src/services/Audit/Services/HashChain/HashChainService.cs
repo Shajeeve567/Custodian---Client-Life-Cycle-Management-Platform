@@ -7,7 +7,10 @@ namespace Custodian.Audit.Services.HashChain;
 
 public sealed class HashChainService : IHashChainService
 {
-    public string GenesisHash { get; } = new string('0', 64);
+    /// <summary>Previous hash of every engagement's first event (64 zeros).</summary>
+    public const string Genesis = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    public string GenesisHash => Genesis;
 
     public string ComputeEventHash(EventHashInput input)
     {

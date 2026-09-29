@@ -51,56 +51,46 @@ public class AuditEventService : IAuditEventService
             throw new ArgumentException("Payload must be a valid JSON string.", nameof(request.Payload));
         }
 
-        if (request.EventId.HasValue)
-        {
-            var existing = await _repository.GetByIdAsync(request.EventId.Value, effectiveTenantId);
-            if (existing != null)
-            {
-                return MapToResponse(existing);
-            }
-        }
-
-        var utcNow = DateTime.UtcNow;
-        // MySQL datetime(6) stores microsecond precision; DateTime.Ticks is 100ns.
-        // Truncate to microseconds before hashing so the value we hash is byte-for-byte
-        // the value MySQL stores on round-trip.
-        utcNow = utcNow.AddTicks(-(utcNow.Ticks % TimeSpan.TicksPerMicrosecond));
         var eventId = request.EventId ?? Guid.NewGuid();
 
-        // Previous hash: the engagement's latest event, or genesis for the first.
-        // Chains are scoped per (tenant, engagement) — not per tenant.
-        var latest = await _repository.GetLatestForEngagementAsync(effectiveTenantId, request.EngagementId);
-        var previousHash = latest?.Hash ?? _hashChain.GenesisHash;
-
-        var hashInput = new EventHashInput
+        // The repository runs this inside one transaction with the engagement's chain head locked, so
+        // the duplicate check, the previous hash and the insert can't interleave with another writer.
+        // Chains are scoped per (tenant, engagement): each engagement starts from its own genesis.
+        var result = await _repository.AppendToChainAsync(effectiveTenantId, request.EngagementId, eventId, previousHash =>
         {
-            EventId = eventId,
-            EngagementId = request.EngagementId,
-            TenantId = effectiveTenantId,
-            Actor = request.Actor,
-            Type = request.Type,
-            Timestamp = utcNow,
-            Payload = validPayload,
-            PreviousHash = previousHash,
-        };
+            var utcNow = DateTime.UtcNow;
+            // MySQL datetime(6) stores microsecond precision; DateTime.Ticks is 100ns.
+            // Truncate to microseconds before hashing so the value we hash is byte-for-byte
+            // the value MySQL stores on round-trip.
+            utcNow = utcNow.AddTicks(-(utcNow.Ticks % TimeSpan.TicksPerMicrosecond));
 
-        var computedHash = _hashChain.ComputeEventHash(hashInput);
+            var hashInput = new EventHashInput
+            {
+                EventId = eventId,
+                EngagementId = request.EngagementId,
+                TenantId = effectiveTenantId,
+                Actor = request.Actor,
+                Type = request.Type,
+                Timestamp = utcNow,
+                Payload = validPayload,
+                PreviousHash = previousHash,
+            };
 
-        var auditEvent = new AuditEvent
-        {
-            EventId = eventId,
-            EngagementId = request.EngagementId,
-            TenantId = effectiveTenantId,
-            Actor = request.Actor,
-            Type = request.Type,
-            Timestamp = utcNow,
-            Payload = validPayload,
-            Hash = computedHash,
-            PreviousHash = previousHash,
-        };
+            return new AuditEvent
+            {
+                EventId = eventId,
+                EngagementId = request.EngagementId,
+                TenantId = effectiveTenantId,
+                Actor = request.Actor,
+                Type = request.Type,
+                Timestamp = utcNow,
+                Payload = validPayload,
+                Hash = _hashChain.ComputeEventHash(hashInput),
+                PreviousHash = previousHash,
+            };
+        });
 
-        var createdEvent = await _repository.AddAsync(auditEvent);
-        return MapToResponse(createdEvent);
+        return MapToResponse(result.Event);
     }
 
     public async Task<IEnumerable<AuditEventResponse>> GetEventsByEngagementAsync(Guid engagementId, Guid effectiveTenantId)
