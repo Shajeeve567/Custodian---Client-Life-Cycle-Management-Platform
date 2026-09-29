@@ -7,8 +7,11 @@ Custodian uses Azure Event Hubs as its cloud message broker via the Azure Event 
 * **Event Hubs Namespace:** `custodian-events`
 * **Event Hub / Topic:** `custodian.events`
 * **Partition Count:** 1
-* **Producer:** `Workflow` microservice publishes lifecycle events.
-* **Consumer:** `Audit` microservice consumes events and persists them to `audit_db`.
+* **Producers:** `Workflow` (lifecycle events) and `Documents` (document events) when `Audit__Transport=Kafka`.
+* **Consumers:**
+  * `Audit` (group `custodian-audit`) persists every event to `audit_db` and links it into the engagement's SHA-256 hash chain (CSTD-40).
+  * `Workflow` (group `custodian-workflow`) reacts to `document.verified` / `document.verification_rejected` by updating the linked client action.
+  * `Identity` (group `custodian-identity-notifications-group`) turns events into client notifications. It has no SASL settings, so it only works against a plain local broker (see below).
 
 ---
 
@@ -53,6 +56,19 @@ The following event types are defined for the shared topic:
 > * `Genesis` was verified against live Azure Event Hubs through to `audit_db`.
 > * `RequirementRequested` and `RequirementSubmitted` events are implemented and handled in the consumer, but were not independently smoke-tested against Azure Event Hubs during this sprint.
 
+### Events added in Sprint 3 (Workflow → `custodian.events`)
+
+| Event Type | Raised by |
+| :--- | :--- |
+| `ClientActionCreated`, `ClientActionUpdated`, `ClientActionStatusChanged` | Client action create, edit, cancel/complete/review (CSTD-21) |
+| `ConditionAttached`, `ConditionUpdated`, `ConditionDeactivated` | Engagement conditions (CSTD-24). `InternalNote` is never included |
+| `action.overdue` | First read that finds a newly overdue blocker; once per stall episode (CSTD-33) |
+| `StallResolved` | A stall episode closes (CSTD-33) |
+| `ResponsibleStaffChanged` | `PUT /api/Engagements/{id}/staff` (CSTD-34) |
+| `intervention.recovered` | Recording an intervention (CSTD-35); the payload carries the type and outcome |
+
+All of these go through the same `Audit__Transport` (Kafka or HTTP) and are hash-chained by Audit.
+
 ---
 
 ## Azure Event Hubs Configuration
@@ -93,11 +109,24 @@ Kafka__SaslPassword=<EVENT_HUBS_CONNECTION_STRING>
 Workflow also consumes document verification events (`document.verified`, `document.verification_rejected`) to update the linked client action (CSTD-19, 19-N5). It reuses the producer's broker and SASL variables above and adds:
 
 ```bash
-Kafka__ConsumerEnabled=false   # set to true once the Documents service publishes to Kafka
+Kafka__ConsumerEnabled=true    # the appsettings.json default; the code default is false
 Kafka__GroupId=custodian-workflow
 ```
 
-> The Documents service currently sends these events to Audit over HTTP only, so the consumer ships disabled. Until Documents publishes to Kafka, the frontend dual call (Documents verify/reject, then Workflow `applyVerification`) remains the live path.
+The Documents service now publishes these events to Kafka (`KafkaAuditPublisher`, selected with `Audit__Transport=Kafka`), so the consumer is enabled by default.
+
+### Documents Service (Producer)
+
+```bash
+Audit__Transport=Kafka
+Kafka__BootstrapServers=<namespace>.servicebus.windows.net:9093
+Kafka__Topic=custodian.events
+Kafka__ClientId=documents-service
+Kafka__SecurityProtocol=SaslSsl
+Kafka__SaslMechanism=Plain
+Kafka__SaslUsername=$ConnectionString
+Kafka__SaslPassword=<EVENT_HUBS_CONNECTION_STRING>
+```
 
 ### Audit Service (Consumer)
 
@@ -115,6 +144,18 @@ Kafka__SaslPassword=<EVENT_HUBS_CONNECTION_STRING>
 ```
 
 ---
+
+## Staging vs Production
+
+Staging and production are separate App Services and read their Kafka settings from their own application settings. Nothing in the repository or the GitHub workflows sets a staging-specific topic or consumer group: `appsettings.json` has one topic (`custodian.events`) and the group defaults above. To keep staging traffic out of production, set these keys differently on the staging App Services:
+
+| Key | Set on | Purpose |
+|---|---|---|
+| `Kafka__Topic` | all four services | Staging topic (Event Hub) name. Producers and consumers in one environment must use the same value |
+| `Kafka__GroupId` | Audit, Workflow, Identity | Staging consumer group names, so staging consumers never take production messages |
+| `Kafka__BootstrapServers`, `Kafka__SaslPassword` | all producers/consumers | Only if staging uses a different Event Hubs namespace or access policy |
+
+The Event Hub and its consumer groups must also exist in Azure (Event Hubs namespace → Event Hubs → *hub* → Consumer groups).
 
 ## Local Kafka Compatibility
 

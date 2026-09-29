@@ -1,4 +1,4 @@
-name: Deploy — Audit Service
+name: Staging — Audit Service
 
 on:
   push:

@@ -144,7 +144,14 @@ Install → Type Check → Build
 
 ### Deployment
 
-Each backend microservice has an independent deployment workflow and is deployed to its corresponding Azure App Service.
+Each backend microservice has independent deployment workflows and two environments:
+
+| Branch | Environment | Workflows |
+| ------ | ----------- | --------- |
+| `dev`  | Staging (`staging-*-service` App Services) | `staging-*.yml` |
+| `main` | Production | `deploy-*.yml` |
+
+Deployment secrets are GitHub Secrets (`AZURE_<SERVICE>_APP_NAME` / `_PUBLISH_PROFILE`, and `AZURE_<SERVICE>_STAGING_*` for staging). Application configuration lives in each App Service's settings. See [GitHub Actions CI/CD](docs/ci-cd/github-actions.md).
 
 The frontend is deployed through Vercel.
 
@@ -159,8 +166,8 @@ GitHub
 ### Event Messaging (Azure Event Hubs)
 
 Asynchronous event streaming between microservices uses Azure Event Hubs via its Kafka-compatible endpoint, powered by `Confluent.Kafka`:
-* **Workflow** acts as the Kafka producer.
-* **Audit** acts as the Kafka consumer.
+* **Workflow** and **Documents** act as Kafka producers.
+* **Audit** consumes every event and adds it to a per-engagement SHA-256 hash chain; **Workflow** consumes document verification events.
 * **Shared Topic / Event Hub:** `custodian.events`.
 * **Broker Endpoint:** Azure Event Hubs at `custodian-events.servicebus.windows.net:9093` with `SASL_SSL` (`PLAIN`).
 * Application code continues using standard `Confluent.Kafka` without SDK changes.
@@ -179,6 +186,22 @@ For detailed setup, configuration, and troubleshooting guides, see:
 * [Azure Event Hubs Kafka Integration](docs/deployment/event-hubs-kafka.md)
 * [Troubleshooting Guide](docs/troubleshooting.md)
 
+## Sprint 3 Features (16 Sep – 30 Sep 2026)
+
+| Story | Feature |
+| ----- | ------- |
+| CSTD-19 | Next-action orchestration: one deterministic "what happens next" per engagement |
+| CSTD-21 | Client action model: create, edit, cancel, standard checklist |
+| CSTD-24 | Engagement conditions (Approval / Payment) that gate a later stage |
+| CSTD-33 | Action SLA and stall detection, computed on read |
+| CSTD-34 | Staff stall queue sorted by urgency; owner reassigns responsible staff |
+| CSTD-35 | Interventions and recovery, with an idempotent recheck |
+| CSTD-36 | Shared report infrastructure (PDF / CSV) |
+| CSTD-37 | SLA Performance report (in progress) |
+| CSTD-40 | SHA-256 hash chain for audit events, with a verify endpoint |
+
+Details: [Workflow Engine](docs/architecture/workflow-engine.md), [Workflow API](docs/api/workflow-api.md), [Audit API](docs/api/audit-api.md), [Reporting](docs/reporting.md).
+
 ## Documentation
 
 Detailed project documentation is available in the [`docs/`](docs/) directory.
@@ -186,6 +209,10 @@ Detailed project documentation is available in the [`docs/`](docs/) directory.
 | Documentation                                                           | Description                                 |
 | ----------------------------------------------------------------------- | ------------------------------------------- |
 | [Deployment Architecture](docs/architecture/deployment-architecture.md) | System architecture and deployment overview |
+| [Workflow Engine](docs/architecture/workflow-engine.md)                 | Next action, conditions, SLA/stall, interventions, reports, hash chain |
+| [Workflow API](docs/api/workflow-api.md)                                | Workflow endpoints added in Sprint 3        |
+| [Audit API](docs/api/audit-api.md)                                      | Audit endpoints and chain verification      |
+| [Reporting](docs/reporting.md)                                          | Report conventions and the SLA Performance report |
 | [Development Setup](docs/development/development-setup.md)              | Local development and setup instructions    |
 | [Azure Backend Deployment](docs/deployment/azure-backend.md)            | Backend deployment to Azure App Services    |
 | [Azure Event Hubs Kafka Integration](docs/deployment/event-hubs-kafka.md) | Event Hubs Kafka messaging and runtime setup |
