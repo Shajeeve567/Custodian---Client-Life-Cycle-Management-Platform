@@ -60,13 +60,20 @@ The workflow is limited to changes under `frontend/` and changes to the frontend
 
 ## Backend Deployment
 
-Each backend service has its own deployment workflow:
+Each backend service has its own staging and deployment workflow:
 
 ```text
 deploy-audit.yml
 deploy-document.yml
 deploy-identity.yml
 deploy-workflow.yml
+```
+
+```text
+staging-audit.yml
+staging-document.yml
+staging-identity.yml
+staging-workflow.yml
 ```
 
 These workflows run when the service's code, the shared libraries (`backend/src/shared/**`) or the workflow file change on `main`. The **Test** step runs the service's test project (for example `backend/tests/Custodian.Audit.Tests`); the service project itself contains no tests.
