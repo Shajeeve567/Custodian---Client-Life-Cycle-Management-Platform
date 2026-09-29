@@ -1,4 +1,4 @@
-name: Deploy — Identity Service
+name: Staging — Identity Service
 
 on:
   push:
