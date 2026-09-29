@@ -22,9 +22,14 @@ Custodian uses a microservices-based backend with a separate React frontend. The
               ▼                         ▼
        Azure App Services  <------------+
               |
-       +------+------+------+------+
-       |      |      |      |
-    Identity Workflow Documents Audit
+     +--------+---------+
+     |                  |
+  Staging (dev)    Production (main)
+     |                  |
+  Identity, Workflow, Documents, Audit (one App Service each, per environment)
+     |                  |
+     +---- Azure Event Hubs (Kafka, SASL_SSL :9093) ----+
+     +---- Azure Database for MySQL (one DB per service)
 ```
 
 The frontend is hosted on Vercel and communicates with the backend services deployed on Azure App Services.
@@ -59,7 +64,14 @@ Each backend service has its own deployment workflow:
 Build → Test → Publish → Azure App Service
 ```
 
-Deployment workflows run when relevant service changes are pushed to `main`, allowing services to be deployed independently.
+Each service is deployed to two environments:
+
+| Branch | Environment | Workflows | App Services |
+|---|---|---|---|
+| `dev` | Staging | `staging-*.yml` | `staging-identity-service`, `staging-workflow-service`, `staging-document-service`, `staging-audit-service` |
+| `main` | Production | `deploy-*.yml` | production App Services |
+
+A workflow runs only when its service's files change, so services are deployed independently. Each environment has its own App Settings (database, JWT, Kafka topic and consumer groups, CORS). See [GitHub Actions CI/CD](../ci-cd/github-actions.md) and [Azure Backend Deployment](../deployment/azure-backend.md).
 
 The frontend is deployed through Vercel.
 
@@ -72,4 +84,8 @@ The local development environment uses Docker Compose and includes the supportin
 * Kafka UI
 * Backend services
 
-Production backend services are hosted using Azure App Services, while the frontend is hosted on Vercel.
+Staging and production backend services are hosted on Azure App Services; they exchange events through Azure Event Hubs' Kafka endpoint. The frontend is hosted on Vercel.
+
+## Service internals
+
+The Workflow engine added in Sprint 3 (next action, conditions, SLA and stall detection, stall queue, interventions, reports) and the Audit SHA-256 hash chain are described in [workflow-engine.md](workflow-engine.md).
