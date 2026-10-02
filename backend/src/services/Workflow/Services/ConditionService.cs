@@ -261,26 +261,48 @@ public class ConditionService : IConditionService
                 await transaction.CommitAsync();
             }
 
-            // Publish ConditionAttached event (internalNote omitted, clientId included)
-            await _auditPublisher.PublishEventAsync(
-                engagementId,
-                tenantId,
-                actor,
-                "ConditionAttached",
-                new
-                {
-                    conditionId = condition.ConditionId,
-                    clientId = engagement.ClientId,
-                    type = condition.Type,
-                    requiredBeforeStage = condition.RequiredBeforeStage.ToString(),
-                    title = condition.Title,
-                    dueDateUtc = condition.DueDateUtc,
-                    amount = condition.Amount,
-                    currency = condition.Currency,
-                    paymentType = condition.PaymentType,
-                    createdAt = condition.CreatedAt,
-                    createdBy = condition.CreatedBy
-                });
+            if (string.Equals(condition.Type, ConditionType.Approval, StringComparison.OrdinalIgnoreCase))
+            {
+                // CSTD-144: Publish exactly ONE ApprovalAttached event for Approval condition
+                await _auditPublisher.PublishEventAsync(
+                    engagementId,
+                    tenantId,
+                    actor,
+                    "ApprovalAttached",
+                    new
+                    {
+                        conditionId = condition.ConditionId,
+                        clientId = engagement.ClientId,
+                        type = "Approval",
+                        title = condition.Title,
+                        requiredBeforeStage = condition.RequiredBeforeStage.ToString(),
+                        dueDateUtc = condition.DueDateUtc,
+                        status = "Pending"
+                    });
+            }
+            else
+            {
+                // Continue publishing exactly ONE ConditionAttached event for Payment and other conditions
+                await _auditPublisher.PublishEventAsync(
+                    engagementId,
+                    tenantId,
+                    actor,
+                    "ConditionAttached",
+                    new
+                    {
+                        conditionId = condition.ConditionId,
+                        clientId = engagement.ClientId,
+                        type = condition.Type,
+                        requiredBeforeStage = condition.RequiredBeforeStage.ToString(),
+                        title = condition.Title,
+                        dueDateUtc = condition.DueDateUtc,
+                        amount = condition.Amount,
+                        currency = condition.Currency,
+                        paymentType = condition.PaymentType,
+                        createdAt = condition.CreatedAt,
+                        createdBy = condition.CreatedBy
+                    });
+            }
 
             return MapToStaffDto(condition, engagement.ClientId);
         }
@@ -661,6 +683,23 @@ public class ConditionService : IConditionService
                 });
         }
 
+        // 6. Publish ApprovalCompleted event (CSTD-144)
+        await _auditPublisher.PublishEventAsync(
+            engagementId,
+            tenantId,
+            actor,
+            "ApprovalCompleted",
+            new
+            {
+                conditionId = condition.ConditionId,
+                clientId = engagement.ClientId,
+                type = "Approval",
+                title = condition.Title,
+                status = "Satisfied",
+                decision = "Approved",
+                decisionAt = now
+            });
+
         return MapToClientSafeDto(condition);
     }
 
@@ -798,6 +837,24 @@ public class ConditionService : IConditionService
                     reason = trimmedReason
                 });
         }
+
+        // 6. Publish ApprovalRejected event (CSTD-144)
+        await _auditPublisher.PublishEventAsync(
+            engagementId,
+            tenantId,
+            actor,
+            "ApprovalRejected",
+            new
+            {
+                conditionId = condition.ConditionId,
+                clientId = engagement.ClientId,
+                type = "Approval",
+                title = condition.Title,
+                status = "Rejected",
+                decision = "Rejected",
+                rejectionReason = trimmedReason,
+                decisionAt = now
+            });
 
         return MapToClientSafeDto(condition);
     }

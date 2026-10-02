@@ -104,8 +104,15 @@ public class ConditionServiceTests
             engagementId,
             tenantId,
             "staff-user-1",
-            "ConditionAttached",
+            "ApprovalAttached",
             It.Is<object>(p => p.ToString()!.Contains("clientId") && !p.ToString()!.Contains("Confidential margin details"))), Times.Once);
+
+        mockAudit.Verify(a => a.PublishEventAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            "ConditionAttached",
+            It.IsAny<object>()), Times.Never);
     }
 
     [Fact]
@@ -847,6 +854,13 @@ public class ConditionServiceTests
             "client-actor",
             "ClientActionStatusChanged",
             It.IsAny<object>()), Times.Once);
+
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "client-actor",
+            "ApprovalCompleted",
+            It.IsAny<object>()), Times.Once);
     }
 
     [Fact]
@@ -915,6 +929,13 @@ public class ConditionServiceTests
             tenantId,
             "client-actor",
             "ClientActionStatusChanged",
+            It.IsAny<object>()), Times.Once);
+
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "client-actor",
+            "ApprovalRejected",
             It.IsAny<object>()), Times.Once);
     }
 
@@ -1448,6 +1469,257 @@ public class ConditionServiceTests
 
         Assert.False(isValid);
         Assert.NotEmpty(results);
+    }
+
+    #endregion
+
+    #region CSTD-144 Approval Event Tests
+
+    [Fact]
+    public async Task CSTD144_AttachConditionAsync_Approval_PublishesApprovalAttached_ExactlyOnce()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-cstd144";
+        var clientId = "client-cstd144";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId);
+
+        var mockActionService = new Mock<IClientActionService>();
+        var mockAudit = new Mock<IAuditPublisher>();
+        var service = new ConditionService(db, mockActionService.Object, mockAudit.Object, NullLogger<ConditionService>.Instance);
+
+        var dto = new AttachConditionDto
+        {
+            Type = ConditionType.Approval,
+            Title = "Architecture Signoff",
+            RequiredBeforeStage = EngagementStage.Execution,
+            DueDateUtc = DateTime.UtcNow.AddDays(10)
+        };
+
+        // Act
+        var result = await service.AttachConditionAsync(engagementId, tenantId, dto, "staff-user-1");
+
+        // Assert: Publishes exactly ONE ApprovalAttached event
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "staff-user-1",
+            "ApprovalAttached",
+            It.Is<object>(p => p.ToString()!.Contains("Architecture Signoff") &&
+                               p.ToString()!.Contains(clientId) &&
+                               p.ToString()!.Contains("Approval") &&
+                               p.ToString()!.Contains("Pending"))), Times.Once);
+
+        // Does NOT publish ConditionAttached
+        mockAudit.Verify(a => a.PublishEventAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            "ConditionAttached",
+            It.IsAny<object>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CSTD144_AttachConditionAsync_Payment_PublishesConditionAttached_ExactlyOnce()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-cstd144";
+        var clientId = "client-cstd144";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId);
+
+        var mockActionService = new Mock<IClientActionService>();
+        var mockAudit = new Mock<IAuditPublisher>();
+        var service = new ConditionService(db, mockActionService.Object, mockAudit.Object, NullLogger<ConditionService>.Instance);
+
+        var dto = new AttachConditionDto
+        {
+            Type = ConditionType.Payment,
+            Title = "Retainer Fee",
+            Amount = 5000m,
+            Currency = "USD",
+            RequiredBeforeStage = EngagementStage.Execution
+        };
+
+        // Act
+        var result = await service.AttachConditionAsync(engagementId, tenantId, dto, "staff-user-1");
+
+        // Assert: Publishes ConditionAttached for Payment condition
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "staff-user-1",
+            "ConditionAttached",
+            It.Is<object>(p => p.ToString()!.Contains("Retainer Fee"))), Times.Once);
+
+        // Does NOT publish ApprovalAttached
+        mockAudit.Verify(a => a.PublishEventAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            "ApprovalAttached",
+            It.IsAny<object>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CSTD144_ApproveConditionAsync_PublishesApprovalCompleted_WithExpectedPayload()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-cstd144";
+        var clientId = "client-cstd144";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId, status: EngagementStatus.Started);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            Title = "Scope Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, mockAudit.Object, NullLogger<ConditionService>.Instance);
+
+        // Act
+        await service.ApproveConditionAsync(engagementId, conditionId, tenantId, clientId, "client-actor");
+
+        // Assert: ApprovalCompleted published with clean payload
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "client-actor",
+            "ApprovalCompleted",
+            It.Is<object>(p => p.ToString()!.Contains("conditionId") &&
+                               p.ToString()!.Contains(clientId) &&
+                               p.ToString()!.Contains("Satisfied") &&
+                               p.ToString()!.Contains("Approved"))), Times.Once);
+    }
+
+    [Fact]
+    public async Task CSTD144_RejectConditionAsync_PublishesApprovalRejected_WithTrimmedReasonPayload()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-cstd144";
+        var clientId = "client-cstd144";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId, status: EngagementStatus.Started);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            Title = "Scope Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, mockAudit.Object, NullLogger<ConditionService>.Instance);
+
+        // Act
+        await service.RejectConditionAsync(engagementId, conditionId, tenantId, clientId,
+            new RejectApprovalDto { Reason = "   Budget constraint requires scope cut   " }, "client-actor");
+
+        // Assert: ApprovalRejected published with trimmed rejectionReason
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "client-actor",
+            "ApprovalRejected",
+            It.Is<object>(p => p.ToString()!.Contains("conditionId") &&
+                               p.ToString()!.Contains(clientId) &&
+                               p.ToString()!.Contains("Rejected") &&
+                               p.ToString()!.Contains("Budget constraint requires scope cut"))), Times.Once);
+    }
+
+    [Fact]
+    public async Task CSTD144_SameDecisionRetry_PublishesNoDuplicateEvent()
+    {
+        // Arrange: Condition is already Satisfied
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-cstd144";
+        var clientId = "client-cstd144";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId, status: EngagementStatus.Started);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Satisfied,
+            IsActive = true,
+            Title = "Scope Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, mockAudit.Object, NullLogger<ConditionService>.Instance);
+
+        // Act: Re-approve
+        var result = await service.ApproveConditionAsync(engagementId, conditionId, tenantId, clientId, "client-actor");
+
+        // Assert: Idempotent return without publishing any event
+        Assert.Equal("Approved", result.ApprovalStatus);
+        mockAudit.Verify(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CSTD144_OppositeTerminalDecision_PublishesNoEvent()
+    {
+        // Arrange: Condition is already Rejected
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-cstd144";
+        var clientId = "client-cstd144";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId, status: EngagementStatus.Started);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Rejected,
+            RejectionReason = "Previously rejected",
+            IsActive = true,
+            Title = "Scope Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, mockAudit.Object, NullLogger<ConditionService>.Instance);
+
+        // Act & Assert: Opposite decision throws 409 Conflict without publishing any event
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ApproveConditionAsync(engagementId, conditionId, tenantId, clientId, "client-actor"));
+
+        mockAudit.Verify(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()), Times.Never);
     }
 
     #endregion

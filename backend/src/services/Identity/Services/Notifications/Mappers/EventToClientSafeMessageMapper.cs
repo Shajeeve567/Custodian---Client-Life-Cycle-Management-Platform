@@ -80,6 +80,16 @@ public sealed class EventToClientSafeMessageMapper : IEventToMessageMapper
             case "payment.condition.attached":
                 return PaymentCondition();
 
+            // CSTD-144: ApprovalAttached maps to client-facing approval request notification
+            case "approvalattached" or "approval.attached":
+                return Message(
+                    $"Approval Required: {Field("title") ?? "Engagement Step"}",
+                    $"A new approval item ('{Field("title") ?? "approval request"}') is awaiting your review in the portal to proceed to the next stage.");
+
+            // CSTD-144: Deciding client performed these actions directly in portal; do not send self-notifications
+            case "approvalcompleted" or "approval.completed" or "approvalrejected" or "approval.rejected":
+                return null;
+
             case "conditionattached" or "condition.attached" or "approval.requested":
                 return string.Equals(Field("type", "conditionType"), "Payment", StringComparison.OrdinalIgnoreCase)
                     ? PaymentCondition()
@@ -148,6 +158,10 @@ public sealed class EventToClientSafeMessageMapper : IEventToMessageMapper
         {
             yield return data;
         }
+        else if (payload.TryGetProperty("data", out var dataLower) && dataLower.ValueKind == JsonValueKind.Object)
+        {
+            yield return dataLower;
+        }
 
         yield return payload;
     }
@@ -156,13 +170,45 @@ public sealed class EventToClientSafeMessageMapper : IEventToMessageMapper
     {
         foreach (var candidate in CandidatePayloads(payload))
         {
-            if (candidate.TryGetProperty("clientId", out var prop) && prop.TryGetGuid(out var id))
+            if (candidate.TryGetProperty("clientId", out var prop))
             {
-                return id;
+                if (prop.TryGetGuid(out var id))
+                {
+                    return id;
+                }
+                if (prop.ValueKind == JsonValueKind.String)
+                {
+                    var str = prop.GetString();
+                    if (!string.IsNullOrWhiteSpace(str))
+                    {
+                        if (Guid.TryParse(str, out var parsed)) return parsed;
+                        using var sha256 = System.Security.Cryptography.SHA256.Create();
+                        var hash = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(str));
+                        var bytes = new byte[16];
+                        Array.Copy(hash, bytes, 16);
+                        return new Guid(bytes);
+                    }
+                }
             }
-            if (candidate.TryGetProperty("ClientId", out var prop2) && prop2.TryGetGuid(out var id2))
+            if (candidate.TryGetProperty("ClientId", out var prop2))
             {
-                return id2;
+                if (prop2.TryGetGuid(out var id2))
+                {
+                    return id2;
+                }
+                if (prop2.ValueKind == JsonValueKind.String)
+                {
+                    var str2 = prop2.GetString();
+                    if (!string.IsNullOrWhiteSpace(str2))
+                    {
+                        if (Guid.TryParse(str2, out var parsed2)) return parsed2;
+                        using var sha256 = System.Security.Cryptography.SHA256.Create();
+                        var hash = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(str2));
+                        var bytes = new byte[16];
+                        Array.Copy(hash, bytes, 16);
+                        return new Guid(bytes);
+                    }
+                }
             }
         }
 
