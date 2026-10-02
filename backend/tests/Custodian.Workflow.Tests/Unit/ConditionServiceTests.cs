@@ -1723,4 +1723,234 @@ public class ConditionServiceTests
     }
 
     #endregion
+
+    #region CSTD-146 Client Approval Workflow — Regression Coverage
+
+    // -----------------------------------------------------------------------
+    // DeriveApprovalStatus — pure helper, tested directly so renames/typos
+    // in the mapping are caught without relying on integration paths.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void CSTD146_DeriveApprovalStatus_PendingApproval_ReturnsPending()
+    {
+        var result = ConditionService.DeriveApprovalStatus(ConditionType.Approval, ConditionStatus.Pending);
+        Assert.Equal("Pending", result);
+    }
+
+    [Fact]
+    public void CSTD146_DeriveApprovalStatus_SatisfiedApproval_ReturnsApproved()
+    {
+        // "Approved" (not "Satisfied") is the human-readable label for clients
+        var result = ConditionService.DeriveApprovalStatus(ConditionType.Approval, ConditionStatus.Satisfied);
+        Assert.Equal("Approved", result);
+    }
+
+    [Fact]
+    public void CSTD146_DeriveApprovalStatus_RejectedApproval_ReturnsRejected()
+    {
+        var result = ConditionService.DeriveApprovalStatus(ConditionType.Approval, ConditionStatus.Rejected);
+        Assert.Equal("Rejected", result);
+    }
+
+    [Theory]
+    [InlineData(ConditionType.Payment)]
+    [InlineData("CustomConditionType")]
+    public void CSTD146_DeriveApprovalStatus_NonApprovalType_ReturnsNull(string nonApprovalType)
+    {
+        // Non-approval conditions have no approval status label
+        var result = ConditionService.DeriveApprovalStatus(nonApprovalType, ConditionStatus.Pending);
+        Assert.Null(result);
+    }
+
+    // -----------------------------------------------------------------------
+    // ApproveConditionAsync — verify exact field-level state after approval:
+    //   - Status == Satisfied
+    //   - SatisfiedAt is set (non-null)
+    //   - SatisfiedBy is the actor
+    //   - RejectionReason is cleared
+    //   - ApprovalStatus (via DTO) == "Approved"
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task CSTD146_ApproveConditionAsync_SetsAllApprovalFields_Correctly()
+    {
+        // Arrange: pending condition with a stale rejection reason from a prior cycle
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        const string tenantId = "tenant-cstd146";
+        const string clientId = "client-cstd146";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId, status: EngagementStatus.Started);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            Title = "Final Terms Sign-off",
+            RejectionReason = "Previous cycle rejection — should be cleared on approve",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var service = new ConditionService(
+            db,
+            new Mock<IClientActionService>().Object,
+            new Mock<IAuditPublisher>().Object,
+            NullLogger<ConditionService>.Instance);
+
+        var before = DateTime.UtcNow;
+
+        // Act
+        var dto = await service.ApproveConditionAsync(engagementId, conditionId, tenantId, clientId, "client-actor-146");
+
+        var after = DateTime.UtcNow;
+
+        // Assert — DTO surface
+        Assert.Equal(ConditionStatus.Satisfied, dto.Status);
+        Assert.Equal("Approved", dto.ApprovalStatus);
+        Assert.Null(dto.RejectionReason);  // cleared
+
+        // Assert — persisted state
+        var stored = await db.EngagementConditions.FindAsync(conditionId);
+        Assert.NotNull(stored);
+        Assert.Equal(ConditionStatus.Satisfied, stored!.Status);
+        Assert.Equal("client-actor-146", stored.SatisfiedBy);
+        Assert.NotNull(stored.SatisfiedAt);
+        Assert.InRange(stored.SatisfiedAt!.Value, before, after);
+        Assert.Null(stored.RejectionReason);  // must be cleared
+    }
+
+    // -----------------------------------------------------------------------
+    // RejectConditionAsync — verify exact field-level state after rejection:
+    //   - Status == Rejected
+    //   - RejectionReason is trimmed and persisted
+    //   - SatisfiedAt is null
+    //   - SatisfiedBy is null
+    //   - ApprovalStatus (via DTO) == "Rejected"
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task CSTD146_RejectConditionAsync_SetsAllRejectionFields_Correctly()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        const string tenantId = "tenant-cstd146";
+        const string clientId = "client-cstd146";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId, status: EngagementStatus.Started);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            Title = "Commercial Terms Approval",
+            // Simulate a prior approval that was somehow rolled back (should not happen in prod
+            // but guards the field-clearing logic in the service)
+            SatisfiedAt = DateTime.UtcNow.AddHours(-1),
+            SatisfiedBy = "old-actor",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var service = new ConditionService(
+            db,
+            new Mock<IClientActionService>().Object,
+            new Mock<IAuditPublisher>().Object,
+            NullLogger<ConditionService>.Instance);
+
+        const string rejectionReason = "  Need revised commercial terms before approval.  ";
+
+        // Act
+        var dto = await service.RejectConditionAsync(
+            engagementId, conditionId, tenantId, clientId,
+            new RejectApprovalDto { Reason = rejectionReason },
+            "client-actor-146");
+
+        // Assert — DTO surface
+        Assert.Equal(ConditionStatus.Rejected, dto.Status);
+        Assert.Equal("Rejected", dto.ApprovalStatus);
+        Assert.Equal("Need revised commercial terms before approval.", dto.RejectionReason);
+
+        // Assert — persisted state
+        var stored = await db.EngagementConditions.FindAsync(conditionId);
+        Assert.NotNull(stored);
+        Assert.Equal(ConditionStatus.Rejected, stored!.Status);
+        Assert.Equal("Need revised commercial terms before approval.", stored.RejectionReason); // trimmed
+        Assert.Null(stored.SatisfiedAt);   // cleared
+        Assert.Null(stored.SatisfiedBy);   // cleared
+    }
+
+    // -----------------------------------------------------------------------
+    // Approval blocks stage advance until satisfied — integration between
+    // ConditionService state and the gate evaluator input.
+    //
+    // This test exercises the service-level contract:
+    //   Before approval: condition.Status == Pending  (would block the gate)
+    //   After  approval: condition.Status == Satisfied (gate input unblocked)
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task CSTD146_ApproveConditionAsync_ConditionTransitionsToPending_ThenToSatisfied()
+    {
+        // Arrange: engagement in Onboarding; approval required before DocumentCollection
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        const string tenantId = "tenant-cstd146-gate";
+        const string clientId = "client-gate";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId,
+            stage: EngagementStage.Onboarding, status: EngagementStatus.Started);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            RequiredBeforeStage = EngagementStage.DocumentCollection,
+            Title = "KYC Approval",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var service = new ConditionService(
+            db,
+            new Mock<IClientActionService>().Object,
+            new Mock<IAuditPublisher>().Object,
+            NullLogger<ConditionService>.Instance);
+
+        // Pre-condition: gate input would be blocked (Pending)
+        var pre = await db.EngagementConditions.FindAsync(conditionId);
+        Assert.Equal(ConditionStatus.Pending, pre!.Status);
+
+        // Act: client approves
+        await service.ApproveConditionAsync(engagementId, conditionId, tenantId, clientId, clientId);
+
+        // Post-condition: condition is now Satisfied — gate input is unblocked
+        var post = await db.EngagementConditions.FindAsync(conditionId);
+        Assert.Equal(ConditionStatus.Satisfied, post!.Status);
+
+        // Confirm active conditions for the stage are now satisfied (would not block)
+        var activeConditions = await db.EngagementConditions
+            .Where(c => c.EngagementId == engagementId && c.TenantId == tenantId && c.IsActive)
+            .ToListAsync();
+        Assert.All(activeConditions, c => Assert.Equal(ConditionStatus.Satisfied, c.Status));
+    }
+
+    #endregion
 }
