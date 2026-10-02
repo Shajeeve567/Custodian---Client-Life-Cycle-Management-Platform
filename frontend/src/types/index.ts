@@ -515,7 +515,7 @@ export interface ClientSafeCondition {
 
 export interface AttachConditionRequest {
     type: ConditionType;
-    requiredBeforeStage?: EngagementStage | string;
+    requiredBeforeStage?: EngagementStage | number | string;
     title: string;
     description?: string;
     dueDateUtc?: string;
