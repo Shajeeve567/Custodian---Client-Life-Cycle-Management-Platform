@@ -66,6 +66,9 @@ The following event types are defined for the shared topic:
 | `StallResolved` | A stall episode closes (CSTD-33) |
 | `ResponsibleStaffChanged` | `PUT /api/Engagements/{id}/staff` (CSTD-34) |
 | `intervention.recovered` | Recording an intervention (CSTD-35); the payload carries the type and outcome |
+| `ApprovalAttached` | Staff attaches approval condition (CSTD-144); triggers client notification |
+| `ApprovalCompleted` | Client approves condition (CSTD-144); audit persistence only (no self-notification) |
+| `ApprovalRejected` | Client rejects condition (CSTD-144); audit persistence only with rejection reason (no self-notification) |
 
 All of these go through the same `Audit__Transport` (Kafka or HTTP) and are hash-chained by Audit.
 
@@ -142,6 +145,26 @@ Kafka__SaslMechanism=Plain
 Kafka__SaslUsername=$ConnectionString
 Kafka__SaslPassword=<EVENT_HUBS_CONNECTION_STRING>
 ```
+
+### Identity Service (Consumer)
+
+Set the following runtime environment variables when running the Identity service (CSTD-144):
+
+```bash
+Kafka__Enabled=true
+Kafka__BootstrapServers=custodian-events.servicebus.windows.net:9093
+Kafka__Topic=custodian.events
+Kafka__GroupId=custodian-identity-notifications-group
+Kafka__AutoOffsetReset=Earliest
+Kafka__SecurityProtocol=SaslSsl
+Kafka__SaslMechanism=Plain
+Kafka__SaslUsername=$ConnectionString
+Kafka__SaslPassword=<EVENT_HUBS_CONNECTION_STRING>
+```
+
+Notification behavior for approval events:
+* `ApprovalAttached` -> Generates client portal in-app notification + email notification (`Approval Required: {title}`).
+* `ApprovalCompleted` / `ApprovalRejected` -> Audit trail persistence only; suppressed from client notifications to avoid redundant self-notification.
 
 ---
 

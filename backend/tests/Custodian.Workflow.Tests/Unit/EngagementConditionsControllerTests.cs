@@ -266,4 +266,226 @@ public class EngagementConditionsControllerTests
         var returnVal = Assert.IsType<ConditionResponseDto>(okResult.Value);
         Assert.False(returnVal.IsActive);
     }
+
+    #region CSTD-143 Controller Tests
+
+    [Fact]
+    public async Task ApproveCondition_ClientRole_Valid_Returns200Ok()
+    {
+        // Arrange
+        SetupUser("tenant-001", "Client", clientId: "client-001");
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+
+        var expectedDto = new ClientSafeConditionDto
+        {
+            ConditionId = conditionId,
+            Type = ConditionType.Approval,
+            Status = "Satisfied",
+            ApprovalStatus = "Approved"
+        };
+
+        _mockConditionService.Setup(s => s.ApproveConditionAsync(engagementId, conditionId, "tenant-001", "client-001", It.IsAny<string>()))
+            .ReturnsAsync(expectedDto);
+
+        // Act
+        var result = await _controller.ApproveCondition(engagementId, conditionId, tenantId: null);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        var returnVal = Assert.IsType<ClientSafeConditionDto>(okResult.Value);
+        Assert.Equal("Approved", returnVal.ApprovalStatus);
+    }
+
+    [Fact]
+    public async Task ApproveCondition_StaffRole_Returns403Forbidden()
+    {
+        // Arrange: Staff cannot call client approval endpoint
+        SetupUser("tenant-001", "Staff");
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+
+        // Act
+        var result = await _controller.ApproveCondition(engagementId, conditionId, tenantId: null);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task ApproveCondition_MismatchedTenant_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUser("tenant-001", "Client", clientId: "client-001");
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+
+        // Act: Pass mismatched tenant in query
+        var result = await _controller.ApproveCondition(engagementId, conditionId, tenantId: "tenant-other");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task ApproveCondition_UnknownCondition_Returns404NotFound()
+    {
+        // Arrange
+        SetupUser("tenant-001", "Client", clientId: "client-001");
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+
+        _mockConditionService.Setup(s => s.ApproveConditionAsync(engagementId, conditionId, "tenant-001", "client-001", It.IsAny<string>()))
+            .ThrowsAsync(new KeyNotFoundException("Condition not found"));
+
+        // Act
+        var result = await _controller.ApproveCondition(engagementId, conditionId, tenantId: null);
+
+        // Assert
+        var notFound = Assert.IsType<NotFoundObjectResult>(result.Result);
+        Assert.Equal(404, notFound.StatusCode);
+    }
+
+    [Fact]
+    public async Task ApproveCondition_Conflict_Returns409Conflict()
+    {
+        // Arrange
+        SetupUser("tenant-001", "Client", clientId: "client-001");
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+
+        _mockConditionService.Setup(s => s.ApproveConditionAsync(engagementId, conditionId, "tenant-001", "client-001", It.IsAny<string>()))
+            .ThrowsAsync(new InvalidOperationException("Condition is already rejected"));
+
+        // Act
+        var result = await _controller.ApproveCondition(engagementId, conditionId, tenantId: null);
+
+        // Assert
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(409, conflict.StatusCode);
+    }
+
+    [Fact]
+    public async Task RejectCondition_ClientRole_Valid_Returns200Ok()
+    {
+        // Arrange
+        SetupUser("tenant-001", "Client", clientId: "client-001");
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var dto = new RejectApprovalDto { Reason = "Terms unacceptable" };
+
+        var expectedDto = new ClientSafeConditionDto
+        {
+            ConditionId = conditionId,
+            Type = ConditionType.Approval,
+            Status = "Rejected",
+            ApprovalStatus = "Rejected",
+            RejectionReason = "Terms unacceptable"
+        };
+
+        _mockConditionService.Setup(s => s.RejectConditionAsync(engagementId, conditionId, "tenant-001", "client-001", dto, It.IsAny<string>()))
+            .ReturnsAsync(expectedDto);
+
+        // Act
+        var result = await _controller.RejectCondition(engagementId, conditionId, dto, tenantId: null);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(200, okResult.StatusCode);
+        var returnVal = Assert.IsType<ClientSafeConditionDto>(okResult.Value);
+        Assert.Equal("Rejected", returnVal.ApprovalStatus);
+        Assert.Equal("Terms unacceptable", returnVal.RejectionReason);
+    }
+
+    [Fact]
+    public async Task RejectCondition_StaffRole_Returns403Forbidden()
+    {
+        // Arrange: Staff cannot reject via client endpoint
+        SetupUser("tenant-001", "Staff");
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var dto = new RejectApprovalDto { Reason = "Staff cannot call this" };
+
+        // Act
+        var result = await _controller.RejectCondition(engagementId, conditionId, dto, tenantId: null);
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public async Task RejectCondition_MissingOrWhitespaceReason_Returns400BadRequest(string? reason)
+    {
+        // Arrange
+        SetupUser("tenant-001", "Client", clientId: "client-001");
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var dto = new RejectApprovalDto { Reason = reason! };
+
+        // Act
+        var result = await _controller.RejectCondition(engagementId, conditionId, dto, tenantId: null);
+
+        // Assert
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Equal(400, badRequest.StatusCode);
+    }
+
+    [Fact]
+    public async Task RejectCondition_ReasonExceeding500Chars_Returns400BadRequest()
+    {
+        // Arrange
+        SetupUser("tenant-001", "Client", clientId: "client-001");
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var dto = new RejectApprovalDto { Reason = new string('x', 501) };
+
+        // Act
+        var result = await _controller.RejectCondition(engagementId, conditionId, dto, tenantId: null);
+
+        // Assert
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Equal(400, badRequest.StatusCode);
+    }
+
+    [Fact]
+    public async Task RejectCondition_MismatchedTenant_Returns403Forbidden()
+    {
+        // Arrange
+        SetupUser("tenant-001", "Client", clientId: "client-001");
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var dto = new RejectApprovalDto { Reason = "Valid reason" };
+
+        // Act
+        var result = await _controller.RejectCondition(engagementId, conditionId, dto, tenantId: "tenant-other");
+
+        // Assert
+        Assert.IsType<ForbidResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task RejectCondition_Conflict_Returns409Conflict()
+    {
+        // Arrange
+        SetupUser("tenant-001", "Client", clientId: "client-001");
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var dto = new RejectApprovalDto { Reason = "Valid reason" };
+
+        _mockConditionService.Setup(s => s.RejectConditionAsync(engagementId, conditionId, "tenant-001", "client-001", dto, It.IsAny<string>()))
+            .ThrowsAsync(new InvalidOperationException("Condition is already approved"));
+
+        // Act
+        var result = await _controller.RejectCondition(engagementId, conditionId, dto, tenantId: null);
+
+        // Assert
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(409, conflict.StatusCode);
+    }
+
+    #endregion
 }

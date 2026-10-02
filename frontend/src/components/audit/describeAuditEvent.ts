@@ -208,6 +208,38 @@ export function describeAuditEvent(evt: AuditEvent, lookups: AuditLookups): Audi
             return { category: 'Documents', label: 'Document deleted', details: compact([quoted(p.fileName) ?? humanize(p.documentType), p.reason && `Reason: ${p.reason}`]), tone: 'negative' };
 
         // ---------------- Conditions ----------------
+        case 'ApprovalAttached':
+            return {
+                category: 'Conditions',
+                label: 'Approval requested',
+                details: compact([
+                    quoted(p.title),
+                    p.requiredBeforeStage && `Blocks: ${humanize(p.requiredBeforeStage)}`,
+                    p.dueDateUtc && `Due ${formatDate(p.dueDateUtc)}`,
+                ]),
+                tone: 'info',
+            };
+        case 'ApprovalCompleted':
+            return {
+                category: 'Conditions',
+                label: 'Approval completed',
+                details: compact([
+                    quoted(p.title),
+                    p.decisionAt && `Decided ${formatDate(p.decisionAt)}`,
+                ]),
+                tone: 'positive',
+            };
+        case 'ApprovalRejected':
+            return {
+                category: 'Conditions',
+                label: 'Approval rejected',
+                details: compact([
+                    quoted(p.title),
+                    p.rejectionReason && `Reason: ${p.rejectionReason}`,
+                    p.decisionAt && `Decided ${formatDate(p.decisionAt)}`,
+                ]),
+                tone: 'negative',
+            };
         case 'ConditionAttached':
             return {
                 category: 'Conditions',
