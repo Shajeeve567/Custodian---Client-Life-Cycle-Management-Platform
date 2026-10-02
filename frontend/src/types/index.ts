@@ -491,6 +491,7 @@ export interface EngagementCondition {
     deactivatedBy?: string;
     deactivatedAt?: string;
     deactivationReason?: string;
+    rejectionReason?: string | null;
     satisfiedAt?: string;
     satisfiedBy?: string;
     isOverdue?: boolean;
@@ -503,6 +504,7 @@ export interface ClientSafeCondition {
     type: ConditionType;
     status: ConditionStatus;
     approvalStatus?: 'Pending' | 'Approved' | 'Rejected' | null;
+    rejectionReason?: string | null;
     requiredBeforeStage: string;
     dueDateUtc?: string;
     amount?: number;
@@ -534,6 +536,10 @@ export interface UpdateConditionRequest {
 }
 
 export interface DeactivateConditionRequest {
+    reason: string;
+}
+
+export interface RejectApprovalRequest {
     reason: string;
 }
 

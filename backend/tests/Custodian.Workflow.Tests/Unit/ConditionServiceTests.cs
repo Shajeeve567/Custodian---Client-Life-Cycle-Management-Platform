@@ -775,4 +775,680 @@ public class ConditionServiceTests
         // Assert
         Assert.Empty(result);
     }
+
+    #region CSTD-143 Approval Decision Tests
+
+    [Fact]
+    public async Task CSTD143_ApproveConditionAsync_IntendedClient_SetsSatisfied_ClearsRejection_CompletesLinkedAction()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId, status: EngagementStatus.Started);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            Title = "Scope Sign-off",
+            RejectionReason = "Old rejection note",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+
+        var linkedAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ClientActionType.Approval,
+            Status = ClientActionStatus.Pending,
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = conditionId,
+            Title = "Scope Sign-off"
+        };
+        db.ClientActions.Add(linkedAction);
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, mockAudit.Object, NullLogger<ConditionService>.Instance);
+
+        // Act
+        var result = await service.ApproveConditionAsync(engagementId, conditionId, tenantId, clientId, "client-actor");
+
+        // Assert
+        Assert.Equal("Satisfied", result.Status);
+        Assert.Equal("Approved", result.ApprovalStatus);
+        Assert.Null(result.RejectionReason);
+
+        var dbCond = await db.EngagementConditions.FindAsync(conditionId);
+        Assert.NotNull(dbCond);
+        Assert.Equal(ConditionStatus.Satisfied, dbCond!.Status);
+        Assert.Equal("client-actor", dbCond.SatisfiedBy);
+        Assert.NotNull(dbCond.SatisfiedAt);
+        Assert.Null(dbCond.RejectionReason);
+
+        var dbAction = await db.ClientActions.FindAsync(linkedAction.ActionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(ClientActionStatus.Completed, dbAction!.Status);
+        Assert.Equal("client-actor", dbAction.CompletedByActor);
+        Assert.NotNull(dbAction.CompletedAt);
+
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "client-actor",
+            "ClientActionStatusChanged",
+            It.IsAny<object>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CSTD143_RejectConditionAsync_IntendedClient_SetsRejected_PersistsReason_RejectsLinkedAction()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId, status: EngagementStatus.Started);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            Title = "Scope Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+
+        var linkedAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ClientActionType.Approval,
+            Status = ClientActionStatus.Pending,
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = conditionId,
+            Title = "Scope Sign-off"
+        };
+        db.ClientActions.Add(linkedAction);
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, mockAudit.Object, NullLogger<ConditionService>.Instance);
+        var rejectDto = new RejectApprovalDto { Reason = "  Budget is too high  " };
+
+        // Act
+        var result = await service.RejectConditionAsync(engagementId, conditionId, tenantId, clientId, rejectDto, "client-actor");
+
+        // Assert
+        Assert.Equal("Rejected", result.Status);
+        Assert.Equal("Rejected", result.ApprovalStatus);
+        Assert.Equal("Budget is too high", result.RejectionReason);
+
+        var dbCond = await db.EngagementConditions.FindAsync(conditionId);
+        Assert.NotNull(dbCond);
+        Assert.Equal(ConditionStatus.Rejected, dbCond!.Status);
+        Assert.Equal("Budget is too high", dbCond.RejectionReason);
+        Assert.Null(dbCond.SatisfiedAt);
+        Assert.Null(dbCond.SatisfiedBy);
+
+        var dbAction = await db.ClientActions.FindAsync(linkedAction.ActionId);
+        Assert.NotNull(dbAction);
+        Assert.Equal(ClientActionStatus.Rejected, dbAction!.Status);
+
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "client-actor",
+            "ClientActionStatusChanged",
+            It.IsAny<object>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public async Task CSTD143_RejectConditionAsync_EmptyOrWhitespaceReason_ThrowsArgumentException(string? invalidReason)
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId);
+
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+        var dto = new RejectApprovalDto { Reason = invalidReason! };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.RejectConditionAsync(engagementId, conditionId, tenantId, clientId, dto, "client-actor"));
+    }
+
+    [Fact]
+    public async Task CSTD143_RejectConditionAsync_ReasonExceeding500Chars_ThrowsArgumentException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId);
+
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+        var dto = new RejectApprovalDto { Reason = new string('x', 501) };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.RejectConditionAsync(engagementId, conditionId, tenantId, clientId, dto, "client-actor"));
+    }
+
+    [Fact]
+    public async Task CSTD143_ApproveConditionAsync_RepeatedDecision_IsIdempotent()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Satisfied,
+            IsActive = true,
+            Title = "Scope Sign-off",
+            SatisfiedAt = DateTime.UtcNow,
+            SatisfiedBy = "client-1",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, mockAudit.Object, NullLogger<ConditionService>.Instance);
+
+        // Act: approve again
+        var result = await service.ApproveConditionAsync(engagementId, conditionId, tenantId, clientId, "client-1");
+
+        // Assert: no exception, returns Approved
+        Assert.Equal("Satisfied", result.Status);
+        Assert.Equal("Approved", result.ApprovalStatus);
+        mockAudit.Verify(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CSTD143_RejectConditionAsync_RepeatedDecision_IsIdempotent()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Rejected,
+            RejectionReason = "Previously rejected",
+            IsActive = true,
+            Title = "Scope Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, mockAudit.Object, NullLogger<ConditionService>.Instance);
+
+        // Act: reject again
+        var result = await service.RejectConditionAsync(engagementId, conditionId, tenantId, clientId, new RejectApprovalDto { Reason = "Repeat reason" }, "client-1");
+
+        // Assert: returns current state without second mutation
+        Assert.Equal("Rejected", result.Status);
+        Assert.Equal("Rejected", result.ApprovalStatus);
+        Assert.Equal("Previously rejected", result.RejectionReason);
+        mockAudit.Verify(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CSTD143_ApproveConditionAsync_AlreadyRejected_ThrowsConflict()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Rejected,
+            IsActive = true,
+            Title = "Scope Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ApproveConditionAsync(engagementId, conditionId, tenantId, clientId, "client-1"));
+        Assert.Contains("already been rejected", ex.Message);
+    }
+
+    [Fact]
+    public async Task CSTD143_RejectConditionAsync_AlreadyApproved_ThrowsConflict()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Satisfied,
+            IsActive = true,
+            Title = "Scope Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.RejectConditionAsync(engagementId, conditionId, tenantId, clientId, new RejectApprovalDto { Reason = "Late reject" }, "client-1"));
+        Assert.Contains("already been approved", ex.Message);
+    }
+
+    [Fact]
+    public async Task CSTD143_ApproveConditionAsync_WrongClient_ThrowsUnauthorized()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: "real-client-123");
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            Title = "Scope Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+
+        // Act & Assert: Wrong client ID
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.ApproveConditionAsync(engagementId, conditionId, tenantId, "imposter-client", "imposter-client"));
+    }
+
+    [Fact]
+    public async Task CSTD143_RejectConditionAsync_WrongClient_ThrowsUnauthorized()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: "real-client-123");
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            Title = "Scope Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+
+        // Act & Assert: Wrong client ID
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.RejectConditionAsync(engagementId, conditionId, tenantId, "imposter-client", new RejectApprovalDto { Reason = "Valid reason" }, "imposter-client"));
+    }
+
+    [Theory]
+    [InlineData(EngagementStatus.Closed)]
+    [InlineData(EngagementStatus.Cancelled)]
+    public async Task CSTD143_Decisions_ClosedOrCancelledEngagement_ThrowsInvalidOperationException(EngagementStatus closedStatus)
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId, status: closedStatus);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            Title = "Scope Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ApproveConditionAsync(engagementId, conditionId, tenantId, clientId, "client-1"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.RejectConditionAsync(engagementId, conditionId, tenantId, clientId, new RejectApprovalDto { Reason = "Valid reason" }, "client-1"));
+    }
+
+    [Fact]
+    public async Task CSTD143_Decisions_PaymentCondition_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Payment,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            Title = "Deposit Payment",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+
+        // Act & Assert: Payment conditions cannot be approved/rejected via approval endpoints
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ApproveConditionAsync(engagementId, conditionId, tenantId, clientId, "client-1"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.RejectConditionAsync(engagementId, conditionId, tenantId, clientId, new RejectApprovalDto { Reason = "Valid reason" }, "client-1"));
+    }
+
+    [Fact]
+    public async Task CSTD143_Decisions_InactiveCondition_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = false,
+            Title = "Deactivated Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ApproveConditionAsync(engagementId, conditionId, tenantId, clientId, "client-1"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.RejectConditionAsync(engagementId, conditionId, tenantId, clientId, new RejectApprovalDto { Reason = "Valid reason" }, "client-1"));
+    }
+
+    [Fact]
+    public async Task CSTD143_RejectionReason_ExposedInStaffAndClientGet()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Rejected,
+            RejectionReason = "Requires executive revision",
+            IsActive = true,
+            Title = "Scope Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+        await db.SaveChangesAsync();
+
+        var mockActionService = new Mock<IClientActionService>();
+        mockActionService.Setup(s => s.ClientOwnsEngagementAsync(engagementId, tenantId, clientId)).ReturnsAsync(true);
+        var service = new ConditionService(db, mockActionService.Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+
+        // Act
+        var staffDto = await service.GetConditionByIdStaffAsync(engagementId, conditionId, tenantId);
+        var clientDto = await service.GetConditionByIdClientAsync(engagementId, conditionId, tenantId, clientId);
+
+        // Assert
+        Assert.NotNull(staffDto);
+        Assert.Equal("Requires executive revision", staffDto!.RejectionReason);
+        Assert.Equal("Rejected", staffDto.ApprovalStatus);
+
+        Assert.NotNull(clientDto);
+        Assert.Equal("Requires executive revision", clientDto!.RejectionReason);
+        Assert.Equal("Rejected", clientDto.ApprovalStatus);
+    }
+
+    [Fact]
+    public async Task CSTD143_ApproveConditionAsync_LinkedActionInvalidTransition_FailsBeforeSavingAndPublishesNoEvents()
+    {
+        // Arrange: Linked action is Cancelled, which cannot transition to Completed
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId, status: EngagementStatus.Started);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            Title = "Scope Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+
+        var linkedAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ClientActionType.Approval,
+            Status = ClientActionStatus.Cancelled, // Terminal / cannot transition to Completed
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = conditionId,
+            Title = "Scope Sign-off"
+        };
+        db.ClientActions.Add(linkedAction);
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, mockAudit.Object, NullLogger<ConditionService>.Instance);
+
+        // Act & Assert: Exception thrown before saving
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ApproveConditionAsync(engagementId, conditionId, tenantId, clientId, "client-actor"));
+
+        // Condition in DB must NOT be changed to Satisfied
+        var reloadedCondition = await db.EngagementConditions.FindAsync(conditionId);
+        Assert.NotNull(reloadedCondition);
+        Assert.Equal(ConditionStatus.Pending, reloadedCondition!.Status);
+
+        // Action in DB must remain Cancelled
+        var reloadedAction = await db.ClientActions.FindAsync(linkedAction.ActionId);
+        Assert.NotNull(reloadedAction);
+        Assert.Equal(ClientActionStatus.Cancelled, reloadedAction!.Status);
+
+        // No events published
+        mockAudit.Verify(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CSTD143_RejectConditionAsync_LinkedActionInvalidTransition_FailsBeforeSavingAndPublishesNoEvents()
+    {
+        // Arrange: Linked action is Cancelled, which cannot transition to Rejected
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        var clientId = "client-001";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId, status: EngagementStatus.Started);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId = conditionId,
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ConditionType.Approval,
+            Status = ConditionStatus.Pending,
+            IsActive = true,
+            Title = "Scope Sign-off",
+            CreatedBy = "staff-1"
+        };
+        db.EngagementConditions.Add(condition);
+
+        var linkedAction = new ClientAction
+        {
+            ActionId = Guid.NewGuid(),
+            EngagementId = engagementId,
+            TenantId = tenantId,
+            Type = ClientActionType.Approval,
+            Status = ClientActionStatus.Cancelled, // Cannot transition to Rejected
+            SourceType = ClientActionSourceType.Condition,
+            LinkedConditionId = conditionId,
+            Title = "Scope Sign-off"
+        };
+        db.ClientActions.Add(linkedAction);
+        await db.SaveChangesAsync();
+
+        var mockAudit = new Mock<IAuditPublisher>();
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, mockAudit.Object, NullLogger<ConditionService>.Instance);
+
+        // Act & Assert: Exception thrown before saving
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.RejectConditionAsync(engagementId, conditionId, tenantId, clientId, new RejectApprovalDto { Reason = "Valid reason" }, "client-actor"));
+
+        // Condition in DB must NOT be changed to Rejected
+        var reloadedCondition = await db.EngagementConditions.FindAsync(conditionId);
+        Assert.NotNull(reloadedCondition);
+        Assert.Equal(ConditionStatus.Pending, reloadedCondition!.Status);
+
+        // Action in DB must remain Cancelled
+        var reloadedAction = await db.ClientActions.FindAsync(linkedAction.ActionId);
+        Assert.NotNull(reloadedAction);
+        Assert.Equal(ClientActionStatus.Cancelled, reloadedAction!.Status);
+
+        // No events published
+        mockAudit.Verify(a => a.PublishEventAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\t\n  ")]
+    public void CSTD143_RejectApprovalDto_Validation_RejectsEmptyOrWhitespaceOnly(string invalidReason)
+    {
+        var dto = new RejectApprovalDto { Reason = invalidReason };
+        var context = new System.ComponentModel.DataAnnotations.ValidationContext(dto);
+        var results = new List<System.ComponentModel.DataAnnotations.ValidationResult>();
+
+        var isValid = System.ComponentModel.DataAnnotations.Validator.TryValidateObject(dto, context, results, validateAllProperties: true);
+
+        Assert.False(isValid);
+        Assert.NotEmpty(results);
+    }
+
+    #endregion
 }

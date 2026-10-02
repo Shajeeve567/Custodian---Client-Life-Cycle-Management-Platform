@@ -538,6 +538,270 @@ public class ConditionService : IConditionService
             });
     }
 
+    public async Task<ClientSafeConditionDto> ApproveConditionAsync(
+        Guid engagementId,
+        Guid conditionId,
+        string tenantId,
+        string callerClientId,
+        string actor)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId) || engagementId == Guid.Empty || conditionId == Guid.Empty || string.IsNullOrWhiteSpace(callerClientId))
+        {
+            throw new ArgumentException("TenantId, EngagementId, ConditionId, and CallerClientId are required.");
+        }
+
+        var engagement = await _dbContext.Engagements
+            .FirstOrDefaultAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId);
+
+        if (engagement == null)
+        {
+            throw new KeyNotFoundException($"Engagement '{engagementId}' was not found.");
+        }
+
+        if (!string.Equals(engagement.ClientId, callerClientId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new UnauthorizedAccessException($"Client '{callerClientId}' is not the assigned client for engagement '{engagementId}'.");
+        }
+
+        if (engagement.Status == EngagementStatus.Closed || engagement.Status == EngagementStatus.Cancelled)
+        {
+            throw new InvalidOperationException($"Cannot decide approval condition on {engagement.Status.ToString().ToLowerInvariant()} engagement.");
+        }
+
+        var condition = await _dbContext.EngagementConditions
+            .FirstOrDefaultAsync(c => c.ConditionId == conditionId && c.EngagementId == engagementId && c.TenantId == tenantId);
+
+        if (condition == null)
+        {
+            throw new KeyNotFoundException($"Condition '{conditionId}' was not found for engagement '{engagementId}'.");
+        }
+
+        if (!condition.IsActive)
+        {
+            throw new InvalidOperationException($"Cannot decide on deactivated condition '{conditionId}'.");
+        }
+
+        if (!string.Equals(condition.Type, ConditionType.Approval, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Only Approval conditions can be approved or rejected. Condition '{conditionId}' has type '{condition.Type}'.");
+        }
+
+        // Repeated same decision -> Idempotent
+        if (string.Equals(condition.Status, ConditionStatus.Satisfied, StringComparison.OrdinalIgnoreCase))
+        {
+            return MapToClientSafeDto(condition);
+        }
+
+        // Opposite stale decision
+        if (string.Equals(condition.Status, ConditionStatus.Rejected, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Condition '{conditionId}' has already been rejected and cannot be approved.");
+        }
+
+        // Synchronize linked ClientActions
+        var linkedActions = await _dbContext.ClientActions
+            .Where(a => a.EngagementId == engagementId &&
+                        a.TenantId == tenantId &&
+                        a.LinkedConditionId == conditionId)
+            .ToListAsync();
+
+        // 1. Pre-validate state transitions for all linked actions before mutating
+        foreach (var action in linkedActions)
+        {
+            if (!string.Equals(action.Status, ClientActionStatus.Completed, StringComparison.OrdinalIgnoreCase))
+            {
+                ClientActionStateMachine.EnsureCanTransition(action.Status, ClientActionStatus.Completed);
+            }
+        }
+
+        // 2. Mutate condition state
+        var now = DateTime.UtcNow;
+        condition.Status = ConditionStatus.Satisfied;
+        condition.SatisfiedAt = now;
+        condition.SatisfiedBy = actor;
+        condition.RejectionReason = null;
+        condition.UpdatedAt = now;
+        condition.UpdatedBy = actor;
+
+        // 3. Mutate linked actions
+        var changedActions = new List<(ClientAction Action, string FromStatus)>();
+        foreach (var action in linkedActions)
+        {
+            if (!string.Equals(action.Status, ClientActionStatus.Completed, StringComparison.OrdinalIgnoreCase))
+            {
+                var fromStatus = action.Status;
+                action.Status = ClientActionStatus.Completed;
+                action.CompletedAt = now;
+                action.CompletedByActor = actor;
+                action.UpdatedAt = now;
+                changedActions.Add((action, fromStatus));
+            }
+        }
+
+        // 4. Persist condition and linked actions together atomically
+        await _dbContext.SaveChangesAsync();
+
+        // 5. Publish events only after successful database persistence
+        foreach (var (action, fromStatus) in changedActions)
+        {
+            await _auditPublisher.PublishEventAsync(
+                action.EngagementId,
+                action.TenantId,
+                actor,
+                "ClientActionStatusChanged",
+                new
+                {
+                    actionId = action.ActionId,
+                    title = action.Title,
+                    fromStatus,
+                    toStatus = ClientActionStatus.Completed,
+                    sourceType = action.SourceType,
+                    sourceId = conditionId,
+                    reason = (string?)null
+                });
+        }
+
+        return MapToClientSafeDto(condition);
+    }
+
+    public async Task<ClientSafeConditionDto> RejectConditionAsync(
+        Guid engagementId,
+        Guid conditionId,
+        string tenantId,
+        string callerClientId,
+        RejectApprovalDto dto,
+        string actor)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId) || engagementId == Guid.Empty || conditionId == Guid.Empty || string.IsNullOrWhiteSpace(callerClientId))
+        {
+            throw new ArgumentException("TenantId, EngagementId, ConditionId, and CallerClientId are required.");
+        }
+
+        if (dto == null || string.IsNullOrWhiteSpace(dto.Reason))
+        {
+            throw new ArgumentException("Rejection reason is required.", nameof(dto));
+        }
+
+        var trimmedReason = dto.Reason.Trim();
+        if (trimmedReason.Length > 500)
+        {
+            throw new ArgumentException("Rejection reason cannot exceed 500 characters.", nameof(dto));
+        }
+
+        var engagement = await _dbContext.Engagements
+            .FirstOrDefaultAsync(e => e.EngagementId == engagementId && e.TenantId == tenantId);
+
+        if (engagement == null)
+        {
+            throw new KeyNotFoundException($"Engagement '{engagementId}' was not found.");
+        }
+
+        if (!string.Equals(engagement.ClientId, callerClientId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new UnauthorizedAccessException($"Client '{callerClientId}' is not the assigned client for engagement '{engagementId}'.");
+        }
+
+        if (engagement.Status == EngagementStatus.Closed || engagement.Status == EngagementStatus.Cancelled)
+        {
+            throw new InvalidOperationException($"Cannot decide approval condition on {engagement.Status.ToString().ToLowerInvariant()} engagement.");
+        }
+
+        var condition = await _dbContext.EngagementConditions
+            .FirstOrDefaultAsync(c => c.ConditionId == conditionId && c.EngagementId == engagementId && c.TenantId == tenantId);
+
+        if (condition == null)
+        {
+            throw new KeyNotFoundException($"Condition '{conditionId}' was not found for engagement '{engagementId}'.");
+        }
+
+        if (!condition.IsActive)
+        {
+            throw new InvalidOperationException($"Cannot decide on deactivated condition '{conditionId}'.");
+        }
+
+        if (!string.Equals(condition.Type, ConditionType.Approval, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Only Approval conditions can be approved or rejected. Condition '{conditionId}' has type '{condition.Type}'.");
+        }
+
+        // Repeated same decision -> Idempotent
+        if (string.Equals(condition.Status, ConditionStatus.Rejected, StringComparison.OrdinalIgnoreCase))
+        {
+            return MapToClientSafeDto(condition);
+        }
+
+        // Opposite stale decision
+        if (string.Equals(condition.Status, ConditionStatus.Satisfied, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Condition '{conditionId}' has already been approved and cannot be rejected.");
+        }
+
+        // Synchronize linked ClientActions
+        var linkedActions = await _dbContext.ClientActions
+            .Where(a => a.EngagementId == engagementId &&
+                        a.TenantId == tenantId &&
+                        a.LinkedConditionId == conditionId)
+            .ToListAsync();
+
+        // 1. Pre-validate state transitions for all linked actions before mutating
+        foreach (var action in linkedActions)
+        {
+            if (!string.Equals(action.Status, ClientActionStatus.Rejected, StringComparison.OrdinalIgnoreCase))
+            {
+                ClientActionStateMachine.EnsureCanTransition(action.Status, ClientActionStatus.Rejected);
+            }
+        }
+
+        // 2. Mutate condition state
+        var now = DateTime.UtcNow;
+        condition.Status = ConditionStatus.Rejected;
+        condition.RejectionReason = trimmedReason;
+        condition.SatisfiedAt = null;
+        condition.SatisfiedBy = null;
+        condition.UpdatedAt = now;
+        condition.UpdatedBy = actor;
+
+        // 3. Mutate linked actions
+        var changedRejectActions = new List<(ClientAction Action, string FromStatus)>();
+        foreach (var action in linkedActions)
+        {
+            if (!string.Equals(action.Status, ClientActionStatus.Rejected, StringComparison.OrdinalIgnoreCase))
+            {
+                var fromStatus = action.Status;
+                action.Status = ClientActionStatus.Rejected;
+                action.CompletedAt = null;
+                action.CompletedByActor = null;
+                action.UpdatedAt = now;
+                changedRejectActions.Add((action, fromStatus));
+            }
+        }
+
+        // 4. Persist condition and linked actions together atomically
+        await _dbContext.SaveChangesAsync();
+
+        // 5. Publish events only after successful database persistence
+        foreach (var (action, fromStatus) in changedRejectActions)
+        {
+            await _auditPublisher.PublishEventAsync(
+                action.EngagementId,
+                action.TenantId,
+                actor,
+                "ClientActionStatusChanged",
+                new
+                {
+                    actionId = action.ActionId,
+                    title = action.Title,
+                    fromStatus,
+                    toStatus = ClientActionStatus.Rejected,
+                    sourceType = action.SourceType,
+                    sourceId = conditionId,
+                    reason = trimmedReason
+                });
+        }
+
+        return MapToClientSafeDto(condition);
+    }
+
     /// <summary>
     /// Helper mapping RequiredBeforeStage to 1-based StageNumber for linked ClientActions.
     /// Because a condition gates entering RequiredBeforeStage, the action belongs in the stage
@@ -601,6 +865,7 @@ public class ConditionService : IConditionService
             DeactivatedBy = condition.DeactivatedBy,
             DeactivatedAt = condition.DeactivatedAt,
             DeactivationReason = condition.DeactivationReason,
+            RejectionReason = condition.RejectionReason,
             SatisfiedAt = condition.SatisfiedAt,
             SatisfiedBy = condition.SatisfiedBy,
             IsOverdue = condition.DueDateUtc.HasValue && condition.DueDateUtc.Value < DateTime.UtcNow && condition.Status == ConditionStatus.Pending
@@ -617,6 +882,7 @@ public class ConditionService : IConditionService
             Type = condition.Type,
             Status = condition.Status,
             ApprovalStatus = DeriveApprovalStatus(condition.Type, condition.Status),
+            RejectionReason = condition.RejectionReason,
             RequiredBeforeStage = condition.RequiredBeforeStage.ToString(),
             DueDateUtc = condition.DueDateUtc,
             Amount = condition.Amount,
