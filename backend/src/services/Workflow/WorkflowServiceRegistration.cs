@@ -3,6 +3,7 @@ using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
 using Custodian.Workflow.Services.Gates;
 using Custodian.Workflow.Services.Kafka;
+using Custodian.Workflow.Services.Meetings;
 using Custodian.Workflow.Services.NextAction;
 using Custodian.Workflow.Services.Sla;
 using Custodian.Workflow.Services.Stall;
@@ -25,6 +26,9 @@ public static class WorkflowServiceRegistration
         services.AddScoped<IConditionReader, ConditionReader>();
         services.AddScoped<IConditionService, ConditionService>();
         services.AddSingleton(TimeProvider.System);
+
+        // CSTD 32: Meeting Schedule
+        services.AddScoped<IMeetingService, MeetingService>();
 
         // CSTD-33: SLA thresholds are config driven (no runtime editing); stall state is computed on read.
         services.Configure<SlaOptions>(configuration.GetSection(SlaOptions.SectionName));
