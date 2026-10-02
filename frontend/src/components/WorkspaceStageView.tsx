@@ -44,6 +44,7 @@ import {
     Ban,
     XCircle
 } from 'lucide-react';
+import { MeetingList } from './MeetingList';
 
 interface WorkspaceStageViewProps {
     engagementId: string;
@@ -1802,6 +1803,13 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                     </div>
                 );
             })()}
+                    {/* CSTD-32: Meetings for this engagement */}
+                    {tenantId && (
+                        <MeetingList 
+                            engagementId={engagementId}
+                            tenantId={tenantId}
+                        />
+                    )}
 
                     {/* Integrated Artifact Launchers */}
                     <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
