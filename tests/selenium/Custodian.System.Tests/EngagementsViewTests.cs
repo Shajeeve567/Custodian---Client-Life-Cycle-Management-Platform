@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using OpenQA.Selenium;
 using Xunit;
 
@@ -6,10 +7,11 @@ namespace Custodian.System.Tests;
 public class EngagementsViewTests : TestBase
 {
     [Fact]
-    public void TC06_EngagementsDashboard_SearchAndFilters()
+    public async Task TC06_EngagementsDashboard_SearchAndFilters()
     {
-        // Authenticate into workspace session
-        InjectMockAuthSession("Owner", "tenant-alpha", "Alpha Agency");
+        // Authenticate into valid workspace session
+        var ws = await QaApiHelper.RegisterAndSetupWorkspaceAsync("TC06");
+        InjectRealAuthSession(ws.Token, ws.TenantId, ws.TenantName);
         Driver.Navigate().GoToUrl($"{BaseUrl}/engagements");
 
         // Verify Workspace Layout Header
@@ -33,9 +35,10 @@ public class EngagementsViewTests : TestBase
     }
 
     [Fact]
-    public void TC07_NewEngagementModal_ShouldOpenAndCloseCleanly()
+    public async Task TC07_NewEngagementModal_ShouldOpenAndCloseCleanly()
     {
-        InjectMockAuthSession("Owner", "tenant-alpha", "Alpha Agency");
+        var ws = await QaApiHelper.RegisterAndSetupWorkspaceAsync("TC07");
+        InjectRealAuthSession(ws.Token, ws.TenantId, ws.TenantName);
         Driver.Navigate().GoToUrl($"{BaseUrl}/engagements");
 
         // Click 'New Engagement' CTA

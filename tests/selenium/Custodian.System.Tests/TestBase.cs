@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Support.UI;
@@ -10,9 +11,17 @@ public abstract class TestBase : IDisposable
     protected readonly IWebDriver Driver;
     protected readonly WebDriverWait Wait;
     protected const string BaseUrl = "http://localhost:3000";
+    protected readonly string DownloadDir;
+    protected static readonly string EvidenceDir = Path.GetFullPath(
+        Path.Combine(AppContext.BaseDirectory, "../../../../evidence/sprint3-final")
+    );
 
     protected TestBase()
     {
+        DownloadDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "downloads", Guid.NewGuid().ToString("N")));
+        Directory.CreateDirectory(DownloadDir);
+        Directory.CreateDirectory(EvidenceDir);
+
         var options = new ChromeOptions();
         
         // Use headless mode if CI or SELENIUM_HEADLESS environment variable is set
@@ -26,14 +35,53 @@ public abstract class TestBase : IDisposable
         options.AddArgument("--no-sandbox");
         options.AddArgument("--disable-dev-shm-usage");
 
+        // Enable automatic downloads
+        options.AddUserProfilePreference("download.default_directory", DownloadDir);
+        options.AddUserProfilePreference("download.prompt_for_download", false);
+        options.AddUserProfilePreference("download.directory_upgrade", true);
+        options.AddUserProfilePreference("safebrowsing.enabled", true);
+
         Driver = new ChromeDriver(options);
         Driver.Manage().Timeouts().ImplicitWait = TimeSpan.FromSeconds(5);
-        Wait = new WebDriverWait(Driver, TimeSpan.FromSeconds(10));
+        Wait = new WebDriverWait(Driver, TimeSpan.FromSeconds(15));
+    }
+
+    /// <summary>
+    /// Captures a screenshot to tests/selenium/evidence/sprint3-final/
+    /// </summary>
+    public void CaptureEvidence(string filename)
+    {
+        try
+        {
+            Directory.CreateDirectory(EvidenceDir);
+            var screenshot = ((ITakesScreenshot)Driver).GetScreenshot();
+            var targetPath = Path.Combine(EvidenceDir, filename);
+            screenshot.SaveAsFile(targetPath);
+            Console.WriteLine($"📸 QA REPORT EVIDENCE: {targetPath}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to capture evidence {filename}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Injects an authenticated real session into localStorage.
+    /// </summary>
+    protected void InjectRealAuthSession(string token, string tenantId, string tenantName)
+    {
+        Driver.Navigate().GoToUrl(BaseUrl);
+        var js = (IJavaScriptExecutor)Driver;
+        js.ExecuteScript(
+            $"localStorage.setItem('custodian_token', '{token}');" +
+            $"localStorage.setItem('custodian_tenant_id', '{tenantId}');" +
+            $"localStorage.setItem('custodian_tenant_name', '{tenantName}');"
+        );
     }
 
     /// <summary>
     /// Injects an authenticated mock session into localStorage.
-    /// This bypasses database writes for Sprint 1 UI testing while exercising protected dashboards.
+    /// Backward compatible for legacy Sprint 1 tests.
     /// </summary>
     protected void InjectMockAuthSession(string role = "Owner", string tenantId = "tenant-alpha", string tenantName = "Alpha Corp")
     {
@@ -60,6 +108,18 @@ public abstract class TestBase : IDisposable
         catch
         {
             // Teardown safety
+        }
+
+        try
+        {
+            if (Directory.Exists(DownloadDir))
+            {
+                Directory.Delete(DownloadDir, true);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup
         }
     }
 }
