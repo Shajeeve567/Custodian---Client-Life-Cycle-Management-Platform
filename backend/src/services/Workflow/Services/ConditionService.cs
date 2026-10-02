@@ -49,7 +49,18 @@ public class ConditionService : IConditionService
             .ThenBy(c => c.CreatedAt)
             .ToListAsync();
 
-        return conditions.Select(MapToStaffDto);
+        if (conditions.Count == 0)
+        {
+            return Enumerable.Empty<ConditionResponseDto>();
+        }
+
+        var targetClientId = await _dbContext.Engagements
+            .AsNoTracking()
+            .Where(e => e.EngagementId == engagementId && e.TenantId == tenantId)
+            .Select(e => e.ClientId)
+            .FirstOrDefaultAsync();
+
+        return conditions.Select(c => MapToStaffDto(c, targetClientId));
     }
 
     public async Task<IEnumerable<ClientSafeConditionDto>> GetConditionsClientAsync(Guid engagementId, string tenantId, string callerClientId)
@@ -86,7 +97,18 @@ public class ConditionService : IConditionService
             .AsNoTracking()
             .FirstOrDefaultAsync(c => c.ConditionId == conditionId && c.EngagementId == engagementId && c.TenantId == tenantId);
 
-        return condition == null ? null : MapToStaffDto(condition);
+        if (condition == null)
+        {
+            return null;
+        }
+
+        var targetClientId = await _dbContext.Engagements
+            .AsNoTracking()
+            .Where(e => e.EngagementId == engagementId && e.TenantId == tenantId)
+            .Select(e => e.ClientId)
+            .FirstOrDefaultAsync();
+
+        return MapToStaffDto(condition, targetClientId);
     }
 
     public async Task<ClientSafeConditionDto?> GetConditionByIdClientAsync(Guid engagementId, Guid conditionId, string tenantId, string callerClientId)
@@ -260,7 +282,7 @@ public class ConditionService : IConditionService
                     createdBy = condition.CreatedBy
                 });
 
-            return MapToStaffDto(condition);
+            return MapToStaffDto(condition, engagement.ClientId);
         }
         catch
         {
@@ -376,7 +398,13 @@ public class ConditionService : IConditionService
                 updatedBy = condition.UpdatedBy
             });
 
-        return MapToStaffDto(condition);
+        var targetClientId = await _dbContext.Engagements
+            .AsNoTracking()
+            .Where(e => e.EngagementId == engagementId && e.TenantId == tenantId)
+            .Select(e => e.ClientId)
+            .FirstOrDefaultAsync();
+
+        return MapToStaffDto(condition, targetClientId);
     }
 
     public async Task<ConditionResponseDto> DeactivateConditionAsync(Guid engagementId, Guid conditionId, string tenantId, DeactivateConditionDto dto, string actor)
@@ -394,10 +422,16 @@ public class ConditionService : IConditionService
             throw new KeyNotFoundException($"Condition '{conditionId}' was not found for engagement '{engagementId}'.");
         }
 
+        var targetClientId = await _dbContext.Engagements
+            .AsNoTracking()
+            .Where(e => e.EngagementId == engagementId && e.TenantId == tenantId)
+            .Select(e => e.ClientId)
+            .FirstOrDefaultAsync();
+
         // Idempotent: already inactive -> return 200 without publishing duplicate event
         if (!condition.IsActive)
         {
-            return MapToStaffDto(condition);
+            return MapToStaffDto(condition, targetClientId);
         }
 
         condition.IsActive = false;
@@ -430,7 +464,7 @@ public class ConditionService : IConditionService
                 deactivationReason = condition.DeactivationReason
             });
 
-        return MapToStaffDto(condition);
+        return MapToStaffDto(condition, targetClientId);
     }
 
     public async Task SetConditionStatusAsync(Guid conditionId, string tenantId, string newStatus, string actor, string? reason = null)
@@ -515,16 +549,43 @@ public class ConditionService : IConditionService
         return (int)requiredBeforeStage;
     }
 
-    private static ConditionResponseDto MapToStaffDto(EngagementCondition condition)
+    public static string? DeriveApprovalStatus(string type, string status)
+    {
+        if (!string.Equals(type, ConditionType.Approval, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (string.Equals(status, ConditionStatus.Pending, StringComparison.OrdinalIgnoreCase))
+        {
+            return "Pending";
+        }
+
+        if (string.Equals(status, ConditionStatus.Satisfied, StringComparison.OrdinalIgnoreCase))
+        {
+            return "Approved";
+        }
+
+        if (string.Equals(status, ConditionStatus.Rejected, StringComparison.OrdinalIgnoreCase))
+        {
+            return "Rejected";
+        }
+
+        return status;
+    }
+
+    private static ConditionResponseDto MapToStaffDto(EngagementCondition condition, string? targetClientId = null)
     {
         return new ConditionResponseDto
         {
             ConditionId = condition.ConditionId,
             EngagementId = condition.EngagementId,
             TenantId = condition.TenantId,
+            TargetClientId = targetClientId,
             Type = condition.Type,
             IsActive = condition.IsActive,
             Status = condition.Status,
+            ApprovalStatus = DeriveApprovalStatus(condition.Type, condition.Status),
             RequiredBeforeStage = condition.RequiredBeforeStage.ToString(),
             Title = condition.Title,
             Description = condition.Description,
@@ -555,6 +616,7 @@ public class ConditionService : IConditionService
             Description = condition.Description,
             Type = condition.Type,
             Status = condition.Status,
+            ApprovalStatus = DeriveApprovalStatus(condition.Type, condition.Status),
             RequiredBeforeStage = condition.RequiredBeforeStage.ToString(),
             DueDateUtc = condition.DueDateUtc,
             Amount = condition.Amount,

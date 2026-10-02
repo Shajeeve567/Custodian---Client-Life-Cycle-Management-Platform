@@ -11,9 +11,11 @@ public class ConditionResponseDto
     public Guid ConditionId { get; set; }
     public Guid EngagementId { get; set; }
     public string TenantId { get; set; } = string.Empty;
+    public string? TargetClientId { get; set; }
     public string Type { get; set; } = string.Empty;
     public bool IsActive { get; set; }
     public string Status { get; set; } = string.Empty;
+    public string? ApprovalStatus { get; set; }
     public string RequiredBeforeStage { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
@@ -44,6 +46,7 @@ public class ClientSafeConditionDto
     public string? Description { get; set; }
     public string Type { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+    public string? ApprovalStatus { get; set; }
     public string RequiredBeforeStage { get; set; } = string.Empty;
     public DateTime? DueDateUtc { get; set; }
     public decimal? Amount { get; set; }

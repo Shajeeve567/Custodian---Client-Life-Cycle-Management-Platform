@@ -471,9 +471,11 @@ export interface EngagementCondition {
     conditionId: string;
     engagementId: string;
     tenantId: string;
+    targetClientId?: string;
     type: ConditionType;
     isActive: boolean;
     status: ConditionStatus;
+    approvalStatus?: 'Pending' | 'Approved' | 'Rejected' | null;
     requiredBeforeStage: EngagementStage | string;
     title: string;
     description?: string;
@@ -500,6 +502,7 @@ export interface ClientSafeCondition {
     description?: string;
     type: ConditionType;
     status: ConditionStatus;
+    approvalStatus?: 'Pending' | 'Approved' | 'Rejected' | null;
     requiredBeforeStage: string;
     dueDateUtc?: string;
     amount?: number;

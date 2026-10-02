@@ -75,6 +75,8 @@ public class ConditionServiceTests
         Assert.Equal("Scope approval", result.Title);
         Assert.True(result.IsActive);
         Assert.Equal(ConditionStatus.Pending, result.Status);
+        Assert.Equal("Pending", result.ApprovalStatus);
+        Assert.Equal("client-001", result.TargetClientId);
         Assert.Equal("Execution", result.RequiredBeforeStage);
         Assert.Equal("Confidential margin details", result.InternalNote);
 
@@ -548,5 +550,229 @@ public class ConditionServiceTests
     {
         var mapped = ConditionService.MapRequiredBeforeStageToStageNumber(stage);
         Assert.Equal(expectedStageNumber, mapped);
+    }
+
+    // =========================================================================
+    // CSTD-142: Approval State Model & Target Client Tests
+    // =========================================================================
+
+    [Fact]
+    public async Task CSTD142_StaffApprovalResponse_ContainsTargetClientIdAndPendingApprovalStatus()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-cstd142";
+        var expectedClientId = "client-target-999";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: expectedClientId);
+
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+
+        var attachDto = new AttachConditionDto
+        {
+            Type = ConditionType.Approval,
+            Title = "Contract Signoff",
+            RequiredBeforeStage = EngagementStage.Execution,
+            DueDateUtc = DateTime.UtcNow.AddDays(5)
+        };
+
+        // Act 1: AttachConditionAsync
+        var attachResult = await service.AttachConditionAsync(engagementId, tenantId, attachDto, "staff-1");
+
+        // Assert 1: AttachConditionAsync returns TargetClientId and ApprovalStatus
+        Assert.Equal(expectedClientId, attachResult.TargetClientId);
+        Assert.Equal(ConditionStatus.Pending, attachResult.Status);
+        Assert.Equal("Pending", attachResult.ApprovalStatus);
+
+        // Act 2: GetConditionByIdStaffAsync
+        var byIdResult = await service.GetConditionByIdStaffAsync(engagementId, attachResult.ConditionId, tenantId);
+        Assert.NotNull(byIdResult);
+        Assert.Equal(expectedClientId, byIdResult!.TargetClientId);
+        Assert.Equal(ConditionStatus.Pending, byIdResult.Status);
+        Assert.Equal("Pending", byIdResult.ApprovalStatus);
+
+        // Act 3: GetConditionsStaffAsync
+        var listResult = (await service.GetConditionsStaffAsync(engagementId, tenantId)).ToList();
+        Assert.Single(listResult);
+        Assert.Equal(expectedClientId, listResult[0].TargetClientId);
+        Assert.Equal(ConditionStatus.Pending, listResult[0].Status);
+        Assert.Equal("Pending", listResult[0].ApprovalStatus);
+
+        // Act 4: UpdateConditionAsync
+        var updateResult = await service.UpdateConditionAsync(engagementId, attachResult.ConditionId, tenantId,
+            new UpdateConditionDto { Title = "Updated Signoff" }, "staff-1");
+        Assert.Equal(expectedClientId, updateResult.TargetClientId);
+        Assert.Equal(ConditionStatus.Pending, updateResult.Status);
+        Assert.Equal("Pending", updateResult.ApprovalStatus);
+
+        // Act 5: DeactivateConditionAsync
+        var deactResult = await service.DeactivateConditionAsync(engagementId, attachResult.ConditionId, tenantId,
+            new DeactivateConditionDto { Reason = "No longer needed" }, "staff-1");
+        Assert.Equal(expectedClientId, deactResult.TargetClientId);
+        Assert.Equal("Pending", deactResult.ApprovalStatus);
+    }
+
+    [Fact]
+    public async Task CSTD142_ApprovalStateModel_Satisfied_MapsRawSatisfiedAndApprovedStatus()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-cstd142";
+        var clientId = "client-cstd142";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId);
+
+        var mockClientAction = new Mock<IClientActionService>();
+        mockClientAction.Setup(c => c.ClientOwnsEngagementAsync(engagementId, tenantId, clientId))
+            .ReturnsAsync(true);
+
+        var service = new ConditionService(db, mockClientAction.Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+
+        var condition = await service.AttachConditionAsync(engagementId, tenantId, new AttachConditionDto
+        {
+            Type = ConditionType.Approval,
+            Title = "KYC Approval",
+            RequiredBeforeStage = EngagementStage.Execution
+        }, "staff-1");
+
+        // Act: Transition to Satisfied
+        await service.SetConditionStatusAsync(condition.ConditionId, tenantId, ConditionStatus.Satisfied, "staff-1");
+
+        // Staff read
+        var staffResult = await service.GetConditionByIdStaffAsync(engagementId, condition.ConditionId, tenantId);
+        Assert.NotNull(staffResult);
+        Assert.Equal(ConditionStatus.Satisfied, staffResult!.Status); // raw status remains Satisfied
+        Assert.Equal("Approved", staffResult.ApprovalStatus);         // business approval status is Approved
+        Assert.Equal(clientId, staffResult.TargetClientId);
+
+        // Client read
+        var clientResult = await service.GetConditionByIdClientAsync(engagementId, condition.ConditionId, tenantId, clientId);
+        Assert.NotNull(clientResult);
+        Assert.Equal(ConditionStatus.Satisfied, clientResult!.Status); // raw status remains Satisfied
+        Assert.Equal("Approved", clientResult.ApprovalStatus);         // client-safe approval status is Approved
+
+        var clientList = (await service.GetConditionsClientAsync(engagementId, tenantId, clientId)).ToList();
+        Assert.Single(clientList);
+        Assert.Equal(ConditionStatus.Satisfied, clientList[0].Status);
+        Assert.Equal("Approved", clientList[0].ApprovalStatus);
+    }
+
+    [Fact]
+    public async Task CSTD142_ApprovalStateModel_Rejected_MapsRawRejectedAndRejectedStatus()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-cstd142";
+        var clientId = "client-cstd142";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId);
+
+        var mockClientAction = new Mock<IClientActionService>();
+        mockClientAction.Setup(c => c.ClientOwnsEngagementAsync(engagementId, tenantId, clientId))
+            .ReturnsAsync(true);
+
+        var service = new ConditionService(db, mockClientAction.Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+
+        var condition = await service.AttachConditionAsync(engagementId, tenantId, new AttachConditionDto
+        {
+            Type = ConditionType.Approval,
+            Title = "Document Approval",
+            RequiredBeforeStage = EngagementStage.Execution
+        }, "staff-1");
+
+        // Act: Transition to Rejected
+        await service.SetConditionStatusAsync(condition.ConditionId, tenantId, ConditionStatus.Rejected, "client-1", "Missing required seal");
+
+        // Staff read
+        var staffResult = await service.GetConditionByIdStaffAsync(engagementId, condition.ConditionId, tenantId);
+        Assert.NotNull(staffResult);
+        Assert.Equal(ConditionStatus.Rejected, staffResult!.Status);
+        Assert.Equal("Rejected", staffResult.ApprovalStatus);
+        Assert.Equal(clientId, staffResult.TargetClientId);
+
+        // Client read
+        var clientResult = await service.GetConditionByIdClientAsync(engagementId, condition.ConditionId, tenantId, clientId);
+        Assert.NotNull(clientResult);
+        Assert.Equal(ConditionStatus.Rejected, clientResult!.Status);
+        Assert.Equal("Rejected", clientResult.ApprovalStatus);
+    }
+
+    [Fact]
+    public async Task CSTD142_PaymentCondition_HasNullApprovalStatus_ForStaffAndClient()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-cstd142";
+        var clientId = "client-pay";
+        await SeedEngagementAsync(db, engagementId, tenantId, clientId: clientId);
+
+        var mockClientAction = new Mock<IClientActionService>();
+        mockClientAction.Setup(c => c.ClientOwnsEngagementAsync(engagementId, tenantId, clientId))
+            .ReturnsAsync(true);
+
+        var service = new ConditionService(db, mockClientAction.Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+
+        var attachDto = new AttachConditionDto
+        {
+            Type = ConditionType.Payment,
+            Title = "Deposit Payment",
+            Amount = 500m,
+            Currency = "USD",
+            PaymentType = ConditionPaymentType.Upfront,
+            RequiredBeforeStage = EngagementStage.Execution
+        };
+
+        // Act: Attach Payment
+        var attachResult = await service.AttachConditionAsync(engagementId, tenantId, attachDto, "staff-1");
+
+        // Assert: ApprovalStatus is null, TargetClientId is populated
+        Assert.Equal(ConditionType.Payment, attachResult.Type);
+        Assert.Null(attachResult.ApprovalStatus);
+        Assert.Equal(clientId, attachResult.TargetClientId);
+
+        // Staff read
+        var staffResult = await service.GetConditionByIdStaffAsync(engagementId, attachResult.ConditionId, tenantId);
+        Assert.NotNull(staffResult);
+        Assert.Null(staffResult!.ApprovalStatus);
+        Assert.Equal(clientId, staffResult.TargetClientId);
+
+        // Client read
+        var clientResult = await service.GetConditionByIdClientAsync(engagementId, attachResult.ConditionId, tenantId, clientId);
+        Assert.NotNull(clientResult);
+        Assert.Null(clientResult!.ApprovalStatus);
+    }
+
+    [Theory]
+    [InlineData("Approval", "Pending", "Pending")]
+    [InlineData("Approval", "Satisfied", "Approved")]
+    [InlineData("Approval", "Rejected", "Rejected")]
+    [InlineData("approval", "pending", "Pending")]
+    [InlineData("approval", "satisfied", "Approved")]
+    [InlineData("approval", "rejected", "Rejected")]
+    [InlineData("Payment", "Pending", null)]
+    [InlineData("Payment", "Satisfied", null)]
+    [InlineData("Payment", "Rejected", null)]
+    [InlineData("Custom", "Pending", null)]
+    public void CSTD142_DeriveApprovalStatus_MapsExpectedValues(string type, string status, string? expectedApprovalStatus)
+    {
+        var result = ConditionService.DeriveApprovalStatus(type, status);
+        Assert.Equal(expectedApprovalStatus, result);
+    }
+
+    [Fact]
+    public async Task CSTD142_GetConditionsStaffAsync_EmptyList_ReturnsEmptyImmediately()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-cstd142";
+        var service = new ConditionService(db, new Mock<IClientActionService>().Object, new Mock<IAuditPublisher>().Object, NullLogger<ConditionService>.Instance);
+
+        // Act
+        var result = await service.GetConditionsStaffAsync(engagementId, tenantId);
+
+        // Assert
+        Assert.Empty(result);
     }
 }
