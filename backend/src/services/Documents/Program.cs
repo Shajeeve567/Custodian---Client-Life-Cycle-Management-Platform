@@ -2,6 +2,7 @@ using Custodian.Documents.Data;
 using Confluent.Kafka;
 using Custodian.Documents.Services;
 using Custodian.Documents.Services.Kafka;
+using Custodian.Documents.Services.Reports;
 using Custodian.Shared.Auth;
 using Custodian.Shared.Http;
 using Custodian.Shared.Tenancy;
@@ -23,6 +24,7 @@ builder.Services.AddSingleton<IDocumentValidator, DocumentValidator>();
 
 builder.Services.AddScoped<IStorageService, LocalStorageService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
+builder.Services.AddScoped<IValidationVerificationReportService, ValidationVerificationReportService>();
 
 // Engagement access lives in Workflow (client ownership; staff only for engagements they are responsible
 // for). Documents asks it, as the caller, before a Client or Staff member touches an engagement's documents.
