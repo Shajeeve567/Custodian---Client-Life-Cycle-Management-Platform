@@ -167,7 +167,7 @@ a0000001-0000-0000-0000-000000000007
 
 ### Cleanup SQL Statement
 ```sql
-DELETE FROM documents 
+DELETE FROM documents
 WHERE tenant_id = '2f0557d4-45cf-4b62-84d5-c03486405f9a'
   AND document_id IN (
     'a0000001-0000-0000-0000-000000000001',
