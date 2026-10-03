@@ -165,7 +165,7 @@ public class AuditEventsController : ControllerBase
             return BadRequest(new { message = "engagementId is required" });
         }
 
-        var denied = await EnsureCanReadEngagementAsync(engagementId, effectiveTenantId);
+        var denied = await EnsureEngagementExistsAsync(engagementId, effectiveTenantId);
         if (denied != null)
         {
             return denied;
@@ -277,6 +277,28 @@ public class AuditEventsController : ControllerBase
         return CryptographicOperations.FixedTimeEquals(
             Encoding.UTF8.GetBytes(supplied),
             Encoding.UTF8.GetBytes(_ingestion.ApiKey!));
+    }
+
+    /// <summary>
+    /// Unconditional existence/visibility check used by the verify path. Unlike
+    /// EnsureCanReadEngagementAsync, it does not short-circuit for Owners: a verify
+    /// request must 404 for an unknown engagement rather than return a valid-empty
+    /// result, which would manufacture proof of an engagement that does not exist.
+    /// </summary>
+    private async Task<ActionResult?> EnsureEngagementExistsAsync(Guid engagementId, Guid tenantId)
+    {
+        if (_engagementAccess is null) return AccessUnavailable();
+
+        try
+        {
+            var allowed = await _engagementAccess.CanAccessEngagementAsync(
+                engagementId, tenantId, HttpContext?.RequestAborted ?? default);
+            return allowed ? null : NotFound(new { message = EngagementNotFound });
+        }
+        catch (EngagementAccessUnavailableException)
+        {
+            return AccessUnavailable();
+        }
     }
 
     private (Guid TenantId, bool IsForbidden) TryResolveTenantId(string? tenantIdQuery = null, params Guid?[] fallbackTenantIds)
