@@ -2,9 +2,12 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Custodian.Audit.DTOs;
+using Custodian.Audit.Services.EngagementAccess;
 using Custodian.Shared.Messaging;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
 
 namespace Custodian.Audit.Tests.Integration;
@@ -24,19 +27,54 @@ public class HashChainEndpointTests : IClassFixture<WebApplicationFactory<Progra
     // Audit writes are service-only: the test host is given an ingestion key and the client sends it.
     private const string IngestionKey = "integration-test-ingestion-key-0123456789";
 
+    /// <summary>
+    /// The one GUID the stubbed access client refuses. Any other GUID is treated as
+    /// "caller may access". This is enough to test the 404 path without a live Workflow.
+    /// </summary>
+    private static readonly Guid DeniedEngagementId = Guid.Parse("00000000-0000-0000-0000-0000000000ff");
+
     public HashChainEndpointTests(WebApplicationFactory<Program> factory)
     {
-        _factory = factory.WithWebHostBuilder(b => b.UseSetting(AuditIngestion.ConfigKey, IngestionKey));
+        _factory = factory.WithWebHostBuilder(b =>
+        {
+            b.UseSetting(AuditIngestion.ConfigKey, IngestionKey);
+            // Verify now calls the Workflow access client for every caller (not just Staff).
+            // Stub it so these tests run without Workflow. Default policy: allow every
+            // engagement except DeniedEngagementId.
+            b.ConfigureServices(services =>
+            {
+                services.RemoveAll<IEngagementAccessClient>();
+                services.AddSingleton<IEngagementAccessClient>(
+                    new StubEngagementAccessClient(id => id != DeniedEngagementId));
+            });
+        });
     }
 
     [SkippableFact]
-    public async Task Verify_UnknownEngagement_ReturnsVerifiedTrueZero()
+    public async Task Verify_UnknownEngagement_Returns404()
     {
         Skip.IfNot(DbReachable, "MySQL not reachable — integration test skipped.");
 
         var tenant = "tenant-integ-" + Guid.NewGuid().ToString("N");
         var client = BuildClient(tenant);
-        var engagementId = Guid.NewGuid();
+
+        // The stub denies this engagement — verifying must 404, not
+        // report "verified with 0 events", which would manufacture proof
+        // of an engagement that does not exist.
+        var response = await client.GetAsync(
+            $"/api/audit-events/verify?engagementId={DeniedEngagementId}");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [SkippableFact]
+    public async Task Verify_KnownEngagementWithNoEvents_ReturnsVerifiedTrueZero()
+    {
+        Skip.IfNot(DbReachable, "MySQL not reachable — integration test skipped.");
+
+        var tenant = "tenant-integ-" + Guid.NewGuid().ToString("N");
+        var client = BuildClient(tenant);
+        var engagementId = Guid.NewGuid();   // stub allows everything except DeniedEngagementId
 
         var result = await VerifyAsync(client, engagementId);
 
@@ -152,6 +190,41 @@ public class HashChainEndpointTests : IClassFixture<WebApplicationFactory<Progra
         Assert.Equal("previous_hash does not match the prior event's hash", result.Reason);
     }
 
+    /// <summary>
+    /// CSTD-41 acceptance criterion: verification never mutates event data.
+    /// Snapshot every column before and after two verify calls; assert byte-identical.
+    /// </summary>
+    [SkippableFact]
+    public async Task Verify_DoesNotMutateEventRows()
+    {
+        Skip.IfNot(DbReachable, "MySQL not reachable — integration test skipped.");
+
+        var tenant = "tenant-integ-" + Guid.NewGuid().ToString("N");
+        var client = BuildClient(tenant);
+        var engagementId = Guid.NewGuid();
+
+        await PostThreeAsync(client, engagementId);
+
+        var before = SnapshotRows(tenant, engagementId);
+        Assert.Equal(3, before.Count);
+
+        // Verify twice — the second call must see the same state as the first.
+        await VerifyAsync(client, engagementId);
+        await VerifyAsync(client, engagementId);
+
+        var after = SnapshotRows(tenant, engagementId);
+
+        Assert.Equal(before.Count, after.Count);
+        for (var i = 0; i < before.Count; i++)
+        {
+            Assert.Equal(before[i].EventId, after[i].EventId);
+            Assert.Equal(before[i].SequenceNumber, after[i].SequenceNumber);
+            Assert.Equal(before[i].Hash, after[i].Hash);
+            Assert.Equal(before[i].PreviousHash, after[i].PreviousHash);
+            Assert.Equal(before[i].Payload, after[i].Payload);
+        }
+    }
+
     // ---------- helpers ----------
 
     private HttpClient BuildClient(string tenant)
@@ -208,6 +281,51 @@ public class HashChainEndpointTests : IClassFixture<WebApplicationFactory<Progra
         cmd.ExecuteNonQuery();
     }
 
+    private static List<(Guid EventId, long SequenceNumber, string? Hash, string? PreviousHash, string Payload)> SnapshotRows(
+        string tenant, Guid engagementId)
+    {
+        var cs = GetConnectionString();
+        using var conn = new MySqlConnector.MySqlConnection(cs);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT event_id, sequence_number, hash, previous_hash, payload
+            FROM events
+            WHERE tenant_id = @tenant AND engagement_id = @engagement
+            ORDER BY sequence_number";
+        cmd.Parameters.AddWithValue("@tenant", TenantStringToGuid(tenant));
+        cmd.Parameters.AddWithValue("@engagement", engagementId.ToString());
+
+        var rows = new List<(Guid, long, string?, string?, string)>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add((
+                reader.GetGuid(0),
+                reader.GetInt64(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3),
+                reader.GetString(4)));
+        }
+        return rows;
+    }
+
+    /// <summary>
+    /// Mirrors the Audit service's tenant-id normalisation: non-Guid tenant
+    /// strings are hashed (SHA-256, first 16 bytes) into a deterministic Guid
+    /// before being persisted in the events.tenant_id column.
+    /// </summary>
+    private static Guid TenantStringToGuid(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return Guid.Empty;
+        if (Guid.TryParse(value, out var parsed)) return parsed;
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        var hash = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(value));
+        var bytes = new byte[16];
+        Array.Copy(hash, bytes, 16);
+        return new Guid(bytes);
+    }
+
     private static bool ProbeMySql()
     {
         try
@@ -228,5 +346,23 @@ public class HashChainEndpointTests : IClassFixture<WebApplicationFactory<Progra
                ?? Environment.GetEnvironmentVariable("ConnectionStrings__Default")
                ?? throw new InvalidOperationException(
                    "Set ConnectionStrings__Default (or AzureMySqlConnection) to run integration tests.");
+    }
+
+    /// <summary>
+    /// Test-only stub of <see cref="IEngagementAccessClient"/>. Verify calls this
+    /// for every caller now, so the test host needs a deterministic replacement
+    /// instead of reaching the live Workflow service.
+    /// </summary>
+    private sealed class StubEngagementAccessClient : IEngagementAccessClient
+    {
+        private readonly Func<Guid, bool> _predicate;
+
+        public StubEngagementAccessClient(Func<Guid, bool> predicate) => _predicate = predicate;
+
+        public Task<bool> CanAccessEngagementAsync(Guid engagementId, Guid tenantId, CancellationToken ct = default)
+            => Task.FromResult(_predicate(engagementId));
+
+        public Task<IReadOnlySet<Guid>> GetAccessibleEngagementIdsAsync(Guid tenantId, CancellationToken ct = default)
+            => Task.FromResult((IReadOnlySet<Guid>)new HashSet<Guid>());
     }
 }
