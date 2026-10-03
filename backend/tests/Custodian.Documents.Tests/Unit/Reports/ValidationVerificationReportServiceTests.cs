@@ -326,7 +326,7 @@ public class ValidationVerificationReportServiceTests
 
         // Staff only permitted to access eng1 and eng2
         var permittedEngagements = new[] { eng1, eng2 };
-        var staffResult = await service.ComputeAggregateAsync(tenantId, permittedEngagements);
+        var staffResult = await service.ComputeAggregateAsync(tenantId, allowedEngagementIds: permittedEngagements);
 
         Assert.Equal(2, staffResult.TotalUploads);
         Assert.Equal(2, staffResult.AutomaticCompliance.Compliant);
@@ -359,7 +359,7 @@ public class ValidationVerificationReportServiceTests
 
         // Staff member with 0 assigned engagements
         var emptyList = Array.Empty<Guid>();
-        var result = await service.ComputeAggregateAsync(tenantId, emptyList);
+        var result = await service.ComputeAggregateAsync(tenantId, allowedEngagementIds: emptyList);
 
         Assert.Equal(0, result.TotalUploads);
         Assert.True(result.IsEmpty);

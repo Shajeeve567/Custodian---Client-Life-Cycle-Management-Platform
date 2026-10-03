@@ -20,6 +20,7 @@ public class ValidationVerificationReportService : IValidationVerificationReport
 
     public async Task<ValidationVerificationData> ComputeAggregateAsync(
         string tenantId,
+        ValidationVerificationFilter? filter = null,
         IReadOnlyCollection<Guid>? allowedEngagementIds = null,
         CancellationToken ct = default)
     {
@@ -30,6 +31,11 @@ public class ValidationVerificationReportService : IValidationVerificationReport
 
         var normalizedTenantId = tenantId.Trim();
 
+        if (filter != null)
+        {
+            ValidationVerificationFilter.Validate(filter.From, filter.To);
+        }
+
         // If a non-null collection of allowed engagement IDs is empty (e.g., staff member with no assigned engagements),
         // return an empty result immediately without querying the database.
         if (allowedEngagementIds != null && allowedEngagementIds.Count == 0)
@@ -37,13 +43,45 @@ public class ValidationVerificationReportService : IValidationVerificationReport
             return ValidationVerificationData.Empty(normalizedTenantId);
         }
 
+        // If a specific engagement was requested in filter, verify against allowedEngagementIds when restricted
+        if (filter?.EngagementId.HasValue == true)
+        {
+            var requestedEngagementId = filter.EngagementId.Value;
+            if (allowedEngagementIds != null && !allowedEngagementIds.Contains(requestedEngagementId))
+            {
+                // Staff-style call: requested engagement outside allowed engagements -> zero-result dataset (do not leak)
+                return ValidationVerificationData.Empty(normalizedTenantId);
+            }
+        }
+
         var query = _dbContext.Documents
             .AsNoTracking()
             .Where(d => d.TenantId == normalizedTenantId && !d.IsDeleted);
 
-        if (allowedEngagementIds != null)
+        // Engagement filtering: target engagement filter takes precedence/intersects with allowedEngagementIds
+        if (filter?.EngagementId.HasValue == true)
+        {
+            query = query.Where(d => d.EngagementId == filter.EngagementId.Value);
+        }
+        else if (allowedEngagementIds != null)
         {
             query = query.Where(d => allowedEngagementIds.Contains(d.EngagementId));
+        }
+
+        // Date range filtering (UTC calendar-day inclusive semantics)
+        if (filter != null)
+        {
+            if (filter.FromUtc.HasValue)
+            {
+                var fromUtc = filter.FromUtc.Value;
+                query = query.Where(d => d.UploadedAt >= fromUtc);
+            }
+
+            if (filter.ToUtcExclusive.HasValue)
+            {
+                var toUtcExclusive = filter.ToUtcExclusive.Value;
+                query = query.Where(d => d.UploadedAt < toUtcExclusive);
+            }
         }
 
         var records = await query
