@@ -19,7 +19,9 @@ public class EndpointAuthorizationGuardTests
     {
         "ClientActionsController.CompleteAction",       // own plain tasks only (GetClientCompletionBlockReasonAsync)
         "ClientActionsController.UploadEvidence",       // outcome read from Documents, never the caller
-        "RequirementsController.SubmitRequirement"      // client submits requested information
+        "RequirementsController.SubmitRequirement",     // client submits requested information
+        "EngagementConditionsController.ApproveCondition", // CSTD-143: client approves condition
+        "EngagementConditionsController.RejectCondition"   // CSTD-143: client rejects condition
     };
 
     public static IEnumerable<object[]> WriteEndpoints() =>

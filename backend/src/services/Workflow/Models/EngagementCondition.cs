@@ -117,6 +117,9 @@ public class EngagementCondition
 
     public string? DeactivationReason { get; set; }
 
+    [MaxLength(500)]
+    public string? RejectionReason { get; set; }
+
     public DateTime? SatisfiedAt { get; set; }
 
     [MaxLength(100)]
