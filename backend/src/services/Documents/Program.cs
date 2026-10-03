@@ -5,6 +5,7 @@ using Custodian.Documents.Services.Kafka;
 using Custodian.Documents.Services.Reports;
 using Custodian.Shared.Auth;
 using Custodian.Shared.Http;
+using Custodian.Shared.Reporting;
 using Custodian.Shared.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -19,6 +20,8 @@ builder.Services.AddTenantContext();
 builder.Services.AddJwtAuthentication(builder.Configuration, builder.Environment);
 // Tenant APIs require a workspace token (tenant_id claim); see TenantAuthorizationExtensions.
 builder.Services.AddTenantScopedAuthorization();
+builder.Services.AddCustodianReporting();
+builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddSingleton<IDocumentValidator, DocumentValidator>();
 
@@ -32,6 +35,13 @@ builder.Services.AddScoped<IValidationVerificationReportService, ValidationVerif
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddHttpClient<Custodian.Documents.Services.EngagementAccess.IEngagementAccessClient,
     Custodian.Documents.Services.EngagementAccess.WorkflowEngagementAccessClient>(client =>
+{
+    var workflowBaseUrl = builder.Configuration["Services:WorkflowUrl"] ?? "http://localhost:5225";
+    client.BaseAddress = new Uri(workflowBaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(5);
+});
+
+builder.Services.AddHttpClient<IReportEngagementScopeResolver, WorkflowReportEngagementScopeResolver>(client =>
 {
     var workflowBaseUrl = builder.Configuration["Services:WorkflowUrl"] ?? "http://localhost:5225";
     client.BaseAddress = new Uri(workflowBaseUrl);
