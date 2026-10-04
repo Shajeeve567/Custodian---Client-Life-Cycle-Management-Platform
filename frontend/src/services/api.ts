@@ -42,6 +42,10 @@ import {
     StallQueueItem,
     Intervention,
     RecordInterventionRequest,
+    Meeting,
+    CreateMeetingRequest,
+    UpdateMeetingRequest,
+    RescheduleMeetingRequest,
 } from '../types';
 
 export const API_BASE = {
@@ -725,6 +729,42 @@ export const WorkflowApi = {
             headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
             body: JSON.stringify(req),
         });
+    },
+
+    async listMeetings(engagementId: string, tenantId: string): Promise<Meeting[]> {
+        return request<Meeting[]>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/meetings?tenantId=${encodeURIComponent(tenantId)}`,
+            { headers: { 'X-Tenant-ID': tenantId } });
+    },
+
+    async createMeeting(engagementId: string, req: CreateMeetingRequest, tenantId: string): Promise<Meeting> {
+        return request<Meeting>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/meetings?tenantId=${encodeURIComponent(tenantId)}`,
+            { method: 'POST', headers: { 'X-Tenant-ID': tenantId }, body: JSON.stringify(req) });
+    },
+
+    async updateMeeting(engagementId: string, meetingId: string, req: UpdateMeetingRequest, tenantId: string): Promise<Meeting> {
+        return request<Meeting>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/meetings/${meetingId}?tenantId=${encodeURIComponent(tenantId)}`,
+            { method: 'PUT', headers: { 'X-Tenant-ID': tenantId }, body: JSON.stringify(req) });
+    },
+
+    async updateMeetingStatus(engagementId: string, meetingId: string, status: string, tenantId: string): Promise<Meeting> {
+        return request<Meeting>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/meetings/${meetingId}/status?tenantId=${encodeURIComponent(tenantId)}`,
+            { method: 'PUT', headers: { 'X-Tenant-ID': tenantId }, body: JSON.stringify({ status }) });
+    },
+
+    async rescheduleMeeting(engagementId: string, meetingId: string, req: RescheduleMeetingRequest, tenantId: string): Promise<Meeting> {
+        return request<Meeting>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/meetings/${meetingId}/reschedule?tenantId=${encodeURIComponent(tenantId)}`,
+            { method: 'POST', headers: { 'X-Tenant-ID': tenantId }, body: JSON.stringify(req) });
+    },
+
+    async listMissedMeetings(tenantId: string): Promise<Meeting[]> {
+        return request<Meeting[]>(
+            `${API_BASE.WORKFLOW}/api/meetings/missed?tenantId=${encodeURIComponent(tenantId)}`,
+            { headers: { 'X-Tenant-ID': tenantId } });
     },
 };
 

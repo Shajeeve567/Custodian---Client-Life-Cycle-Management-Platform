@@ -15,6 +15,7 @@ public class WorkflowDbContext : DbContext
     public DbSet<EngagementCondition> EngagementConditions => Set<EngagementCondition>();
     public DbSet<StallRecord> StallRecords => Set<StallRecord>();
     public DbSet<Intervention> Interventions => Set<Intervention>();
+    public DbSet<Meeting> Meetings => Set<Meeting>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -219,6 +220,7 @@ public class WorkflowDbContext : DbContext
             entity.Property(e => e.EngagementId).HasColumnName("engagement_id").HasMaxLength(36).IsRequired();
             entity.Property(e => e.StallId).HasColumnName("stall_id").HasMaxLength(36);
             entity.Property(e => e.BlockerActionId).HasColumnName("blocker_action_id").HasMaxLength(36);
+            entity.Property(e => e.MeetingId).HasColumnName("meeting_id").HasMaxLength(36);
             entity.Property(e => e.Type).HasColumnName("type").HasMaxLength(30).IsRequired();
             entity.Property(e => e.Reason).HasColumnName("reason").HasColumnType("longtext").IsRequired();
             entity.Property(e => e.Outcome).HasColumnName("outcome").HasMaxLength(30).IsRequired();
@@ -226,6 +228,31 @@ public class WorkflowDbContext : DbContext
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
             entity.HasIndex(e => new { e.TenantId, e.EngagementId }, "idx_intervention_tenant_engagement");
             entity.HasIndex(e => new { e.TenantId, e.CreatedAt }, "idx_intervention_tenant_created");
+        });
+
+        modelBuilder.Entity<Meeting>(entity =>
+        {
+            entity.ToTable("meetings");
+            entity.HasKey(e => e.MeetingId);
+            entity.Property(e => e.MeetingId).HasColumnName("meeting_id").HasMaxLength(36);
+            entity.Property(e => e.TenantId).HasColumnName("tenant_id").HasMaxLength(36).IsRequired();
+            entity.Property(e => e.EngagementId).HasColumnName("engagement_id").HasMaxLength(36).IsRequired();
+            entity.Property(e => e.Type).HasColumnName("type").HasMaxLength(30).IsRequired();
+            entity.Property(e => e.Purpose).HasColumnName("purpose").HasMaxLength(200).IsRequired();
+            entity.Property(e => e.ScheduledAtUtc).HasColumnName("scheduled_at_utc").IsRequired();
+            entity.Property(e => e.DurationMinutes).HasColumnName("duration_minutes");
+            entity.Property(e => e.ParticipantsJson).HasColumnName("participants_json").HasColumnType("longtext");
+            entity.Property(e => e.Status).HasColumnName("status").HasMaxLength(20).IsRequired();
+            entity.Property(e => e.Importance).HasColumnName("importance").HasMaxLength(20).IsRequired();
+            entity.Property(e => e.RescheduledFromMeetingId).HasColumnName("rescheduled_from_meeting_id").HasMaxLength(36);
+            entity.Property(e => e.RescheduleReason).HasColumnName("reschedule_reason").HasColumnType("longtext");
+            entity.Property(e => e.CreatedBy).HasColumnName("created_by").HasMaxLength(100).IsRequired();
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
+
+            entity.HasIndex(e => new { e.TenantId, e.EngagementId }, "idx_meeting_tenant_engagement");
+            entity.HasIndex(e => new { e.TenantId, e.ScheduledAtUtc }, "idx_meeting_tenant_scheduled");
+            entity.HasIndex(e => new { e.TenantId, e.Status, e.Importance }, "idx_meeting_tenant_status_importance");
         });
     }
 }

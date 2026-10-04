@@ -3,6 +3,10 @@ export type UserRole = 'Owner' | 'Staff' | 'Client' | 'Admin';
 export type InterventionType = 'Meeting' | 'RecoveryAction';
 export type InterventionOutcome = 'Recovered' | 'Progressing' | 'NoChange' | 'Escalated';
 
+export type MeetingType = 'Normal' | 'Intervention';
+export type MeetingStatus = 'Scheduled' | 'Completed' | 'Cancelled' | 'Missed' | 'Rescheduled';
+export type MeetingImportance = 'Normal' | 'Important';
+
 export interface UserProfile {
     userId: string;
     username?: string;
@@ -562,4 +566,46 @@ export interface RecordInterventionRequest {
     outcome: InterventionOutcome | string;
     blockerActionId?: string | null;
     stallId?: string | null;
+    meetingId?: string | null;
+}
+
+export interface Meeting {
+    meetingId: string;
+    tenantId: string;
+    engagementId: string;
+    type: MeetingType | string;
+    purpose: string;
+    scheduledAtUtc: string;
+    durationMinutes?: number | null;
+    participants: string[];
+    status: MeetingStatus | string;
+    importance: MeetingImportance | string;
+    rescheduledFromMeetingId?: string | null;
+    rescheduleReason?: string | null;
+    createdBy: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface CreateMeetingRequest {
+    type: MeetingType | string;
+    purpose: string;
+    scheduledAtUtc: string;
+    durationMinutes?: number | null;
+    participants?: string[];
+    importance?: MeetingImportance | string;
+}
+
+export interface UpdateMeetingRequest {
+    purpose: string;
+    scheduledAtUtc: string;
+    durationMinutes?: number | null;
+    participants?: string[];
+    importance?: MeetingImportance | string;
+}
+
+export interface RescheduleMeetingRequest {
+    newScheduledAtUtc: string;
+    durationMinutes?: number | null;
+    reason?: string | null;
 }
