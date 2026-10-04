@@ -785,6 +785,30 @@ export const AuditApi = {
         if (tenantId) params.append('tenantId', tenantId);
         return request<ChainVerificationResult>(`${API_BASE.AUDIT}/api/audit-events/verify?${params.toString()}`);
     },
+
+    // CSTD-42: Flags an audit event with required reason, appending an immutable reference event to the chain.
+    async flagEvent(eventId: string, reason: string, tenantId?: string): Promise<AuditEvent> {
+        const url = tenantId
+            ? `${API_BASE.AUDIT}/api/audit-events/${encodeURIComponent(eventId)}/flag?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.AUDIT}/api/audit-events/${encodeURIComponent(eventId)}/flag`;
+        return request<AuditEvent>(url, {
+            method: 'POST',
+            body: JSON.stringify({ reason }),
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+        });
+    },
+
+    // CSTD-42: Archives an audit event with an optional reason without mutating the chain.
+    async archiveEvent(eventId: string, reason?: string, tenantId?: string): Promise<AuditEvent> {
+        const url = tenantId
+            ? `${API_BASE.AUDIT}/api/audit-events/${encodeURIComponent(eventId)}/archive?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.AUDIT}/api/audit-events/${encodeURIComponent(eventId)}/archive`;
+        return request<AuditEvent>(url, {
+            method: 'POST',
+            body: JSON.stringify({ reason: reason || undefined }),
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+        });
+    },
 };
 
 export const DocumentsApi = {

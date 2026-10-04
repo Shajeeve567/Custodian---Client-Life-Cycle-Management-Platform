@@ -95,20 +95,34 @@ public class AuditEventService : IAuditEventService
 
     public async Task<IEnumerable<AuditEventResponse>> GetEventsByEngagementAsync(Guid engagementId, Guid effectiveTenantId)
     {
-        var events = await _repository.GetByEngagementIdAsync(engagementId, effectiveTenantId);
-        return events.Select(MapToResponse);
+        var events = (await _repository.GetByEngagementIdAsync(engagementId, effectiveTenantId)).ToList();
+        var metadata = await _repository.GetMetadataForEventsAsync(events.Select(e => e.EventId), effectiveTenantId);
+        return events.Select(e =>
+        {
+            AuditEventMetadata? m = null;
+            metadata?.TryGetValue(e.EventId, out m);
+            return MapToResponse(e, m);
+        });
     }
 
     public async Task<IEnumerable<AuditEventResponse>> GetEventsByTenantAsync(Guid effectiveTenantId)
     {
-        var events = await _repository.GetByTenantIdAsync(effectiveTenantId);
-        return events.Select(MapToResponse);
+        var events = (await _repository.GetByTenantIdAsync(effectiveTenantId)).ToList();
+        var metadata = await _repository.GetMetadataForEventsAsync(events.Select(e => e.EventId), effectiveTenantId);
+        return events.Select(e =>
+        {
+            AuditEventMetadata? m = null;
+            metadata?.TryGetValue(e.EventId, out m);
+            return MapToResponse(e, m);
+        });
     }
 
     public async Task<AuditEventResponse?> GetEventByIdAsync(Guid eventId, Guid effectiveTenantId)
     {
         var auditEvent = await _repository.GetByIdAsync(eventId, effectiveTenantId);
-        return auditEvent != null ? MapToResponse(auditEvent) : null;
+        if (auditEvent == null) return null;
+        var metadata = await _repository.GetMetadataAsync(eventId, effectiveTenantId);
+        return MapToResponse(auditEvent, metadata);
     }
 
     public async Task<ChainVerificationResult> VerifyChainAsync(Guid effectiveTenantId, Guid engagementId)
@@ -176,7 +190,68 @@ public class AuditEventService : IAuditEventService
         };
     }
 
-    private static AuditEventResponse MapToResponse(AuditEvent entity)
+    public async Task<AuditEventResponse?> FlagEventAsync(Guid eventId, Guid effectiveTenantId, string reason, string actor)
+    {
+        if (eventId == Guid.Empty) throw new ArgumentException("EventId is required.", nameof(eventId));
+        if (string.IsNullOrWhiteSpace(reason)) throw new ArgumentException("Reason is required.", nameof(reason));
+        if (reason.Length > 500) throw new ArgumentException("Reason must not exceed 500 characters.", nameof(reason));
+
+        var result = await _repository.FlagEventAsync(effectiveTenantId, eventId, reason, actor, (previousHash, originalEvent) =>
+        {
+            var refEventId = Guid.NewGuid();
+            var utcNow = DateTime.UtcNow;
+            utcNow = utcNow.AddTicks(-(utcNow.Ticks % TimeSpan.TicksPerMicrosecond));
+
+            var payloadObj = new
+            {
+                referencedEventId = originalEvent.EventId.ToString(),
+                referencedEventType = originalEvent.Type,
+                referencedSequenceNumber = originalEvent.SequenceNumber,
+                reason = reason.Trim()
+            };
+            var payloadJson = JsonSerializer.Serialize(payloadObj);
+
+            var hashInput = new EventHashInput
+            {
+                EventId = refEventId,
+                EngagementId = originalEvent.EngagementId,
+                TenantId = effectiveTenantId,
+                Actor = actor,
+                Type = "AuditEventFlagged",
+                Timestamp = utcNow,
+                Payload = payloadJson,
+                PreviousHash = previousHash
+            };
+
+            return new AuditEvent
+            {
+                EventId = refEventId,
+                EngagementId = originalEvent.EngagementId,
+                TenantId = effectiveTenantId,
+                Actor = actor,
+                Type = "AuditEventFlagged",
+                Timestamp = utcNow,
+                Payload = payloadJson,
+                Hash = _hashChain.ComputeEventHash(hashInput),
+                PreviousHash = previousHash
+            };
+        });
+
+        if (result == null) return null;
+        return MapToResponse(result.Event, result.Metadata);
+    }
+
+    public async Task<AuditEventResponse?> ArchiveEventAsync(Guid eventId, Guid effectiveTenantId, string? reason, string actor)
+    {
+        if (eventId == Guid.Empty) throw new ArgumentException("EventId is required.", nameof(eventId));
+        if (reason != null && reason.Length > 500) throw new ArgumentException("Reason must not exceed 500 characters.", nameof(reason));
+
+        var result = await _repository.ArchiveEventAsync(effectiveTenantId, eventId, reason?.Trim(), actor);
+        if (result == null) return null;
+        return MapToResponse(result.Event, result.Metadata);
+    }
+
+    private static AuditEventResponse MapToResponse(AuditEvent entity, AuditEventMetadata? metadata = null)
     {
         return new AuditEventResponse
         {
@@ -190,6 +265,15 @@ public class AuditEventService : IAuditEventService
             SequenceNumber = entity.SequenceNumber,
             Hash = entity.Hash,
             PreviousHash = entity.PreviousHash,
+            IsFlagged = metadata?.IsFlagged ?? false,
+            FlagReason = metadata?.FlagReason,
+            FlaggedBy = metadata?.FlaggedBy,
+            FlaggedAt = metadata?.FlaggedAt,
+            FlagReferenceEventId = metadata?.FlagReferenceEventId,
+            IsArchived = metadata?.IsArchived ?? false,
+            ArchiveReason = metadata?.ArchiveReason,
+            ArchivedBy = metadata?.ArchivedBy,
+            ArchivedAt = metadata?.ArchivedAt,
         };
     }
 }

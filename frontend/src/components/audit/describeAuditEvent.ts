@@ -251,6 +251,18 @@ export function describeAuditEvent(evt: AuditEvent, lookups: AuditLookups): Audi
             };
         }
 
+        // ---------------- Audit Integrity (CSTD-42) ----------------
+        case 'AuditEventFlagged':
+            return {
+                category: 'Engagement',
+                label: 'Audit event flagged',
+                details: compact([
+                    p.reason && `Reason: ${p.reason}`,
+                    p.referencedEventType && `Referenced event: ${humanize(p.referencedEventType)} (#${p.referencedSequenceNumber})`,
+                ]),
+                tone: 'warning',
+            };
+
         default:
             return { category: 'Engagement', label: humanize(evt.type), details: [], tone: 'neutral' };
     }
