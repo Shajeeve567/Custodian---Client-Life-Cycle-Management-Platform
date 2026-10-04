@@ -4,7 +4,7 @@
 - **Target Tenant:** `2f0557d4-45cf-4b62-84d5-c03486405f9a` (QA-CSTD21-UI)
 - **Target Environment:** Azure MySQL QA Databases (`qa_document_db`, `qa_workflow_db`, `qa_identity_db`)
 - **Git Branch:** `feature/CSTD-31-validation-verification-report`
-- **Result:** **PASS** (Staff live access: Manual Staff login still required due to absence of Staff account in baseline tenant)
+- **Result:** **PASS** (Deterministic developer integration verification: COMPLETE; Independent QA CSTD-184 remains separate)
 
 ---
 
@@ -113,17 +113,21 @@ Live CSV export tests executed through `GET /api/reports/validation-verification
 
 ---
 
-## 5. Staff Live Access Check
+## 5. Staff Access Verification (Developer Integration vs. Independent QA)
 
-- **Assigned Staff ID in Fixtures:** `e4474a2a-c86a-448c-8038-6388ed5a3a5b`
-- **Identity Account Inspection:**
-  In `qa_identity_db`, user `e4474a2a-c86a-448c-8038-6388ed5a3a5b` is `qa.cstd21.owner.500e0e@test.com` with role `Owner`.
-  The only members of tenant `2f0557d4-45cf-4b62-84d5-c03486405f9a` are:
-  - `qa.cstd21.owner.500e0e@test.com` (`Owner`)
-  - `qa.cstd21.client.500e0e@test.com` (`Client`)
-  - `qa.pr47.client01@test.com` (`Client`)
-- **Status:** **MANUAL STAFF LOGIN REQUIRED**
-  Per instructions: No user roles were altered, no accounts modified, and no credentials reset. Automated test coverage in `ReportsControllerTests.cs` and `WorkflowReportEngagementScopeResolverTests.cs` fully validates Staff scope restrictions (staff-scoped filtering, zero-leak when outside allowed engagements, 503 fail-closed when Workflow is unavailable).
+- **Deterministic Developer Integration Verification:** **COMPLETE**
+  Staff behavior and security boundaries are deterministically proven via real ASP.NET Core HTTP integration tests in [`ValidationVerificationReportEndpointTests.cs`](file:///c:/CS/Y3S1/CSP/project/Custodian---Client-Life-Cycle-Management-Platform/backend/tests/Custodian.Documents.Tests/Integration/ValidationVerificationReportEndpointTests.cs):
+  - **Staff Role Accepted:** Calling `/api/reports/validation-verification` with an authenticated `Staff` JWT succeeds (`200 OK`).
+  - **Assigned Engagements Scope:** Staff callers are strictly scoped to engagements returned by the Workflow service (`ScenarioG_StaffAccess_ReturnsOnlyAssignedEngagementData`).
+  - **Zero Leak on Unassigned Requests:** When a Staff caller requests a specific `engagementId` not assigned to them, the service returns an empty/zero report (`ScenarioH_StaffUnassignedEngagement_ReturnsZeroReportWithoutLeak`), completely preventing unauthorized cross-engagement data leaks.
+  - **Staff with No Assignments:** Returns a valid empty/zero report without errors (`ScenarioM_StaffWithNoAssignedEngagements_ReturnsZeroReport`).
+  - **Tenant Boundary Maintained:** Multi-tenant claim checks strictly prevent any cross-tenant data access (`ScenarioF_TenantIsolation_TenantANeverSeesTenantBRecords`).
+  - **Fail-Closed on Dependency Outage:** When the Workflow scope resolver is unavailable or returns an error, the endpoint fails closed with HTTP `503 Service Unavailable` ProblemDetails (`ScenarioJ_WorkflowDependencyFailure_FailsClosedWith503ServiceUnavailable`).
+
+- **Independent Manual QA (CSTD-184):** **NOT PART OF THIS TASK**
+  - **Status:** Assigned to Independent QA (Shajeeve).
+  - Manual UI login with an interactive Staff user credential in the QA environment belongs to independent story validation CSTD-184 and is intentionally not claimed complete here.
+  - In baseline Azure QA database `qa_identity_db`, tenant `2f0557d4-45cf-4b62-84d5-c03486405f9a` contains Owner and Client accounts. Any interactive Staff UI verification will be performed under CSTD-184.
 
 ---
 

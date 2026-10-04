@@ -135,7 +135,10 @@ if (app.Environment.IsDevelopment())
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetService<DocumentDbContext>();
-    dbContext?.Database.Migrate();
+    if (dbContext?.Database.IsRelational() == true)
+    {
+        dbContext.Database.Migrate();
+    }
 }
 
 app.LogCustodianCors();
@@ -149,3 +152,5 @@ app.MapGet("/", () => Results.Ok(new { status = "Healthy", service = "Documents 
 app.MapControllers().RequireTenantMembership();
 
 app.Run();
+
+public partial class Program { }
