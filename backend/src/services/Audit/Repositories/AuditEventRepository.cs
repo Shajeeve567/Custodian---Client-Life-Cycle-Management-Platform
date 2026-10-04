@@ -178,7 +178,7 @@ public class AuditEventRepository : IAuditEventRepository
 
         var list = await _context.EventMetadata
             .AsNoTracking()
-            .Where(m => m.TenantId == tenantId && idList.Contains(m.EventId))
+            .Where(m => m.TenantId == tenantId && EF.Constant(idList).Contains(m.EventId))
             .ToListAsync();
 
         return list.ToDictionary(m => m.EventId);

@@ -79,3 +79,40 @@ Result: Passed: 130, Failed: 0, Skipped: 5 (MySQL probe tests skip safely when n
 cd frontend && npm run build
 Result: TypeScript typecheck and Vite production build succeeded in 11.08s.
 ```
+
+---
+
+## 7. Pomelo MySQL Runtime Blocker & Targeted Repair
+
+### Preflight Discovery & Failure
+During manual UI test preflight against live Azure MySQL (`qa_audit_db`), calling `GET /api/audit-events` or `GET /api/audit-events/engagement/{id}` failed with **HTTP 500**:
+```text
+System.InvalidOperationException: The LINQ expression '@__idList_1' could not be translated.
+Primitive collections support has not been enabled.
+   at Custodian.Audit.Repositories.AuditEventRepository.GetMetadataForEventsAsync(IEnumerable`1 eventIds, Guid tenantId) line 179
+```
+
+### Root Cause
+In EF Core 9 with `Pomelo.EntityFrameworkCore.MySql` (9.0.0-preview.2), evaluating `idList.Contains(m.EventId)` where `idList` is an in-memory `List<Guid>` triggers EF Core's primitive collection translation, which Pomelo's visitor rejects as unsupported.
+
+### Surgical Repair
+In `backend/src/services/Audit/Repositories/AuditEventRepository.cs`:
+Wrapped `idList` with `EF.Constant(idList)` in `GetMetadataForEventsAsync`:
+```csharp
+var list = await _context.EventMetadata
+    .AsNoTracking()
+    .Where(m => m.TenantId == tenantId && EF.Constant(idList).Contains(m.EventId))
+    .ToListAsync();
+```
+This causes EF Core to translate the in-memory GUID collection directly to standard SQL `WHERE a.tenant_id = @p AND a.event_id IN ('guid1', 'guid2')`, fully executed server-side in MySQL without client evaluation.
+
+### Live Azure MySQL Verification
+Verified against `qa_audit_db` using QA workspace `2f0557d4-45cf-4b62-84d5-c03486405f9a` and engagement `dd3ef3bd-109d-43c1-8a10-6b0a347e7bf1`:
+- `GET /api/audit-events?tenantId=...`: **200 OK** (135 events returned with hydrated metadata)
+- `GET /api/audit-events/engagement/dd3ef3bd...`: **200 OK** (41 events returned with hydrated metadata)
+- Metadata fields (`isFlagged: false`, `isArchived: false`) hydrated properly without HTTP 500.
+- Cross-tenant isolation verified: 0 non-tenant events returned.
+
+### Regression Coverage & Honest Limitations
+- **Unit/Pipeline Regression**: Added `Metadata_GetMetadataForEvents_TranslatesSuccessfullyUnderPomeloMySql` in `AuditEventMetadataTests.cs`. It invokes `IQueryable.ToQueryString()` configured with Pomelo's MySQL provider to deterministically assert that Pomelo translates the `EF.Constant` query to SQL `IN (...)` in CI without requiring a live MySQL daemon.
+- **Provider Limitation**: InMemory database tests do not exercise SQL expression translation visitors, which is why this provider-specific issue bypassed earlier InMemory unit tests. Offline `ToQueryString()` plus live Azure MySQL verification guarantee the fix works under real Pomelo MySQL.

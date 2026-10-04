@@ -337,4 +337,26 @@ public class AuditEventMetadataTests
         Assert.Equal("archiver@custodian.com", updated.ArchivedBy);
         Assert.True(updated.UpdatedAt >= initial.UpdatedAt);
     }
+
+    [Fact]
+    public void Metadata_GetMetadataForEvents_TranslatesSuccessfullyUnderPomeloMySql()
+    {
+        var dummyConn = "Server=localhost;Database=test;User=root;Password=pass;";
+        var serverVersion = new MySqlServerVersion(new Version(8, 0, 30));
+        var options = new DbContextOptionsBuilder<AuditDbContext>()
+            .UseMySql(dummyConn, serverVersion)
+            .Options;
+
+        using var db = new AuditDbContext(options);
+        var tenantId = Guid.NewGuid();
+        var idList = new List<Guid> { Guid.NewGuid(), Guid.NewGuid() };
+
+        var query = db.EventMetadata
+            .AsNoTracking()
+            .Where(m => m.TenantId == tenantId && EF.Constant(idList).Contains(m.EventId));
+
+        var sql = query.ToQueryString();
+        Assert.Contains("WHERE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("IN (", sql, StringComparison.OrdinalIgnoreCase);
+    }
 }
