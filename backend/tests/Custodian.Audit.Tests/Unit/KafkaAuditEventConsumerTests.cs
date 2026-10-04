@@ -331,4 +331,146 @@ public class KafkaAuditEventConsumerTests
     {
         Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), KafkaAuditEventConsumer.RetryDelay(failures));
     }
+
+    #region CSTD-144 Approval Events
+
+    [Fact]
+    public async Task ProcessMessageAsync_ApprovalAttachedEvent_RecordsAuditEvent()
+    {
+        // Arrange
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+
+        var json = BuildEnvelopeJson("ApprovalAttached", engagementId, "staff-user-1", new
+        {
+            conditionId,
+            clientId = "client-999",
+            type = "Approval",
+            title = "Board Sign-off",
+            requiredBeforeStage = "Execution",
+            dueDateUtc = DateTimeOffset.UtcNow.AddDays(7),
+            status = "Pending"
+        });
+
+        // Act
+        await consumer.ProcessMessageAsync(json);
+
+        // Assert
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var stored = await db.Events.SingleOrDefaultAsync(e => e.EngagementId == engagementId && e.Type == "ApprovalAttached");
+
+        Assert.NotNull(stored);
+        Assert.Equal("ApprovalAttached", stored.Type);
+        Assert.Equal("staff-user-1", stored.Actor);
+        Assert.Contains("Board Sign-off", stored.Payload);
+        Assert.Contains("client-999", stored.Payload);
+        Assert.Contains("Execution", stored.Payload);
+    }
+
+    [Fact]
+    public async Task ProcessMessageAsync_ApprovalCompletedEvent_RecordsAuditEvent()
+    {
+        // Arrange
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+
+        var json = BuildEnvelopeJson("ApprovalCompleted", engagementId, "client-actor", new
+        {
+            conditionId,
+            clientId = "client-999",
+            type = "Approval",
+            title = "Board Sign-off",
+            status = "Satisfied",
+            decision = "Approved",
+            decisionAt = DateTimeOffset.UtcNow
+        });
+
+        // Act
+        await consumer.ProcessMessageAsync(json);
+
+        // Assert
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var stored = await db.Events.SingleOrDefaultAsync(e => e.EngagementId == engagementId && e.Type == "ApprovalCompleted");
+
+        Assert.NotNull(stored);
+        Assert.Equal("ApprovalCompleted", stored.Type);
+        Assert.Equal("client-actor", stored.Actor);
+        Assert.Contains("Satisfied", stored.Payload);
+        Assert.Contains("Approved", stored.Payload);
+    }
+
+    [Fact]
+    public async Task ProcessMessageAsync_ApprovalRejectedEvent_RecordsAuditEvent()
+    {
+        // Arrange
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+
+        var json = BuildEnvelopeJson("ApprovalRejected", engagementId, "client-actor", new
+        {
+            conditionId,
+            clientId = "client-999",
+            type = "Approval",
+            title = "Board Sign-off",
+            status = "Rejected",
+            decision = "Rejected",
+            rejectionReason = "Budget overrun",
+            decisionAt = DateTimeOffset.UtcNow
+        });
+
+        // Act
+        await consumer.ProcessMessageAsync(json);
+
+        // Assert
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var stored = await db.Events.SingleOrDefaultAsync(e => e.EngagementId == engagementId && e.Type == "ApprovalRejected");
+
+        Assert.NotNull(stored);
+        Assert.Equal("ApprovalRejected", stored.Type);
+        Assert.Equal("client-actor", stored.Actor);
+        Assert.Contains("Rejected", stored.Payload);
+        Assert.Contains("Budget overrun", stored.Payload);
+    }
+
+    [Fact]
+    public async Task ProcessMessageAsync_ApprovalEvent_DuplicateEventId_PersistsExactlyOnce()
+    {
+        // Arrange
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+        var eventId = Guid.NewGuid().ToString("N");
+
+        var json = BuildEnvelopeJson("ApprovalAttached", engagementId, "staff-user-1", new
+        {
+            conditionId = Guid.NewGuid(),
+            clientId = "client-999",
+            type = "Approval",
+            title = "Board Sign-off",
+            requiredBeforeStage = "Execution",
+            dueDateUtc = DateTimeOffset.UtcNow.AddDays(7),
+            status = "Pending"
+        }, eventId: eventId);
+
+        // Act: Process identical message twice
+        await consumer.ProcessMessageAsync(json);
+        await consumer.ProcessMessageAsync(json);
+
+        // Assert: Exactly one row persisted
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var matching = await db.Events.Where(e => e.EngagementId == engagementId && e.Type == "ApprovalAttached").ToListAsync();
+        Assert.Single(matching);
+    }
+
+    #endregion
 }
