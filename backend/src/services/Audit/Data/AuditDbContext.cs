@@ -13,6 +13,8 @@ public class AuditDbContext : DbContext
 
     public DbSet<EngagementChainHead> ChainHeads { get; set; } = null!;
 
+    public DbSet<AuditEventMetadata> EventMetadata { get; set; } = null!;
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -110,6 +112,70 @@ public class AuditDbContext : DbContext
             entity.Property(h => h.UpdatedAt)
                 .HasColumnName("updated_at")
                 .IsRequired();
+        });
+
+        modelBuilder.Entity<AuditEventMetadata>(entity =>
+        {
+            entity.ToTable("audit_event_metadata");
+
+            entity.HasKey(m => m.EventId);
+
+            entity.Property(m => m.EventId)
+                .HasColumnName("event_id")
+                .HasMaxLength(36);
+
+            entity.Property(m => m.TenantId)
+                .HasColumnName("tenant_id")
+                .HasMaxLength(36)
+                .IsRequired();
+
+            entity.Property(m => m.IsFlagged)
+                .HasColumnName("is_flagged")
+                .HasDefaultValue(false)
+                .IsRequired();
+
+            entity.Property(m => m.FlagReason)
+                .HasColumnName("flag_reason")
+                .HasMaxLength(500);
+
+            entity.Property(m => m.FlaggedBy)
+                .HasColumnName("flagged_by")
+                .HasMaxLength(255);
+
+            entity.Property(m => m.FlaggedAt)
+                .HasColumnName("flagged_at");
+
+            entity.Property(m => m.FlagReferenceEventId)
+                .HasColumnName("flag_reference_event_id")
+                .HasMaxLength(36);
+
+            entity.Property(m => m.IsArchived)
+                .HasColumnName("is_archived")
+                .HasDefaultValue(false)
+                .IsRequired();
+
+            entity.Property(m => m.ArchiveReason)
+                .HasColumnName("archive_reason")
+                .HasMaxLength(500);
+
+            entity.Property(m => m.ArchivedBy)
+                .HasColumnName("archived_by")
+                .HasMaxLength(255);
+
+            entity.Property(m => m.ArchivedAt)
+                .HasColumnName("archived_at");
+
+            entity.Property(m => m.UpdatedAt)
+                .HasColumnName("updated_at")
+                .IsRequired();
+
+            entity.HasOne(m => m.Event)
+                .WithOne()
+                .HasForeignKey<AuditEventMetadata>(m => m.EventId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(m => m.TenantId, "idx_metadata_tenant_id");
+            entity.HasIndex(m => new { m.TenantId, m.EventId }, "idx_metadata_tenant_event");
         });
     }
 }

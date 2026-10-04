@@ -33,6 +33,22 @@ public interface IAuditEventRepository
     /// <returns>The recorded event, and whether it was created now (false: it already existed).</returns>
     /// <exception cref="AuditChainConflictException">The event id or the engagement's chain belongs to another tenant.</exception>
     Task<ChainAppendResult> AppendToChainAsync(Guid tenantId, Guid engagementId, Guid eventId, Func<string, AuditEvent> buildEvent);
+
+    /// <summary>
+    /// CSTD-42 (CSTD-241): Gets non-cryptographic metadata (flag/archive) for an event within the tenant.
+    /// </summary>
+    Task<AuditEventMetadata?> GetMetadataAsync(Guid eventId, Guid tenantId);
+
+    /// <summary>
+    /// CSTD-42 (CSTD-241): Gets non-cryptographic metadata for a batch of events within the tenant.
+    /// Keyed by event_id.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, AuditEventMetadata>> GetMetadataForEventsAsync(IEnumerable<Guid> eventIds, Guid tenantId);
+
+    /// <summary>
+    /// CSTD-42 (CSTD-241): Adds or updates non-cryptographic metadata for an event. Enforces tenant scoping.
+    /// </summary>
+    Task<AuditEventMetadata> SetMetadataAsync(AuditEventMetadata metadata);
 }
 
 public sealed record ChainAppendResult(AuditEvent Event, bool Created);

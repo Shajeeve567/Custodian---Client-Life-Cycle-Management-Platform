@@ -157,4 +157,73 @@ public class AuditEventRepository : IAuditEventRepository
     /// <summary>Duplicate key (a concurrent first append), deadlock or lock wait timeout.</summary>
     private static bool IsTransientConflict(Exception ex) =>
         ex.GetBaseException() is MySqlException { Number: 1062 or 1213 or 1205 };
+
+    public async Task<AuditEventMetadata?> GetMetadataAsync(Guid eventId, Guid tenantId)
+    {
+        return await _context.EventMetadata
+            .AsNoTracking()
+            .FirstOrDefaultAsync(m => m.EventId == eventId && m.TenantId == tenantId);
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, AuditEventMetadata>> GetMetadataForEventsAsync(IEnumerable<Guid> eventIds, Guid tenantId)
+    {
+        var idList = eventIds.Distinct().ToList();
+        if (idList.Count == 0)
+        {
+            return new Dictionary<Guid, AuditEventMetadata>();
+        }
+
+        var list = await _context.EventMetadata
+            .AsNoTracking()
+            .Where(m => m.TenantId == tenantId && idList.Contains(m.EventId))
+            .ToListAsync();
+
+        return list.ToDictionary(m => m.EventId);
+    }
+
+    public async Task<AuditEventMetadata> SetMetadataAsync(AuditEventMetadata metadata)
+    {
+        if (metadata == null) throw new ArgumentNullException(nameof(metadata));
+        if (metadata.EventId == Guid.Empty) throw new ArgumentException("EventId is required.", nameof(metadata));
+        if (metadata.TenantId == Guid.Empty) throw new ArgumentException("TenantId is required.", nameof(metadata));
+
+        // Strict tenant isolation: verify original event exists and belongs to the same tenant
+        var originalEvent = await _context.Events.AsNoTracking().FirstOrDefaultAsync(e => e.EventId == metadata.EventId);
+        if (originalEvent == null)
+        {
+            throw new KeyNotFoundException($"Audit event '{metadata.EventId}' was not found.");
+        }
+        if (originalEvent.TenantId != metadata.TenantId)
+        {
+            throw new AuditChainConflictException($"Audit event '{metadata.EventId}' belongs to another tenant.");
+        }
+
+        var existing = await _context.EventMetadata.FirstOrDefaultAsync(m => m.EventId == metadata.EventId);
+        if (existing != null)
+        {
+            if (existing.TenantId != metadata.TenantId)
+            {
+                throw new AuditChainConflictException($"Metadata for event '{metadata.EventId}' belongs to another tenant.");
+            }
+
+            existing.IsFlagged = metadata.IsFlagged;
+            existing.FlagReason = metadata.FlagReason;
+            existing.FlaggedBy = metadata.FlaggedBy;
+            existing.FlaggedAt = metadata.FlaggedAt;
+            existing.FlagReferenceEventId = metadata.FlagReferenceEventId;
+            existing.IsArchived = metadata.IsArchived;
+            existing.ArchiveReason = metadata.ArchiveReason;
+            existing.ArchivedBy = metadata.ArchivedBy;
+            existing.ArchivedAt = metadata.ArchivedAt;
+            existing.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync();
+            return existing;
+        }
+
+        metadata.UpdatedAt = DateTime.UtcNow;
+        _context.EventMetadata.Add(metadata);
+        await _context.SaveChangesAsync();
+        return metadata;
+    }
 }
