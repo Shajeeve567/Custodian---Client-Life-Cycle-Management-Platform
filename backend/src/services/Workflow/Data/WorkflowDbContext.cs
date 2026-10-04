@@ -175,6 +175,7 @@ public class WorkflowDbContext : DbContext
             entity.Property(c => c.DeactivatedBy).HasColumnName("deactivated_by").HasMaxLength(100);
             entity.Property(c => c.DeactivatedAt).HasColumnName("deactivated_at");
             entity.Property(c => c.DeactivationReason).HasColumnName("deactivation_reason");
+            entity.Property(c => c.RejectionReason).HasColumnName("rejection_reason").HasMaxLength(500);
             entity.Property(c => c.SatisfiedAt).HasColumnName("satisfied_at");
             entity.Property(c => c.SatisfiedBy).HasColumnName("satisfied_by").HasMaxLength(100);
 

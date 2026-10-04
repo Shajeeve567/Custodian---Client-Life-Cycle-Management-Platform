@@ -301,6 +301,140 @@ public class EngagementConditionsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// POST /api/engagements/{engagementId}/conditions/{conditionId}/approve
+    /// Client approves an active pending Approval condition (CSTD-143).
+    /// </summary>
+    [HttpPost("{conditionId:guid}/approve")]
+    [Authorize(Roles = "Client")]
+    public async Task<ActionResult<ClientSafeConditionDto>> ApproveCondition(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid conditionId,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        if (!IsClientCaller())
+        {
+            return Forbid();
+        }
+
+        var callerClientId = ResolveCallerClientId();
+        if (string.IsNullOrWhiteSpace(callerClientId))
+        {
+            return Forbid();
+        }
+
+        var actor = ResolveActor() ?? callerClientId;
+
+        try
+        {
+            var result = await _conditionService.ApproveConditionAsync(
+                engagementId, conditionId, effectiveTenantId, callerClientId, actor);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// POST /api/engagements/{engagementId}/conditions/{conditionId}/reject
+    /// Client rejects an active pending Approval condition with a mandatory reason (CSTD-143).
+    /// </summary>
+    [HttpPost("{conditionId:guid}/reject")]
+    [Authorize(Roles = "Client")]
+    public async Task<ActionResult<ClientSafeConditionDto>> RejectCondition(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid conditionId,
+        [FromBody] RejectApprovalDto dto,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        if (!IsClientCaller())
+        {
+            return Forbid();
+        }
+
+        var callerClientId = ResolveCallerClientId();
+        if (string.IsNullOrWhiteSpace(callerClientId))
+        {
+            return Forbid();
+        }
+
+        if (dto == null || !ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        if (string.IsNullOrWhiteSpace(dto.Reason))
+        {
+            return BadRequest(new { message = "Rejection reason is required." });
+        }
+
+        if (dto.Reason.Trim().Length > 500)
+        {
+            return BadRequest(new { message = "Rejection reason cannot exceed 500 characters." });
+        }
+
+        var actor = ResolveActor() ?? callerClientId;
+
+        try
+        {
+            var result = await _conditionService.RejectConditionAsync(
+                engagementId, conditionId, effectiveTenantId, callerClientId, dto, actor);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     private ActionResult? EnsureStaffOrOwner()
     {
         if (IsStaffOrOwnerCaller())

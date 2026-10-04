@@ -36,15 +36,7 @@ public sealed class KafkaNotificationConsumer : BackgroundService
 
         await Task.Yield(); // Ensure startup isn't blocked
 
-        var config = new ConsumerConfig
-        {
-            BootstrapServers = _kafkaOptions.BootstrapServers,
-            GroupId = _kafkaOptions.GroupId,
-            AutoOffsetReset = Enum.TryParse<AutoOffsetReset>(_kafkaOptions.AutoOffsetReset, true, out var reset)
-                ? reset
-                : AutoOffsetReset.Earliest,
-            EnableAutoCommit = false
-        };
+        var config = BuildConsumerConfig(_kafkaOptions);
 
         try
         {
@@ -87,6 +79,33 @@ public sealed class KafkaNotificationConsumer : BackgroundService
         {
             _logger.LogError(ex, "Failed to start or maintain Kafka consumer on {BootstrapServers}", _kafkaOptions.BootstrapServers);
         }
+    }
+
+    public static ConsumerConfig BuildConsumerConfig(KafkaOptions options)
+    {
+        var config = new ConsumerConfig
+        {
+            BootstrapServers = options.BootstrapServers,
+            GroupId = options.GroupId,
+            AutoOffsetReset = Enum.TryParse<AutoOffsetReset>(options.AutoOffsetReset, true, out var reset)
+                ? reset
+                : AutoOffsetReset.Earliest,
+            EnableAutoCommit = false
+        };
+
+        if (!string.IsNullOrWhiteSpace(options.SecurityProtocol) &&
+            Enum.TryParse<SecurityProtocol>(options.SecurityProtocol, true, out var secProtocol))
+        {
+            config.SecurityProtocol = secProtocol;
+            if (Enum.TryParse<SaslMechanism>(options.SaslMechanism ?? "Plain", true, out var saslMech))
+            {
+                config.SaslMechanism = saslMech;
+            }
+            config.SaslUsername = !string.IsNullOrWhiteSpace(options.SaslUsername) ? options.SaslUsername : "$ConnectionString";
+            config.SaslPassword = options.SaslPassword;
+        }
+
+        return config;
     }
 
     public async Task ProcessMessageAsync(string messageJson, CancellationToken ct = default)

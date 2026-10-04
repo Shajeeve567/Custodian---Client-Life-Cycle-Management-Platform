@@ -4,6 +4,7 @@ using Custodian.Workflow.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Workflow.Data.Migrations
 {
     [DbContext(typeof(WorkflowDbContext))]
-    partial class WorkflowDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261002141914_AddApprovalRejectionReason")]
+    partial class AddApprovalRejectionReason
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -390,11 +393,6 @@ namespace Workflow.Data.Migrations
                         .HasColumnType("char(36)")
                         .HasColumnName("engagement_id");
 
-                    b.Property<Guid?>("MeetingId")
-                        .HasMaxLength(36)
-                        .HasColumnType("char(36)")
-                        .HasColumnName("meeting_id");
-
                     b.Property<string>("Outcome")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -436,95 +434,6 @@ namespace Workflow.Data.Migrations
                     b.HasIndex(new[] { "TenantId", "EngagementId" }, "idx_intervention_tenant_engagement");
 
                     b.ToTable("interventions", (string)null);
-                });
-
-            modelBuilder.Entity("Custodian.Workflow.Models.Meeting", b =>
-                {
-                    b.Property<Guid>("MeetingId")
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(36)
-                        .HasColumnType("char(36)")
-                        .HasColumnName("meeting_id");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime(6)")
-                        .HasColumnName("created_at");
-
-                    b.Property<string>("CreatedBy")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("varchar(100)")
-                        .HasColumnName("created_by");
-
-                    b.Property<int?>("DurationMinutes")
-                        .HasColumnType("int")
-                        .HasColumnName("duration_minutes");
-
-                    b.Property<Guid>("EngagementId")
-                        .HasMaxLength(36)
-                        .HasColumnType("char(36)")
-                        .HasColumnName("engagement_id");
-
-                    b.Property<string>("Importance")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("varchar(20)")
-                        .HasColumnName("importance");
-
-                    b.Property<string>("ParticipantsJson")
-                        .HasColumnType("longtext")
-                        .HasColumnName("participants_json");
-
-                    b.Property<string>("Purpose")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("varchar(200)")
-                        .HasColumnName("purpose");
-
-                    b.Property<string>("RescheduleReason")
-                        .HasColumnType("longtext")
-                        .HasColumnName("reschedule_reason");
-
-                    b.Property<Guid?>("RescheduledFromMeetingId")
-                        .HasMaxLength(36)
-                        .HasColumnType("char(36)")
-                        .HasColumnName("rescheduled_from_meeting_id");
-
-                    b.Property<DateTime>("ScheduledAtUtc")
-                        .HasColumnType("datetime(6)")
-                        .HasColumnName("scheduled_at_utc");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("varchar(20)")
-                        .HasColumnName("status");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasMaxLength(36)
-                        .HasColumnType("varchar(36)")
-                        .HasColumnName("tenant_id");
-
-                    b.Property<string>("Type")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("varchar(30)")
-                        .HasColumnName("type");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("datetime(6)")
-                        .HasColumnName("updated_at");
-
-                    b.HasKey("MeetingId");
-
-                    b.HasIndex(new[] { "TenantId", "EngagementId" }, "idx_meeting_tenant_engagement");
-
-                    b.HasIndex(new[] { "TenantId", "ScheduledAtUtc" }, "idx_meeting_tenant_scheduled");
-
-                    b.HasIndex(new[] { "TenantId", "Status", "Importance" }, "idx_meeting_tenant_status_importance");
-
-                    b.ToTable("meetings", (string)null);
                 });
 
             modelBuilder.Entity("Custodian.Workflow.Models.Requirement", b =>

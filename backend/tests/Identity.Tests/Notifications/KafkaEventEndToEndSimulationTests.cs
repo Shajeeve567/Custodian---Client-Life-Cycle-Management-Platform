@@ -149,6 +149,143 @@ public class KafkaEventEndToEndSimulationTests
         _output.WriteLine("\n--> FULL EVENT-DRIVEN KAFKA + IN-APP + EMAIL PIPELINE VERIFIED SUCCESSFULLY! <--");
     }
 
+    [Fact]
+    public async Task Simulate_ApprovalAttached_DeliversInAppAndEmail_AndSuppressesDuplicatesOnRedelivery()
+    {
+        // 1. Setup DI Container & In-Memory DB
+        var services = new ServiceCollection();
+        services.AddLogging(builder => builder.AddProvider(new TestLoggerProvider(_output)));
+
+        var dbName = Guid.NewGuid().ToString();
+        services.AddDbContext<IdentityDbContext>(opt => opt.UseInMemoryDatabase(dbName));
+        var tenantId = Guid.NewGuid();
+        var clientId = Guid.NewGuid();
+
+        services.AddScoped(sp => new Custodian.Shared.Tenancy.TenantContext { TenantId = tenantId.ToString() });
+        services.AddScoped<INotificationRepository, NotificationRepository>();
+        services.AddScoped<IClientProfileRepository, ClientProfileRepository>();
+
+        // Register Strategies & Dispatcher with Singleton Deduplicator
+        services.AddScoped<INotificationDeliveryStrategy, InAppPortalNotificationStrategy>();
+        services.AddScoped<INotificationDeliveryStrategy, ResendEmailNotificationStrategy>();
+        services.AddSingleton<IEventDeduplicator, InMemoryEventDeduplicator>();
+        services.AddSingleton<IEventToMessageMapper, EventToClientSafeMessageMapper>();
+        services.AddScoped<INotificationDispatcher, ClientNotificationDispatcher>();
+
+        var emailSendCount = 0;
+        EmailMessage? sentEmail = null;
+        var resendMock = new Mock<IResend>();
+        resendMock.Setup(r => r.EmailSendAsync(It.IsAny<EmailMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<EmailMessage, CancellationToken>((msg, _) =>
+            {
+                emailSendCount++;
+                sentEmail = msg;
+            })
+            .ReturnsAsync((EmailMessage _, CancellationToken _) =>
+            {
+                var response = (ResendResponse<Guid>)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(ResendResponse<Guid>));
+                foreach (var field in typeof(ResendResponse).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
+                {
+                    if (field.FieldType == typeof(bool)) field.SetValue(response, true);
+                    if (field.FieldType == typeof(System.Net.HttpStatusCode)) field.SetValue(response, System.Net.HttpStatusCode.OK);
+                }
+                return response;
+            });
+
+        services.AddSingleton(resendMock.Object);
+        services.AddSingleton(Options.Create(new ResendOptions
+        {
+            ApiKey = "re_test_live_key",
+            FromEmail = "Custodian <onboarding@resend.dev>"
+        }));
+        services.AddSingleton(Options.Create(new KafkaOptions { Enabled = true }));
+        services.AddTransient<KafkaNotificationConsumer>();
+
+        var provider = services.BuildServiceProvider();
+
+        // 2. Prepare Sample Client in Database
+        using (var scope = provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+            db.Clients.Add(new ClientProfile
+            {
+                Id = clientId,
+                TenantId = tenantId,
+                Name = "Acme Corp Client",
+                Email = "client.contact@acme.com",
+                Status = UserStatus.Active,
+                CreatedAtUtc = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // 3. Construct a real Workflow Kafka message envelope for ApprovalAttached
+        var workflowPayload = new
+        {
+            engagementId = Guid.NewGuid(),
+            engagementTitle = "Quarterly Tax Engagement",
+            clientId = clientId,
+            actor = "Advisor Alice",
+            data = new
+            {
+                conditionId = Guid.NewGuid(),
+                clientId = clientId,
+                type = "Approval",
+                title = "Sign Engagement Letter",
+                requiredBeforeStage = "Review",
+                dueDateUtc = DateTime.UtcNow.AddDays(7),
+                status = "Pending"
+            }
+        };
+
+        var eventId = "evt-approval-" + Guid.NewGuid().ToString("N");
+        var kafkaEnvelope = new KafkaEnvelope(
+            EventId: eventId,
+            EventType: "ApprovalAttached",
+            TenantId: tenantId.ToString(),
+            OccurredAtUtc: DateTimeOffset.UtcNow,
+            Payload: JsonSerializer.SerializeToElement(workflowPayload)
+        );
+
+        var rawKafkaMessageJson = JsonSerializer.Serialize(kafkaEnvelope);
+
+        // 4. Simulate Kafka consumer picking up the message first time
+        var consumer = provider.GetRequiredService<KafkaNotificationConsumer>();
+        await consumer.ProcessMessageAsync(rawKafkaMessageJson);
+
+        // 5. Verify In-App Notification and Email on first delivery
+        using (var scope = provider.CreateScope())
+        {
+            var notificationRepo = scope.ServiceProvider.GetRequiredService<INotificationRepository>();
+            var clientNotifications = (await notificationRepo.GetByClientAsync(clientId, tenantId)).ToList();
+
+            Assert.Single(clientNotifications);
+            Assert.False(clientNotifications[0].IsRead);
+            Assert.Equal("ApprovalAttached", clientNotifications[0].SourceEventType);
+            Assert.Contains("Sign Engagement Letter", clientNotifications[0].Message);
+            Assert.Contains("awaiting your review in the portal", clientNotifications[0].Message);
+        }
+
+        Assert.NotNull(sentEmail);
+        Assert.Equal(1, emailSendCount);
+        Assert.Equal("Approval Required: Sign Engagement Letter", sentEmail.Subject);
+        Assert.Contains("client.contact@acme.com", sentEmail.To.Select(t => t.Email));
+
+        // 6. Simulate REDELIVERY with the SAME EventId
+        await consumer.ProcessMessageAsync(rawKafkaMessageJson);
+
+        // 7. Verify NO duplicate in-app notification and NO duplicate email sent
+        using (var scope = provider.CreateScope())
+        {
+            var notificationRepo = scope.ServiceProvider.GetRequiredService<INotificationRepository>();
+            var clientNotifications = (await notificationRepo.GetByClientAsync(clientId, tenantId)).ToList();
+
+            Assert.Single(clientNotifications); // Still exactly 1 in DB
+        }
+
+        Assert.Equal(1, emailSendCount); // Still exactly 1 email sent
+    }
+
     private class TestLoggerProvider : ILoggerProvider
     {
         private readonly ITestOutputHelper _output;

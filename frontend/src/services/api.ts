@@ -36,6 +36,7 @@ import {
     AttachConditionRequest,
     UpdateConditionRequest,
     DeactivateConditionRequest,
+    RejectApprovalRequest,
     NextActionResult,
     UpdateClientActionRequest,
     StallQueueItem,
@@ -163,6 +164,7 @@ export async function request<T = any>(
 /** Report endpoints (each hosted by the service that owns the data). */
 export const ReportsApi = {
     slaPerformanceUrl: () => `${API_BASE.WORKFLOW}/api/reports/sla-performance`,
+    validationVerificationUrl: () => `${API_BASE.DOCUMENTS}/api/reports/validation-verification`,
 };
 
 /** RFC 7807 body of a failed report request (see docs/reporting.md, Errors). */
@@ -652,13 +654,36 @@ export const WorkflowApi = {
     },
 
     async attachCondition(engagementId: string, req: AttachConditionRequest, tenantId?: string): Promise<EngagementCondition> {
+        const stageMap: Record<string, number> = {
+            Onboarding: 0,
+            DocumentCollection: 1,
+            Verification: 2,
+            Execution: 3,
+            Closure: 4,
+            onboarding: 0,
+            documentcollection: 1,
+            verification: 2,
+            execution: 3,
+            closure: 4,
+        };
+        const stageOrdinal = req.requiredBeforeStage !== undefined && req.requiredBeforeStage !== null
+            ? (typeof req.requiredBeforeStage === 'number'
+                ? req.requiredBeforeStage
+                : stageMap[req.requiredBeforeStage] ?? req.requiredBeforeStage)
+            : undefined;
+
+        const payload = {
+            ...req,
+            ...(stageOrdinal !== undefined ? { requiredBeforeStage: stageOrdinal } : {}),
+        };
+
         const url = tenantId
             ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions?tenantId=${encodeURIComponent(tenantId)}`
             : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions`;
         return request<EngagementCondition>(url, {
             method: 'POST',
             headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
-            body: JSON.stringify(req),
+            body: JSON.stringify(payload),
         });
     },
 
@@ -681,6 +706,28 @@ export const WorkflowApi = {
             method: 'PUT',
             headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
             body: JSON.stringify({ reason }),
+        });
+    },
+
+    // CSTD-145: Client Approval Decisions
+    async approveCondition(engagementId: string, conditionId: string, tenantId?: string): Promise<ClientSafeCondition> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/approve?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/approve`;
+        return request<ClientSafeCondition>(url, {
+            method: 'POST',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+        });
+    },
+
+    async rejectCondition(engagementId: string, conditionId: string, req: RejectApprovalRequest, tenantId?: string): Promise<ClientSafeCondition> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/reject?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/reject`;
+        return request<ClientSafeCondition>(url, {
+            method: 'POST',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify(req),
         });
     },
 

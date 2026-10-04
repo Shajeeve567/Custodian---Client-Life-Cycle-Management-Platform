@@ -325,4 +325,97 @@ public class EventToClientSafeMessageMapperTests
         Assert.Contains("passport.pdf", result.Message);
         Assert.Contains("The scan is cut off.", result.Message);
     }
+
+    #region CSTD-144 Approval Event Tests
+
+    [Fact]
+    public void Map_ApprovalAttached_ReturnsApprovalRequiredNotification()
+    {
+        var clientId = Guid.NewGuid();
+        var envelope = CreateEnvelope("ApprovalAttached", new
+        {
+            clientId,
+            type = "Approval",
+            title = "Final Design Sign-off"
+        });
+
+        var result = _mapper.MapToClientSafeMessage(envelope);
+
+        Assert.NotNull(result);
+        Assert.Equal(clientId, result!.ClientId);
+        Assert.Equal("Approval Required: Final Design Sign-off", result.Subject);
+        Assert.Contains("Final Design Sign-off", result.Message);
+        Assert.Contains("awaiting your review in the portal", result.Message);
+    }
+
+    [Fact]
+    public void Map_WorkflowWrapped_ApprovalAttached_ExtractsTitleAndClientId()
+    {
+        var clientId = Guid.NewGuid();
+        var result = _mapper.MapToClientSafeMessage(Wrapped("ApprovalAttached", new
+        {
+            conditionId = Guid.NewGuid(),
+            clientId = clientId.ToString(),
+            type = "Approval",
+            title = "Board Resolution",
+            requiredBeforeStage = "Execution",
+            status = "Pending"
+        }));
+
+        Assert.NotNull(result);
+        Assert.Equal(clientId, result!.ClientId);
+        Assert.Equal("Approval Required: Board Resolution", result.Subject);
+        Assert.Contains("Board Resolution", result.Message);
+    }
+
+    [Fact]
+    public void Map_ApprovalCompleted_ReturnsNull()
+    {
+        var result = _mapper.MapToClientSafeMessage(Wrapped("ApprovalCompleted", new
+        {
+            conditionId = Guid.NewGuid(),
+            clientId = Guid.NewGuid(),
+            type = "Approval",
+            title = "Board Resolution",
+            status = "Satisfied",
+            decision = "Approved"
+        }));
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void Map_ApprovalRejected_ReturnsNull()
+    {
+        var result = _mapper.MapToClientSafeMessage(Wrapped("ApprovalRejected", new
+        {
+            conditionId = Guid.NewGuid(),
+            clientId = Guid.NewGuid(),
+            type = "Approval",
+            title = "Board Resolution",
+            status = "Rejected",
+            decision = "Rejected",
+            rejectionReason = "Internal financial constraints"
+        }));
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void Map_LegacyPaymentConditionAttached_StillReturnsPaymentNotification()
+    {
+        var result = _mapper.MapToClientSafeMessage(Wrapped("ConditionAttached", new
+        {
+            conditionId = Guid.NewGuid(),
+            clientId = Guid.NewGuid(),
+            type = "Payment",
+            title = "Initial Deposit"
+        }));
+
+        Assert.NotNull(result);
+        Assert.Contains("Payment Condition Update", result!.Subject);
+        Assert.Contains("Initial Deposit", result.Message);
+    }
+
+    #endregion
 }
