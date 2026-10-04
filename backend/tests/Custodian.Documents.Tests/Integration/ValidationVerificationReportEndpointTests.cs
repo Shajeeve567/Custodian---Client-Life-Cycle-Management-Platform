@@ -180,7 +180,16 @@ public class ValidationVerificationReportEndpointTests : IClassFixture<Validatio
         // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("application/pdf", response.Content.Headers.ContentType?.MediaType);
-        Assert.True(response.Content.Headers.ContentDisposition?.FileName?.EndsWith(".pdf"));
+
+        var disposition = response.Content.Headers.ContentDisposition;
+        Assert.NotNull(disposition);
+        Assert.Equal("attachment", disposition.DispositionType);
+
+        var fileName = disposition.FileNameStar ?? disposition.FileName;
+        Assert.False(string.IsNullOrWhiteSpace(fileName));
+
+        var normalizedFileName = fileName.Trim('"');
+        Assert.EndsWith(".pdf", normalizedFileName, StringComparison.OrdinalIgnoreCase);
 
         var pdfBytes = await response.Content.ReadAsByteArrayAsync();
         Assert.NotEmpty(pdfBytes);
