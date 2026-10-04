@@ -216,6 +216,154 @@ public class AuditEventsController : ControllerBase
     }
 
     /// <summary>
+    /// CSTD-42: Flags an audit event by recording non-cryptographic flag metadata and appending an immutable
+    /// AuditEventFlagged reference event to the chain. Idempotent: repeated calls return the existing flagged
+    /// state without appending another reference event or advancing the chain.
+    /// </summary>
+    [Authorize(Roles = "Owner,Staff")]
+    [HttpPost("{eventId:guid}/flag")]
+    public async Task<ActionResult<AuditEventResponse>> FlagEvent(
+        Guid eventId,
+        [FromBody] FlagAuditEventRequest request,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (effectiveTenantId == Guid.Empty)
+        {
+            return BadRequest(new { message = "Tenant ID could not be resolved from JWT claim or query parameters." });
+        }
+
+        if (request == null || string.IsNullOrWhiteSpace(request.Reason))
+        {
+            return BadRequest(new { message = "Reason is required." });
+        }
+
+        var trimmedReason = request.Reason.Trim();
+        if (trimmedReason.Length > 500)
+        {
+            return BadRequest(new { message = "Reason must not exceed 500 characters." });
+        }
+
+        var existingEvent = await _eventService.GetEventByIdAsync(eventId, effectiveTenantId);
+        if (existingEvent == null)
+        {
+            return NotFound(new { message = $"Audit event with ID '{eventId}' was not found for tenant '{effectiveTenantId}'." });
+        }
+
+        var denied = await EnsureCanReadEngagementAsync(existingEvent.EngagementId, effectiveTenantId);
+        if (denied is NotFoundObjectResult)
+        {
+            return NotFound(new { message = $"Audit event with ID '{eventId}' was not found for tenant '{effectiveTenantId}'." });
+        }
+        if (denied != null)
+        {
+            return denied;
+        }
+
+        var actor = ResolveActor();
+
+        try
+        {
+            var result = await _eventService.FlagEventAsync(eventId, effectiveTenantId, trimmedReason, actor);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Audit event with ID '{eventId}' was not found for tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (Custodian.Audit.Repositories.AuditChainConflictException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// CSTD-42: Archives an audit event by updating non-cryptographic archive metadata.
+    /// Idempotent: repeated calls return the existing archived state without appending an event or mutating the chain.
+    /// </summary>
+    [Authorize(Roles = "Owner,Staff")]
+    [HttpPost("{eventId:guid}/archive")]
+    public async Task<ActionResult<AuditEventResponse>> ArchiveEvent(
+        Guid eventId,
+        [FromBody] ArchiveAuditEventRequest? request,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (effectiveTenantId == Guid.Empty)
+        {
+            return BadRequest(new { message = "Tenant ID could not be resolved from JWT claim or query parameters." });
+        }
+
+        var trimmedReason = string.IsNullOrWhiteSpace(request?.Reason) ? null : request.Reason.Trim();
+        if (trimmedReason != null && trimmedReason.Length > 500)
+        {
+            return BadRequest(new { message = "Reason must not exceed 500 characters." });
+        }
+
+        var existingEvent = await _eventService.GetEventByIdAsync(eventId, effectiveTenantId);
+        if (existingEvent == null)
+        {
+            return NotFound(new { message = $"Audit event with ID '{eventId}' was not found for tenant '{effectiveTenantId}'." });
+        }
+
+        var denied = await EnsureCanReadEngagementAsync(existingEvent.EngagementId, effectiveTenantId);
+        if (denied is NotFoundObjectResult)
+        {
+            return NotFound(new { message = $"Audit event with ID '{eventId}' was not found for tenant '{effectiveTenantId}'." });
+        }
+        if (denied != null)
+        {
+            return denied;
+        }
+
+        var actor = ResolveActor();
+
+        try
+        {
+            var result = await _eventService.ArchiveEventAsync(eventId, effectiveTenantId, trimmedReason, actor);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Audit event with ID '{eventId}' was not found for tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (Custodian.Audit.Repositories.AuditChainConflictException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    private string ResolveActor()
+    {
+        return User?.FindFirst(ClaimTypes.Email)?.Value
+            ?? User?.FindFirst(ClaimTypes.Name)?.Value
+            ?? User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+            ?? User?.FindFirst("sub")?.Value
+            ?? User?.FindFirst("email")?.Value
+            ?? "system";
+    }
+
+    /// <summary>
     /// Gets all audit events for the caller's tenant.
     /// </summary>
     [Authorize(Roles = "Owner,Staff")] // staff only; Staff further limited to engagements they are responsible for

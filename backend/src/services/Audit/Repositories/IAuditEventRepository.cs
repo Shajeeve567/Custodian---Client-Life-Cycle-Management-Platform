@@ -49,9 +49,35 @@ public interface IAuditEventRepository
     /// CSTD-42 (CSTD-241): Adds or updates non-cryptographic metadata for an event. Enforces tenant scoping.
     /// </summary>
     Task<AuditEventMetadata> SetMetadataAsync(AuditEventMetadata metadata);
+
+    /// <summary>
+    /// CSTD-42 (CSTD-242): Atomically flags an audit event: records flag metadata and appends an immutable
+    /// reference event to the engagement's chain inside a single transaction.
+    /// Idempotent: repeated calls do not append another reference event or advance the chain head.
+    /// </summary>
+    Task<FlagEventResult?> FlagEventAsync(
+        Guid tenantId,
+        Guid eventId,
+        string reason,
+        string actor,
+        Func<string, AuditEvent, AuditEvent> buildFlagEvent);
+
+    /// <summary>
+    /// CSTD-42 (CSTD-242): Archives an audit event by updating metadata only.
+    /// Idempotent: repeated calls do not append an audit event or mutate the chain.
+    /// </summary>
+    Task<ArchiveEventResult?> ArchiveEventAsync(
+        Guid tenantId,
+        Guid eventId,
+        string? reason,
+        string actor);
 }
 
 public sealed record ChainAppendResult(AuditEvent Event, bool Created);
+
+public sealed record FlagEventResult(AuditEvent Event, AuditEventMetadata Metadata, AuditEvent? ReferenceEvent, bool Created);
+
+public sealed record ArchiveEventResult(AuditEvent Event, AuditEventMetadata Metadata, bool Created);
 
 /// <summary>An append that conflicts with another tenant's event id or chain. Never retried.</summary>
 public sealed class AuditChainConflictException : InvalidOperationException

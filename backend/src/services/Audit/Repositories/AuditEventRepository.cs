@@ -85,10 +85,13 @@ public class AuditEventRepository : IAuditEventRepository
         }
     }
 
+    private bool IsRelationalDatabase() =>
+        _context.Database.IsRelational() && !_context.Database.ProviderName?.Contains("InMemory", StringComparison.OrdinalIgnoreCase) == true;
+
     private async Task<ChainAppendResult> AppendOnceAsync(Guid tenantId, Guid engagementId, Guid eventId, Func<string, AuditEvent> buildEvent)
     {
         // EF InMemory (unit tests) has no transactions or row locks; the logic is otherwise identical.
-        var relational = _context.Database.IsRelational();
+        var relational = IsRelationalDatabase();
 
         // READ COMMITTED: no gap locks on a missing head row, so two first appends don't deadlock;
         // the head's primary key makes one of them fail and retry instead.
@@ -225,5 +228,225 @@ public class AuditEventRepository : IAuditEventRepository
         _context.EventMetadata.Add(metadata);
         await _context.SaveChangesAsync();
         return metadata;
+    }
+
+    public async Task<FlagEventResult?> FlagEventAsync(
+        Guid tenantId,
+        Guid eventId,
+        string reason,
+        string actor,
+        Func<string, AuditEvent, AuditEvent> buildFlagEvent)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await FlagEventOnceAsync(tenantId, eventId, reason, actor, buildFlagEvent);
+            }
+            catch (Exception ex) when (attempt < MaxAppendAttempts && IsTransientConflict(ex))
+            {
+                _context.ChangeTracker.Clear();
+            }
+        }
+    }
+
+    private async Task<FlagEventResult?> FlagEventOnceAsync(
+        Guid tenantId,
+        Guid eventId,
+        string reason,
+        string actor,
+        Func<string, AuditEvent, AuditEvent> buildFlagEvent)
+    {
+        var relational = IsRelationalDatabase();
+
+        await using var transaction = relational
+            ? await _context.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted)
+            : null;
+
+        var originalEvent = await _context.Events.AsNoTracking().FirstOrDefaultAsync(e => e.EventId == eventId);
+        if (originalEvent == null)
+        {
+            return null;
+        }
+
+        if (originalEvent.TenantId != tenantId)
+        {
+            throw new AuditChainConflictException($"Audit event '{eventId}' belongs to another tenant.");
+        }
+
+        // 1. Lock engagement's chain head. Other appends or flags to this engagement wait here until we commit.
+        var head = relational
+            ? (await _context.ChainHeads
+                .FromSqlInterpolated($"SELECT * FROM engagement_chain_heads WHERE engagement_id = {originalEvent.EngagementId} FOR UPDATE")
+                .ToListAsync()).SingleOrDefault()
+            : await _context.ChainHeads.SingleOrDefaultAsync(h => h.EngagementId == originalEvent.EngagementId);
+
+        if (head == null)
+        {
+            var latestHash = await _context.Events
+                .AsNoTracking()
+                .Where(e => e.TenantId == tenantId && e.EngagementId == originalEvent.EngagementId)
+                .OrderByDescending(e => e.SequenceNumber)
+                .Select(e => e.Hash)
+                .FirstOrDefaultAsync();
+
+            head = new EngagementChainHead
+            {
+                EngagementId = originalEvent.EngagementId,
+                TenantId = tenantId,
+                LastHash = latestHash ?? HashChainService.Genesis
+            };
+            _context.ChainHeads.Add(head);
+        }
+        else if (head.TenantId != tenantId)
+        {
+            throw new AuditChainConflictException($"Engagement '{originalEvent.EngagementId}' belongs to another tenant's audit chain.");
+        }
+
+        // 2. Authoritative idempotency check: executed inside the serialized transaction AFTER acquiring the chain head lock
+        var existingMetadata = await _context.EventMetadata.FirstOrDefaultAsync(m => m.EventId == eventId);
+        if (existingMetadata != null && existingMetadata.IsFlagged)
+        {
+            if (existingMetadata.TenantId != tenantId)
+            {
+                throw new AuditChainConflictException($"Metadata for event '{eventId}' belongs to another tenant.");
+            }
+
+            return new FlagEventResult(originalEvent, existingMetadata, null, Created: false);
+        }
+
+        // Build reference event from the locked head
+        var referenceEvent = buildFlagEvent(head.LastHash, originalEvent);
+        if (!relational && referenceEvent.SequenceNumber == 0)
+        {
+            var maxSeq = await _context.Events.Select(e => (long?)e.SequenceNumber).MaxAsync() ?? 0;
+            referenceEvent.SequenceNumber = maxSeq + 1;
+        }
+        _context.Events.Add(referenceEvent);
+        head.LastEventId = referenceEvent.EventId;
+        head.LastHash = referenceEvent.Hash ?? throw new InvalidOperationException("An appended event must carry its hash.");
+        head.UpdatedAt = DateTime.UtcNow;
+
+        var utcNow = DateTime.UtcNow;
+        if (existingMetadata != null)
+        {
+            existingMetadata.IsFlagged = true;
+            existingMetadata.FlagReason = reason;
+            existingMetadata.FlaggedBy = actor;
+            existingMetadata.FlaggedAt = utcNow;
+            existingMetadata.FlagReferenceEventId = referenceEvent.EventId;
+            existingMetadata.UpdatedAt = utcNow;
+        }
+        else
+        {
+            existingMetadata = new AuditEventMetadata
+            {
+                EventId = originalEvent.EventId,
+                TenantId = tenantId,
+                IsFlagged = true,
+                FlagReason = reason,
+                FlaggedBy = actor,
+                FlaggedAt = utcNow,
+                FlagReferenceEventId = referenceEvent.EventId,
+                IsArchived = false,
+                UpdatedAt = utcNow
+            };
+            _context.EventMetadata.Add(existingMetadata);
+        }
+
+        await _context.SaveChangesAsync();
+        if (transaction != null)
+        {
+            await transaction.CommitAsync();
+        }
+
+        return new FlagEventResult(originalEvent, existingMetadata, referenceEvent, Created: true);
+    }
+
+    public async Task<ArchiveEventResult?> ArchiveEventAsync(
+        Guid tenantId,
+        Guid eventId,
+        string? reason,
+        string actor)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await ArchiveEventOnceAsync(tenantId, eventId, reason, actor);
+            }
+            catch (Exception ex) when (attempt < MaxAppendAttempts && IsTransientConflict(ex))
+            {
+                _context.ChangeTracker.Clear();
+            }
+        }
+    }
+
+    private async Task<ArchiveEventResult?> ArchiveEventOnceAsync(
+        Guid tenantId,
+        Guid eventId,
+        string? reason,
+        string actor)
+    {
+        var relational = IsRelationalDatabase();
+
+        await using var transaction = relational
+            ? await _context.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted)
+            : null;
+
+        var originalEvent = await _context.Events.AsNoTracking().FirstOrDefaultAsync(e => e.EventId == eventId);
+        if (originalEvent == null)
+        {
+            return null;
+        }
+
+        if (originalEvent.TenantId != tenantId)
+        {
+            throw new AuditChainConflictException($"Audit event '{eventId}' belongs to another tenant.");
+        }
+
+        var existingMetadata = await _context.EventMetadata.FirstOrDefaultAsync(m => m.EventId == eventId);
+        if (existingMetadata != null && existingMetadata.IsArchived)
+        {
+            if (existingMetadata.TenantId != tenantId)
+            {
+                throw new AuditChainConflictException($"Metadata for event '{eventId}' belongs to another tenant.");
+            }
+
+            return new ArchiveEventResult(originalEvent, existingMetadata, Created: false);
+        }
+
+        var utcNow = DateTime.UtcNow;
+        if (existingMetadata != null)
+        {
+            existingMetadata.IsArchived = true;
+            existingMetadata.ArchiveReason = reason;
+            existingMetadata.ArchivedBy = actor;
+            existingMetadata.ArchivedAt = utcNow;
+            existingMetadata.UpdatedAt = utcNow;
+        }
+        else
+        {
+            existingMetadata = new AuditEventMetadata
+            {
+                EventId = originalEvent.EventId,
+                TenantId = tenantId,
+                IsFlagged = false,
+                IsArchived = true,
+                ArchiveReason = reason,
+                ArchivedBy = actor,
+                ArchivedAt = utcNow,
+                UpdatedAt = utcNow
+            };
+            _context.EventMetadata.Add(existingMetadata);
+        }
+
+        await _context.SaveChangesAsync();
+        if (transaction != null)
+        {
+            await transaction.CommitAsync();
+        }
+
+        return new ArchiveEventResult(originalEvent, existingMetadata, Created: true);
     }
 }

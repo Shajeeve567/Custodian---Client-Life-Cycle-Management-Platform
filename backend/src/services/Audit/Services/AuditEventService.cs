@@ -190,6 +190,67 @@ public class AuditEventService : IAuditEventService
         };
     }
 
+    public async Task<AuditEventResponse?> FlagEventAsync(Guid eventId, Guid effectiveTenantId, string reason, string actor)
+    {
+        if (eventId == Guid.Empty) throw new ArgumentException("EventId is required.", nameof(eventId));
+        if (string.IsNullOrWhiteSpace(reason)) throw new ArgumentException("Reason is required.", nameof(reason));
+        if (reason.Length > 500) throw new ArgumentException("Reason must not exceed 500 characters.", nameof(reason));
+
+        var result = await _repository.FlagEventAsync(effectiveTenantId, eventId, reason, actor, (previousHash, originalEvent) =>
+        {
+            var refEventId = Guid.NewGuid();
+            var utcNow = DateTime.UtcNow;
+            utcNow = utcNow.AddTicks(-(utcNow.Ticks % TimeSpan.TicksPerMicrosecond));
+
+            var payloadObj = new
+            {
+                referencedEventId = originalEvent.EventId.ToString(),
+                referencedEventType = originalEvent.Type,
+                referencedSequenceNumber = originalEvent.SequenceNumber,
+                reason = reason.Trim()
+            };
+            var payloadJson = JsonSerializer.Serialize(payloadObj);
+
+            var hashInput = new EventHashInput
+            {
+                EventId = refEventId,
+                EngagementId = originalEvent.EngagementId,
+                TenantId = effectiveTenantId,
+                Actor = actor,
+                Type = "AuditEventFlagged",
+                Timestamp = utcNow,
+                Payload = payloadJson,
+                PreviousHash = previousHash
+            };
+
+            return new AuditEvent
+            {
+                EventId = refEventId,
+                EngagementId = originalEvent.EngagementId,
+                TenantId = effectiveTenantId,
+                Actor = actor,
+                Type = "AuditEventFlagged",
+                Timestamp = utcNow,
+                Payload = payloadJson,
+                Hash = _hashChain.ComputeEventHash(hashInput),
+                PreviousHash = previousHash
+            };
+        });
+
+        if (result == null) return null;
+        return MapToResponse(result.Event, result.Metadata);
+    }
+
+    public async Task<AuditEventResponse?> ArchiveEventAsync(Guid eventId, Guid effectiveTenantId, string? reason, string actor)
+    {
+        if (eventId == Guid.Empty) throw new ArgumentException("EventId is required.", nameof(eventId));
+        if (reason != null && reason.Length > 500) throw new ArgumentException("Reason must not exceed 500 characters.", nameof(reason));
+
+        var result = await _repository.ArchiveEventAsync(effectiveTenantId, eventId, reason?.Trim(), actor);
+        if (result == null) return null;
+        return MapToResponse(result.Event, result.Metadata);
+    }
+
     private static AuditEventResponse MapToResponse(AuditEvent entity, AuditEventMetadata? metadata = null)
     {
         return new AuditEventResponse

@@ -15,7 +15,16 @@ internal static class TestTokenFactory
     private const string Issuer = "custodian-identity";
     private const string Audience = "custodian-services";
 
-    public static string CreateOwnerToken(string tenantId)
+    public static string CreateOwnerToken(string tenantId, string email = "owner@custodian.com") =>
+        CreateToken(tenantId, "Owner", email);
+
+    public static string CreateStaffToken(string tenantId, string email = "staff@custodian.com") =>
+        CreateToken(tenantId, "Staff", email);
+
+    public static string CreateClientToken(string tenantId, string email = "client@custodian.com") =>
+        CreateToken(tenantId, "Client", email);
+
+    public static string CreateToken(string tenantId, string role, string email = "user@custodian.com")
     {
         var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Key));
         var creds = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
@@ -27,7 +36,9 @@ internal static class TestTokenFactory
             {
                 new Claim(JwtRegisteredClaimNames.Sub, Guid.NewGuid().ToString()),
                 new Claim("tenant_id", tenantId),
-                new Claim(ClaimTypes.Role, "Owner"),
+                new Claim(ClaimTypes.Role, role),
+                new Claim(ClaimTypes.Email, email),
+                new Claim(ClaimTypes.Name, email)
             },
             expires: DateTime.UtcNow.AddHours(1),
             signingCredentials: creds);
