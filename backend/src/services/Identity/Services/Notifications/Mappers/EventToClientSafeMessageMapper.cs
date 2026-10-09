@@ -80,6 +80,27 @@ public sealed class EventToClientSafeMessageMapper : IEventToMessageMapper
             case "payment.condition.attached":
                 return PaymentCondition();
 
+                        case "paymentstatuschanged":
+                {
+                    // Only notify on Satisfied. Pending/Pending→Overdue events do not change
+                    // the client's immediate call to action (they already see the deadline).
+                    if (!string.Equals(Field("status"), "Satisfied", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return null;
+                    }
+
+                    var amount = Field("amount");
+                    var currency = Field("currency");
+                    var title = Field("title") ?? "payment condition";
+                    var amountText = !string.IsNullOrWhiteSpace(amount)
+                        ? $" of {amount} {currency}".TrimEnd()
+                        : "";
+
+                    return Message(
+                        "Payment confirmed",
+                        $"Payment{amountText} for '{title}' has been confirmed. Your engagement can continue.");
+                }
+
             case "conditionattached" or "condition.attached" or "approval.requested":
                 return string.Equals(Field("type", "conditionType"), "Payment", StringComparison.OrdinalIgnoreCase)
                     ? PaymentCondition()
