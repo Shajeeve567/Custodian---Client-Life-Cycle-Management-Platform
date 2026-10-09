@@ -433,6 +433,88 @@ public class ConditionService : IConditionService
         return MapToStaffDto(condition);
     }
 
+    public async Task<ConditionResponseDto> SatisfyConditionAsync(Guid engagementId, Guid conditionId, string tenantId, string actor)
+    {
+        if (string.IsNullOrWhiteSpace(tenantId) || engagementId == Guid.Empty || conditionId == Guid.Empty)
+        {
+            throw new ArgumentException("TenantId, EngagementId, and ConditionId are required.");
+        }
+
+        var engagement = await _dbContext.Engagements
+            .AsNoTracking()
+            .Where(e => e.EngagementId == engagementId && e.TenantId == tenantId)
+            .Select(e => new { e.Status, e.ClientId })
+            .FirstOrDefaultAsync()
+            ?? throw new KeyNotFoundException($"Engagement '{engagementId}' was not found in tenant '{tenantId}'.");
+
+        if (engagement.Status == EngagementStatus.Closed || engagement.Status == EngagementStatus.Cancelled)
+        {
+            throw new InvalidOperationException($"Cannot satisfy conditions on an engagement with status '{engagement.Status}'.");
+        }
+
+        var condition = await _dbContext.EngagementConditions
+            .FirstOrDefaultAsync(c => c.ConditionId == conditionId
+                                   && c.EngagementId == engagementId
+                                   && c.TenantId == tenantId)
+            ?? throw new KeyNotFoundException($"Condition '{conditionId}' was not found for engagement '{engagementId}'.");
+
+        if (!condition.IsActive)
+        {
+            throw new InvalidOperationException($"Cannot satisfy deactivated condition '{conditionId}'.");
+        }
+
+        if (string.Equals(condition.Status, ConditionStatus.Satisfied, StringComparison.OrdinalIgnoreCase))
+        {
+            // Idempotent: already satisfied — return without publishing a duplicate event.
+            return MapToStaffDto(condition);
+        }
+
+        if (!string.Equals(condition.Status, ConditionStatus.Pending, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Invalid condition status transition from '{condition.Status}' to 'Satisfied'.");
+        }
+
+        var now = DateTime.UtcNow;
+        condition.Status = ConditionStatus.Satisfied;
+        condition.SatisfiedAt = now;
+        condition.SatisfiedBy = actor;
+        condition.UpdatedBy = actor;
+        condition.UpdatedAt = now;
+
+        await _dbContext.SaveChangesAsync();
+
+        // Payment conditions emit PaymentStatusChanged (drives client notification).
+        // Approval keeps the generic ConditionUpdated event.
+        var isPayment = string.Equals(condition.Type, ConditionType.Payment, StringComparison.OrdinalIgnoreCase);
+        var eventType = isPayment ? "PaymentStatusChanged" : "ConditionUpdated";
+
+        await _auditPublisher.PublishEventAsync(
+            engagementId,
+            tenantId,
+            actor,
+            eventType,
+            new
+            {
+                conditionId = condition.ConditionId,
+                clientId = engagement.ClientId,
+                type = condition.Type,
+                status = condition.Status,
+                title = condition.Title,
+                description = condition.Description,
+                dueDateUtc = condition.DueDateUtc,
+                amount = condition.Amount,
+                currency = condition.Currency,
+                paymentType = condition.PaymentType,
+                satisfiedAt = condition.SatisfiedAt,
+                satisfiedBy = condition.SatisfiedBy,
+                updatedAt = condition.UpdatedAt,
+                updatedBy = condition.UpdatedBy
+            });
+
+        return MapToStaffDto(condition);
+    }
+
     public async Task SetConditionStatusAsync(Guid conditionId, string tenantId, string newStatus, string actor, string? reason = null)
     {
         if (string.IsNullOrWhiteSpace(tenantId) || conditionId == Guid.Empty)

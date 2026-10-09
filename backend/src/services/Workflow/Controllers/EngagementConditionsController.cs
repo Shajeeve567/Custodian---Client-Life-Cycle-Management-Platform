@@ -301,6 +301,50 @@ public class EngagementConditionsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// POST /api/engagements/{engagementId}/conditions/{conditionId}/satisfy
+    /// Staff marks a pending Payment or Approval condition satisfied.
+    /// Satisfying clears the gate for the stage the condition was blocking.
+    /// </summary>
+    [HttpPost("{conditionId:guid}/satisfy")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<ConditionResponseDto>> SatisfyCondition(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid conditionId,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden) return Forbid();
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var forbiddenResult = EnsureStaffOrOwner();
+        if (forbiddenResult != null) return forbiddenResult;
+
+        var actor = ResolveActor() ?? "staff-user";
+
+        try
+        {
+            var result = await _conditionService.SatisfyConditionAsync(
+                engagementId, conditionId, effectiveTenantId, actor);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     private ActionResult? EnsureStaffOrOwner()
     {
         if (IsStaffOrOwnerCaller())
