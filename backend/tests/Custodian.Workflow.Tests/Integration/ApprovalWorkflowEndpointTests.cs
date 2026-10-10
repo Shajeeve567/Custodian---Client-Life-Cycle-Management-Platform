@@ -564,4 +564,181 @@ public class ApprovalWorkflowEndpointTests : IClassFixture<ApprovalWorkflowEndpo
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
+
+    // =========================================================================
+    // SCENARIO H: DEACTIVATE SATISFIED APPROVAL PRESERVES HISTORY & ENABLES REATTACH
+    // =========================================================================
+
+    [Fact]
+    public async Task ScenarioH_DeactivateSatisfiedApproval_PreservesCompletedHistory_AndAllowsAttachingNewApproval()
+    {
+        var tenantId = Guid.NewGuid().ToString();
+        var clientId = $"client-{Guid.NewGuid():N}";
+        var staffId = $"staff-{Guid.NewGuid():N}";
+
+        var engagement = await SeedEngagementAsync(tenantId, clientId, staffId);
+        var staffClient = CreateAuthenticatedClient("Staff", staffId, tenantId);
+        var clientHttp = CreateAuthenticatedClient("Client", clientId, tenantId, clientId);
+
+        // 1. Staff attaches initial approval condition
+        var attachResp = await staffClient.PostAsJsonAsync(
+            $"/api/engagements/{engagement.EngagementId}/conditions",
+            new AttachConditionDto
+            {
+                Type = ConditionType.Approval,
+                Title = "Initial Architecture Sign-Off",
+                RequiredBeforeStage = EngagementStage.Execution
+            });
+        attachResp.EnsureSuccessStatusCode();
+        var initialCondition = await attachResp.Content.ReadFromJsonAsync<ConditionResponseDto>();
+        Assert.NotNull(initialCondition);
+        Assert.True(initialCondition!.IsActive);
+
+        // 2. Client approves condition -> Satisfied
+        var approveResp = await clientHttp.PostAsync(
+            $"/api/engagements/{engagement.EngagementId}/conditions/{initialCondition.ConditionId}/approve",
+            null);
+        Assert.Equal(HttpStatusCode.OK, approveResp.StatusCode);
+
+        // 3. Attempting to attach second active approval while first is active -> 409 Conflict
+        var conflictResp = await staffClient.PostAsJsonAsync(
+            $"/api/engagements/{engagement.EngagementId}/conditions",
+            new AttachConditionDto
+            {
+                Type = ConditionType.Approval,
+                Title = "Second Active Approval Attempt",
+                RequiredBeforeStage = EngagementStage.Execution
+            });
+        Assert.Equal(HttpStatusCode.Conflict, conflictResp.StatusCode);
+
+        // 4. Staff deactivates the satisfied approval condition
+        var deactReason = "Scope changed; new client sign-off required for updated deliverable";
+        var deactResp = await staffClient.PutAsJsonAsync(
+            $"/api/engagements/{engagement.EngagementId}/conditions/{initialCondition.ConditionId}/deactivate",
+            new DeactivateConditionDto { Reason = deactReason });
+        Assert.Equal(HttpStatusCode.OK, deactResp.StatusCode);
+        var deactivatedDto = await deactResp.Content.ReadFromJsonAsync<ConditionResponseDto>();
+        Assert.NotNull(deactivatedDto);
+        Assert.False(deactivatedDto!.IsActive);
+        Assert.Equal(ConditionStatus.Satisfied, deactivatedDto.Status);
+        Assert.Equal(staffId, deactivatedDto.DeactivatedBy);
+        Assert.NotNull(deactivatedDto.DeactivatedAt);
+        Assert.Equal(deactReason, deactivatedDto.DeactivationReason);
+
+        // 5. Verify database: satisfied condition state & completed ClientAction remain intact
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<WorkflowDbContext>();
+            var dbCond = await db.EngagementConditions.FirstAsync(c => c.ConditionId == initialCondition.ConditionId);
+            Assert.False(dbCond.IsActive);
+            Assert.Equal(ConditionStatus.Satisfied, dbCond.Status);
+            Assert.NotNull(dbCond.SatisfiedAt);
+            Assert.Equal(clientId, dbCond.SatisfiedBy);
+            Assert.Equal(staffId, dbCond.DeactivatedBy);
+            Assert.Equal(deactReason, dbCond.DeactivationReason);
+
+            var dbAction = await db.ClientActions.FirstAsync(a => a.LinkedConditionId == initialCondition.ConditionId);
+            Assert.Equal(ClientActionStatus.Completed, dbAction.Status);
+            Assert.NotNull(dbAction.CompletedAt);
+        }
+
+        // 6. Attaching a new approval condition now succeeds
+        var reattachResp = await staffClient.PostAsJsonAsync(
+            $"/api/engagements/{engagement.EngagementId}/conditions",
+            new AttachConditionDto
+            {
+                Type = ConditionType.Approval,
+                Title = "Updated Architecture Sign-Off",
+                RequiredBeforeStage = EngagementStage.Execution
+            });
+        Assert.Equal(HttpStatusCode.Created, reattachResp.StatusCode);
+        var newCondition = await reattachResp.Content.ReadFromJsonAsync<ConditionResponseDto>();
+        Assert.NotNull(newCondition);
+        Assert.True(newCondition!.IsActive);
+        Assert.Equal(ConditionStatus.Pending, newCondition.Status);
+
+        // 7. A third active approval is still rejected with 409 Conflict
+        var secondConflictResp = await staffClient.PostAsJsonAsync(
+            $"/api/engagements/{engagement.EngagementId}/conditions",
+            new AttachConditionDto
+            {
+                Type = ConditionType.Approval,
+                Title = "Duplicate Active Approval",
+                RequiredBeforeStage = EngagementStage.Execution
+            });
+        Assert.Equal(HttpStatusCode.Conflict, secondConflictResp.StatusCode);
+    }
+
+    // =========================================================================
+    // SCENARIO I: DEACTIVATE REJECTED APPROVAL PRESERVES REASON & ENABLES REATTACH
+    // =========================================================================
+
+    [Fact]
+    public async Task ScenarioI_DeactivateRejectedApproval_PreservesRejectionReason_AndAllowsAttachingNewApproval()
+    {
+        var tenantId = Guid.NewGuid().ToString();
+        var clientId = $"client-{Guid.NewGuid():N}";
+        var staffId = $"staff-{Guid.NewGuid():N}";
+
+        var engagement = await SeedEngagementAsync(tenantId, clientId, staffId);
+        var staffClient = CreateAuthenticatedClient("Staff", staffId, tenantId);
+        var clientHttp = CreateAuthenticatedClient("Client", clientId, tenantId, clientId);
+
+        // 1. Staff attaches approval condition
+        var attachResp = await staffClient.PostAsJsonAsync(
+            $"/api/engagements/{engagement.EngagementId}/conditions",
+            new AttachConditionDto
+            {
+                Type = ConditionType.Approval,
+                Title = "Budget Approval",
+                RequiredBeforeStage = EngagementStage.Execution
+            });
+        attachResp.EnsureSuccessStatusCode();
+        var condition = await attachResp.Content.ReadFromJsonAsync<ConditionResponseDto>();
+        Assert.NotNull(condition);
+
+        // 2. Client rejects approval condition
+        var rejectionReason = "Budget exceeds allocated funds for Q4.";
+        var rejectResp = await clientHttp.PostAsJsonAsync(
+            $"/api/engagements/{engagement.EngagementId}/conditions/{condition!.ConditionId}/reject",
+            new RejectApprovalDto { Reason = rejectionReason });
+        Assert.Equal(HttpStatusCode.OK, rejectResp.StatusCode);
+
+        // 3. Attempting to attach second active approval while rejected condition is active -> 409 Conflict
+        var conflictResp = await staffClient.PostAsJsonAsync(
+            $"/api/engagements/{engagement.EngagementId}/conditions",
+            new AttachConditionDto
+            {
+                Type = ConditionType.Approval,
+                Title = "Second Active Approval Attempt",
+                RequiredBeforeStage = EngagementStage.Execution
+            });
+        Assert.Equal(HttpStatusCode.Conflict, conflictResp.StatusCode);
+
+        // 4. Staff deactivates rejected approval condition
+        var deactReason = "Revised proposal will be submitted with reduced line items.";
+        var deactResp = await staffClient.PutAsJsonAsync(
+            $"/api/engagements/{engagement.EngagementId}/conditions/{condition.ConditionId}/deactivate",
+            new DeactivateConditionDto { Reason = deactReason });
+        Assert.Equal(HttpStatusCode.OK, deactResp.StatusCode);
+        var deactDto = await deactResp.Content.ReadFromJsonAsync<ConditionResponseDto>();
+        Assert.NotNull(deactDto);
+        Assert.False(deactDto!.IsActive);
+        Assert.Equal(ConditionStatus.Rejected, deactDto.Status);
+        Assert.Equal(rejectionReason, deactDto.RejectionReason);
+
+        // 5. Attaching a new approval condition now succeeds
+        var newAttachResp = await staffClient.PostAsJsonAsync(
+            $"/api/engagements/{engagement.EngagementId}/conditions",
+            new AttachConditionDto
+            {
+                Type = ConditionType.Approval,
+                Title = "Revised Budget Approval",
+                RequiredBeforeStage = EngagementStage.Execution
+            });
+        Assert.Equal(HttpStatusCode.Created, newAttachResp.StatusCode);
+        var newCondition = await newAttachResp.Content.ReadFromJsonAsync<ConditionResponseDto>();
+        Assert.NotNull(newCondition);
+        Assert.True(newCondition!.IsActive);
+    }
 }

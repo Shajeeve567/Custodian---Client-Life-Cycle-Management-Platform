@@ -438,6 +438,64 @@ public class ConditionServiceTests
     }
 
     [Fact]
+    public async Task DeactivateConditionAsync_SatisfiedCondition_PreservesSatisfiedStateAndAuditEvidence()
+    {
+        // Arrange
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+        var engagementId = Guid.NewGuid();
+        var tenantId = "tenant-001";
+        await SeedEngagementAsync(db, engagementId, tenantId);
+
+        var mockClientAction = new Mock<IClientActionService>();
+        var mockAudit = new Mock<IAuditPublisher>();
+        var service = new ConditionService(db, mockClientAction.Object, mockAudit.Object, NullLogger<ConditionService>.Instance);
+
+        var condition = await service.AttachConditionAsync(engagementId, tenantId, new AttachConditionDto
+        {
+            Type = ConditionType.Approval,
+            Title = "Completed Approval",
+            RequiredBeforeStage = EngagementStage.Execution
+        }, "staff-1");
+
+        // Manually mark as satisfied in DB
+        var satisfiedAt = DateTime.UtcNow.AddMinutes(-10);
+        var dbCond = await db.EngagementConditions.FirstAsync(c => c.ConditionId == condition.ConditionId);
+        dbCond.Status = ConditionStatus.Satisfied;
+        dbCond.SatisfiedAt = satisfiedAt;
+        dbCond.SatisfiedBy = "client-approver";
+        await db.SaveChangesAsync();
+
+        // Act
+        var result = await service.DeactivateConditionAsync(engagementId, condition.ConditionId, tenantId, new DeactivateConditionDto
+        {
+            Reason = "Superseded by updated agreement"
+        }, "staff-lead");
+
+        // Assert
+        Assert.False(result.IsActive);
+        Assert.Equal(ConditionStatus.Satisfied, result.Status);
+        Assert.Equal(satisfiedAt, result.SatisfiedAt);
+        Assert.Equal("client-approver", result.SatisfiedBy);
+        Assert.Equal("staff-lead", result.DeactivatedBy);
+        Assert.Equal("Superseded by updated agreement", result.DeactivationReason);
+
+        mockClientAction.Verify(c => c.CancelActionsForSourceAsync(
+            engagementId,
+            tenantId,
+            ClientActionSourceType.Condition,
+            condition.ConditionId,
+            "staff-lead",
+            "Superseded by updated agreement"), Times.Once);
+
+        mockAudit.Verify(a => a.PublishEventAsync(
+            engagementId,
+            tenantId,
+            "staff-lead",
+            "ConditionDeactivated",
+            It.IsAny<object>()), Times.Once);
+    }
+
+    [Fact]
     public async Task DeactivateConditionAsync_AlreadyInactive_IsIdempotent()
     {
         // Arrange
