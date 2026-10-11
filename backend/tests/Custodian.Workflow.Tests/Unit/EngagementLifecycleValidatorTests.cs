@@ -82,4 +82,35 @@ public class EngagementLifecycleValidatorTests
         // Assert
         Assert.False(result);
     }
+
+    [Theory]
+    [InlineData(EngagementStatus.Draft, true)]
+    [InlineData(EngagementStatus.Started, true)]
+    [InlineData(EngagementStatus.Closed, false)]
+    [InlineData(EngagementStatus.Cancelled, false)]
+    public void CanMutate_OnlyOpenStatusesAcceptMutations(EngagementStatus status, bool expected)
+    {
+        Assert.Equal(expected, EngagementLifecycleValidator.CanMutate(status));
+    }
+
+    [Theory]
+    [InlineData(EngagementStatus.Draft, EngagementStatus.Started, true)]
+    [InlineData(EngagementStatus.Started, EngagementStatus.Closed, true)]
+    [InlineData(EngagementStatus.Started, EngagementStatus.Cancelled, true)]
+    [InlineData(EngagementStatus.Closed, EngagementStatus.Started, false)]
+    [InlineData(EngagementStatus.Cancelled, EngagementStatus.Started, false)]
+    [InlineData(EngagementStatus.Closed, EngagementStatus.Closed, true)] // idempotent no-op
+    public void IsValidTransition_EnforcesLifecycle(EngagementStatus from, EngagementStatus to, bool expected)
+    {
+        Assert.Equal(expected, EngagementLifecycleValidator.IsValidTransition(from, to));
+    }
+
+    [Fact]
+    public void CanDelete_OnlyDraft()
+    {
+        Assert.True(EngagementLifecycleValidator.CanDelete(EngagementStatus.Draft));
+        Assert.False(EngagementLifecycleValidator.CanDelete(EngagementStatus.Started));
+        Assert.False(EngagementLifecycleValidator.CanDelete(EngagementStatus.Closed));
+        Assert.False(EngagementLifecycleValidator.CanDelete(EngagementStatus.Cancelled));
+    }
 }

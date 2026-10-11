@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
+using Custodian.Workflow.Repositories;
 
 namespace Custodian.Workflow.Tests.Unit;
 
@@ -22,6 +23,7 @@ public class ClientActionsControllerTests
     private readonly Mock<IDocumentComplianceClient> _mockDocumentClient;
     private readonly Mock<ILogger<ClientActionsController>> _mockLogger;
     private readonly ClientActionsController _controller;
+    private readonly Mock<IEngagementRepository> _mockEngagementRepository;
 
     public ClientActionsControllerTests()
     {
@@ -30,13 +32,29 @@ public class ClientActionsControllerTests
         _mockStallRecorder = new Mock<IStallRecorder>();
         _mockDocumentClient = new Mock<IDocumentComplianceClient>();
         _mockLogger = new Mock<ILogger<ClientActionsController>>();
+        _mockEngagementRepository = new Mock<IEngagementRepository>();
 
         _controller = new ClientActionsController(
             _mockService.Object,
             _mockStallActions.Object,
             _mockStallRecorder.Object,
             _mockDocumentClient.Object,
-            _mockLogger.Object);
+            _mockEngagementRepository.Object,
+            _mockLogger.Object
+        );
+
+        _mockEngagementRepository
+        .Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<string>()))
+        .ReturnsAsync(new Engagement
+        {
+            EngagementId = Guid.NewGuid(),
+            TenantId = "tenant-001",
+            ClientId = "client-1",
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding,
+            CreatedAt = DateTime.UtcNow,
+        });
     }
 
     private void SetupTenantHeader(string tenantId)
