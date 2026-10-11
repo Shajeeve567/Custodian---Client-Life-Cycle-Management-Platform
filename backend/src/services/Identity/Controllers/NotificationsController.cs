@@ -3,11 +3,12 @@ using Custodian.Identity.Contracts;
 using Custodian.Shared.Tenancy;
 using Identity.Data;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Custodian.Identity.Controllers;
 
-[Authorize]
+[Authorize(Roles = "Client")]
 [ApiController]
 [Route("api/[controller]")]
 public class NotificationsController : ControllerBase
@@ -29,14 +30,21 @@ public class NotificationsController : ControllerBase
         [FromQuery] bool unreadOnly = false,
         CancellationToken cancellationToken = default)
     {
-        var targetClientId = ResolveClientId(clientId);
-        if (targetClientId == Guid.Empty)
+        if (!TryGetCallerIdentity(out var tenantId, out var authenticatedClientId, out var authError))
         {
-            return BadRequest(new { error = "A valid clientId must be provided or present in user claims." });
+            return authError!;
         }
 
-        var tenantId = GetTenantId();
-        var notifications = await _notificationRepository.GetByClientAsync(targetClientId, tenantId, unreadOnly, cancellationToken);
+        if (!ValidateExplicitClientId(clientId, authenticatedClientId, out var conflictError))
+        {
+            return conflictError!;
+        }
+
+        var notifications = await _notificationRepository.GetByClientAsync(
+            authenticatedClientId,
+            tenantId,
+            unreadOnly,
+            cancellationToken);
 
         var response = notifications.Select(n => new NotificationResponse(
             n.NotificationId,
@@ -56,14 +64,20 @@ public class NotificationsController : ControllerBase
         [FromQuery] Guid? clientId,
         CancellationToken cancellationToken = default)
     {
-        var targetClientId = ResolveClientId(clientId);
-        if (targetClientId == Guid.Empty)
+        if (!TryGetCallerIdentity(out var tenantId, out var authenticatedClientId, out var authError))
         {
-            return BadRequest(new { error = "A valid clientId must be provided or present in user claims." });
+            return authError!;
         }
 
-        var tenantId = GetTenantId();
-        var count = await _notificationRepository.GetUnreadCountAsync(targetClientId, tenantId, cancellationToken);
+        if (!ValidateExplicitClientId(clientId, authenticatedClientId, out var conflictError))
+        {
+            return conflictError!;
+        }
+
+        var count = await _notificationRepository.GetUnreadCountAsync(
+            authenticatedClientId,
+            tenantId,
+            cancellationToken);
 
         return Ok(new UnreadCountResponse(count));
     }
@@ -73,8 +87,16 @@ public class NotificationsController : ControllerBase
         Guid id,
         CancellationToken cancellationToken = default)
     {
-        var tenantId = GetTenantId();
-        var success = await _notificationRepository.MarkAsReadAsync(id, tenantId, clientId: null, ct: cancellationToken);
+        if (!TryGetCallerIdentity(out var tenantId, out var authenticatedClientId, out var authError))
+        {
+            return authError!;
+        }
+
+        var success = await _notificationRepository.MarkAsReadAsync(
+            id,
+            tenantId,
+            clientId: authenticatedClientId,
+            ct: cancellationToken);
 
         if (!success)
         {
@@ -89,36 +111,82 @@ public class NotificationsController : ControllerBase
         [FromQuery] Guid? clientId,
         CancellationToken cancellationToken = default)
     {
-        var targetClientId = ResolveClientId(clientId);
-        if (targetClientId == Guid.Empty)
+        if (!TryGetCallerIdentity(out var tenantId, out var authenticatedClientId, out var authError))
         {
-            return BadRequest(new { error = "A valid clientId must be provided or present in user claims." });
+            return authError!;
         }
 
-        var tenantId = GetTenantId();
-        var updatedCount = await _notificationRepository.MarkAllAsReadAsync(targetClientId, tenantId, cancellationToken);
+        if (!ValidateExplicitClientId(clientId, authenticatedClientId, out var conflictError))
+        {
+            return conflictError!;
+        }
+
+        var updatedCount = await _notificationRepository.MarkAllAsReadAsync(
+            authenticatedClientId,
+            tenantId,
+            cancellationToken);
 
         return Ok(new MarkAllAsReadResponse(updatedCount, DateTimeOffset.UtcNow));
     }
 
-    private Guid GetTenantId()
+    private bool TryGetCallerIdentity(out Guid tenantId, out Guid clientId, out ActionResult? failureResult)
     {
-        var rawTenant = _tenantContext.TenantId;
-        return Guid.TryParse(rawTenant, out var tenantId) ? tenantId : Guid.Empty;
-    }
+        tenantId = Guid.Empty;
+        clientId = Guid.Empty;
+        failureResult = null;
 
-    private Guid ResolveClientId(Guid? explicitClientId)
-    {
-        if (explicitClientId.HasValue && explicitClientId.Value != Guid.Empty)
+        // 1. Enforce Client role
+        if (!User.IsInRole("Client"))
         {
-            return explicitClientId.Value;
+            failureResult = StatusCode(StatusCodes.Status403Forbidden, new { error = "Forbidden. Only Client role can access notifications." });
+            return false;
         }
 
-        // Fallback to JWT claims (sub or client_id claim)
-        var claimValue = User.FindFirstValue(ClaimTypes.NameIdentifier) 
-                      ?? User.FindFirstValue("sub") 
-                      ?? User.FindFirstValue("client_id");
+        // 2. Require valid, non-empty tenant_id claim in JWT (never rely on header-only tenant context)
+        var tenantClaim = User.FindFirst("tenant_id")?.Value;
+        if (string.IsNullOrWhiteSpace(tenantClaim) || !Guid.TryParse(tenantClaim, out tenantId) || tenantId == Guid.Empty)
+        {
+            failureResult = StatusCode(StatusCodes.Status403Forbidden, new { error = "Forbidden. A valid workspace tenant_id claim is required." });
+            return false;
+        }
 
-        return Guid.TryParse(claimValue, out var claimGuid) ? claimGuid : Guid.Empty;
+        // Ensure tenant context matches claim if tenant context was established
+        if (!string.IsNullOrWhiteSpace(_tenantContext.TenantId) &&
+            Guid.TryParse(_tenantContext.TenantId, out var contextTenantId) &&
+            contextTenantId != tenantId)
+        {
+            failureResult = StatusCode(StatusCodes.Status403Forbidden, new { error = "Cross-tenant access forbidden." });
+            return false;
+        }
+
+        // 3. Require valid, non-empty client_id claim in JWT
+        var clientClaim = User.FindFirst("client_id")?.Value;
+        if (string.IsNullOrWhiteSpace(clientClaim) || !Guid.TryParse(clientClaim, out clientId) || clientId == Guid.Empty)
+        {
+            failureResult = StatusCode(StatusCodes.Status403Forbidden, new { error = "Forbidden. A valid client_id claim is required." });
+            return false;
+        }
+
+        // 4. Reject missing, malformed, or inconsistent subject identity claims
+        var subClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst("sub")?.Value;
+        if (string.IsNullOrWhiteSpace(subClaim) || !Guid.TryParse(subClaim, out var subGuid) || subGuid != clientId)
+        {
+            failureResult = StatusCode(StatusCodes.Status403Forbidden, new { error = "Forbidden. Inconsistent user identity claims." });
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool ValidateExplicitClientId(Guid? explicitClientId, Guid authenticatedClientId, out ActionResult? conflictResult)
+    {
+        conflictResult = null;
+        if (explicitClientId.HasValue && explicitClientId.Value != Guid.Empty && explicitClientId.Value != authenticatedClientId)
+        {
+            conflictResult = StatusCode(StatusCodes.Status403Forbidden, new { error = "Forbidden. Caller cannot access notifications for another client." });
+            return false;
+        }
+
+        return true;
     }
 }

@@ -33,6 +33,9 @@ public class NotificationsControllerTests
             {
                 User = user ?? new ClaimsPrincipal(new ClaimsIdentity(new[]
                 {
+                    new Claim("tenant_id", _tenantId.ToString()),
+                    new Claim("client_id", _clientId.ToString()),
+                    new Claim(ClaimTypes.Role, "Client"),
                     new Claim(ClaimTypes.NameIdentifier, _clientId.ToString())
                 }, "TestAuth"))
             }
@@ -75,6 +78,39 @@ public class NotificationsControllerTests
     }
 
     [Fact]
+    public async Task GetNotifications_WithOmittedClientId_ShouldDefaultToAuthenticatedClient()
+    {
+        // Arrange
+        _repositoryMock.Setup(r => r.GetByClientAsync(_clientId, _tenantId, false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Notification>());
+
+        var controller = CreateController();
+
+        // Act - clientId parameter omitted
+        var result = await controller.GetNotifications(null, unreadOnly: false);
+
+        // Assert
+        Assert.IsType<OkObjectResult>(result.Result);
+        _repositoryMock.Verify(r => r.GetByClientAsync(_clientId, _tenantId, false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetNotifications_WithMismatchedClientId_ShouldReturn403Forbidden()
+    {
+        // Arrange
+        var attackerOtherClientId = Guid.NewGuid();
+        var controller = CreateController();
+
+        // Act - Caller tries to access another client's notifications in same tenant
+        var result = await controller.GetNotifications(attackerOtherClientId, unreadOnly: false);
+
+        // Assert
+        var objectResult = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, objectResult.StatusCode);
+        _repositoryMock.Verify(r => r.GetByClientAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task GetNotifications_WithUnreadFilter_ShouldPassFilterToRepository()
     {
         // Arrange
@@ -92,16 +128,60 @@ public class NotificationsControllerTests
     }
 
     [Fact]
-    public async Task GetNotifications_WithoutClientIdAndNoClaims_ShouldReturnBadRequest()
+    public async Task GetNotifications_WithoutClaims_ShouldReturn403Forbidden()
     {
-        // Arrange
-        var controller = CreateController(new ClaimsPrincipal(new ClaimsIdentity())); // No claims
+        // Arrange - empty ClaimsPrincipal (no claims)
+        var controller = CreateController(new ClaimsPrincipal(new ClaimsIdentity()));
 
         // Act
         var result = await controller.GetNotifications(null);
 
         // Assert
-        Assert.IsType<BadRequestObjectResult>(result.Result);
+        var objectResult = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, objectResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetNotifications_WithMissingTenantClaim_ShouldReturn403Forbidden()
+    {
+        // Arrange - user has client_id and role but NO tenant_id claim
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("client_id", _clientId.ToString()),
+            new Claim(ClaimTypes.Role, "Client"),
+            new Claim(ClaimTypes.NameIdentifier, _clientId.ToString())
+        }, "TestAuth"));
+
+        var controller = CreateController(user);
+
+        // Act
+        var result = await controller.GetNotifications(null);
+
+        // Assert
+        var objectResult = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, objectResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetNotifications_WithNonClientRole_ShouldReturn403Forbidden()
+    {
+        // Arrange - Staff workspace token
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("tenant_id", _tenantId.ToString()),
+            new Claim("client_id", _clientId.ToString()),
+            new Claim(ClaimTypes.Role, "Staff"),
+            new Claim(ClaimTypes.NameIdentifier, _clientId.ToString())
+        }, "TestAuth"));
+
+        var controller = CreateController(user);
+
+        // Act
+        var result = await controller.GetNotifications(null);
+
+        // Assert
+        var objectResult = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, objectResult.StatusCode);
     }
 
     [Fact]
@@ -123,11 +203,25 @@ public class NotificationsControllerTests
     }
 
     [Fact]
-    public async Task MarkAsRead_WhenFound_ShouldReturn200Ok()
+    public async Task GetUnreadCount_WithMismatchedClientId_ShouldReturn403Forbidden()
+    {
+        // Arrange
+        var controller = CreateController();
+
+        // Act
+        var result = await controller.GetUnreadCount(Guid.NewGuid());
+
+        // Assert
+        var objectResult = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, objectResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task MarkAsRead_WhenFoundAndOwned_ShouldReturn200Ok()
     {
         // Arrange
         var notificationId = Guid.NewGuid();
-        _repositoryMock.Setup(r => r.MarkAsReadAsync(notificationId, _tenantId, It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
+        _repositoryMock.Setup(r => r.MarkAsReadAsync(notificationId, _tenantId, _clientId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         var controller = CreateController();
@@ -140,14 +234,15 @@ public class NotificationsControllerTests
         var response = Assert.IsType<MarkAsReadResponse>(okResult.Value);
         Assert.Equal(notificationId, response.NotificationId);
         Assert.True(response.IsRead);
+        _repositoryMock.Verify(r => r.MarkAsReadAsync(notificationId, _tenantId, _clientId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task MarkAsRead_WhenNotFound_ShouldReturn404()
+    public async Task MarkAsRead_WhenNotFoundOrNotOwned_ShouldReturn404()
     {
         // Arrange
         var notificationId = Guid.NewGuid();
-        _repositoryMock.Setup(r => r.MarkAsReadAsync(notificationId, _tenantId, It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
+        _repositoryMock.Setup(r => r.MarkAsReadAsync(notificationId, _tenantId, _clientId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         var controller = CreateController();
@@ -175,5 +270,19 @@ public class NotificationsControllerTests
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
         var response = Assert.IsType<MarkAllAsReadResponse>(okResult.Value);
         Assert.Equal(4, response.UpdatedCount);
+    }
+
+    [Fact]
+    public async Task MarkAllAsRead_WithMismatchedClientId_ShouldReturn403Forbidden()
+    {
+        // Arrange
+        var controller = CreateController();
+
+        // Act
+        var result = await controller.MarkAllAsRead(Guid.NewGuid());
+
+        // Assert
+        var objectResult = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, objectResult.StatusCode);
     }
 }

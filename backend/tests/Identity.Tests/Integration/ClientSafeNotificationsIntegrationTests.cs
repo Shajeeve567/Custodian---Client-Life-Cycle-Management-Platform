@@ -41,6 +41,7 @@ public class ClientSafeNotificationsIntegrationTests
         Guid clientId,
         string role = "Client")
     {
+        var tenantId = Guid.TryParse(tenantContext.TenantId, out var parsed) ? parsed : Guid.NewGuid();
         var controller = new NotificationsController(repo, tenantContext);
         controller.ControllerContext = new ControllerContext
         {
@@ -48,6 +49,8 @@ public class ClientSafeNotificationsIntegrationTests
             {
                 User = new ClaimsPrincipal(new ClaimsIdentity(new[]
                 {
+                    new Claim("tenant_id", tenantId.ToString()),
+                    new Claim("client_id", clientId.ToString()),
                     new Claim(ClaimTypes.NameIdentifier, clientId.ToString()),
                     new Claim(ClaimTypes.Role, role)
                 }, "TestAuth"))
@@ -169,10 +172,10 @@ public class ClientSafeNotificationsIntegrationTests
         var markResult = await controllerB.MarkAsRead(notificationTenantA.NotificationId);
         var getResult = await controllerB.GetNotifications(clientA);
 
-        // Assert
+        // Assert - mark-as-read for non-owned notification returns 404; conflicting explicit clientId returns 403
         Assert.IsType<NotFoundObjectResult>(markResult.Result);
-        var listResponse = Assert.IsType<List<NotificationResponse>>(Assert.IsType<OkObjectResult>(getResult.Result).Value);
-        Assert.Empty(listResponse);
+        var forbiddenResult = Assert.IsType<ObjectResult>(getResult.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, forbiddenResult.StatusCode);
     }
 
     [Fact]
