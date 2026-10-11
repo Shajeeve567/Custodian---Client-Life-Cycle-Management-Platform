@@ -65,6 +65,8 @@ public static class WorkflowServiceRegistration
         services.Configure<KafkaConsumerOptions>(configuration.GetSection(KafkaConsumerOptions.SectionName));
         services.AddHostedService<DocumentEventsConsumer>();
 
+        services.AddScoped<IReadinessService, ReadinessService>();
+
         return services;
     }
 }
