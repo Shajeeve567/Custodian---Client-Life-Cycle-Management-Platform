@@ -248,6 +248,19 @@ public class EngagementsController : ControllerBase
             return BadRequest($"Invalid status: '{request.Status}'. Valid statuses are: Draft, Started, Closed, Cancelled.");
         }
 
+        // CSTD-20: closure is gated by readiness and can only be performed through
+        // POST /api/Engagements/{id}/close, which evaluates readiness (blockers, gate,
+        // strict Closure-stage rule) and publishes EngagementClosed. Allowing closure
+        // here would silently bypass that gate — any staff/owner could close an
+        // unready engagement by writing a single status field.
+        if (newStatus == EngagementStatus.Closed)
+        {
+            return Conflict(new
+            {
+                message = "Closure requires the readiness gate. Use POST /api/Engagements/{id}/close instead."
+            });
+        }
+
         // Subtask 3 Lifecycle Validation: Enforce legal status transitions
         if (!EngagementLifecycleValidator.IsValidTransition(engagement.Status, newStatus))
         {
@@ -259,7 +272,7 @@ public class EngagementsController : ControllerBase
 
         var previousStatus = engagement.Status;
         engagement.Status = newStatus;
-        if (newStatus == EngagementStatus.Closed || newStatus == EngagementStatus.Cancelled)
+        if (newStatus == EngagementStatus.Cancelled)
         {
             engagement.ClosedAt = DateTime.UtcNow;
         }
@@ -276,8 +289,8 @@ public class EngagementsController : ControllerBase
             }
         }
 
-        // CSTD-33: a closed or cancelled engagement is no longer stalled.
-        if (_stallRecorder != null && (newStatus == EngagementStatus.Closed || newStatus == EngagementStatus.Cancelled))
+        // CSTD-33: a cancelled engagement is no longer stalled.
+        if (_stallRecorder != null && newStatus == EngagementStatus.Cancelled)
         {
             await _stallRecorder.ResolveForEngagementAsync(updated.EngagementId, effectiveTenantId, StallResolution.EngagementClosed);
         }
@@ -563,7 +576,7 @@ public class EngagementsController : ControllerBase
         ClosureSummary = e.ClosureSummary,
     };
 
-        /// <summary>
+    /// <summary>
     /// CSTD-20: Evaluates readiness for handoff/closure. Read-only; reuses the gate evaluator.
     /// </summary>
     [HttpGet("{id}/readiness")]
@@ -577,6 +590,9 @@ public class EngagementsController : ControllerBase
         if (isForbidden) return Forbid();
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
             return BadRequest("Tenant identification is required.");
+
+        if (_readiness is null)
+            return StatusCode(500, new { message = "Readiness service is not configured." });
 
         var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
         if (engagement == null) return NotFound();
@@ -607,6 +623,9 @@ public class EngagementsController : ControllerBase
         if (isForbidden) return Forbid();
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
             return BadRequest("Tenant identification is required.");
+
+        if (_readiness is null)
+            return StatusCode(500, new { message = "Readiness service is not configured." });
 
         var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
         if (engagement == null) return NotFound();
@@ -672,6 +691,9 @@ public class EngagementsController : ControllerBase
         if (isForbidden) return Forbid();
         if (string.IsNullOrWhiteSpace(effectiveTenantId))
             return BadRequest("Tenant identification is required.");
+
+        if (_readiness is null)
+            return StatusCode(500, new { message = "Readiness service is not configured." });
 
         var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
         if (engagement == null) return NotFound();
