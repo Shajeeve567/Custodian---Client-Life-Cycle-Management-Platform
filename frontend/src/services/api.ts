@@ -165,6 +165,7 @@ export async function request<T = any>(
 export const ReportsApi = {
     slaPerformanceUrl: () => `${API_BASE.WORKFLOW}/api/reports/sla-performance`,
     validationVerificationUrl: () => `${API_BASE.DOCUMENTS}/api/reports/validation-verification`,
+    proofOfDeliveryUrl: () => `${API_BASE.AUDIT}/api/reports/proof-of-delivery`,
 };
 
 /** RFC 7807 body of a failed report request (see docs/reporting.md, Errors). */

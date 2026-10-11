@@ -1,6 +1,16 @@
 namespace Custodian.Shared.Reporting.Models;
 
 /// <summary>
+/// Page orientation for rendered PDF reports.
+/// Defaults to Portrait; wide multi-column reports (e.g. Proof of Delivery timeline) can opt into Landscape.
+/// </summary>
+public enum ReportPageOrientation
+{
+    Portrait,
+    Landscape
+}
+
+/// <summary>
 /// CSTD-36-1: a report as pure data: metadata plus ordered sections. Each report derives its own
 /// model (e.g. the SLA performance report) and fills it from live queries in its owning service;
 /// the renderer and CSV exporter only lay it out. Templates hold labels, never numbers or business text.
@@ -30,4 +40,6 @@ public abstract class ReportModel
     public ReportMetadata Metadata { get; }
 
     public IReadOnlyList<ReportSection> Sections { get; }
+
+    public ReportPageOrientation Orientation { get; init; } = ReportPageOrientation.Portrait;
 }
