@@ -22,6 +22,7 @@ public class EngagementsController : ControllerBase
     private readonly IClientActionService? _actionService;
     private readonly INextActionService? _nextActionService;
     private readonly IStallRecorder? _stallRecorder;
+    private readonly IReadinessService? _readiness;
 
     public EngagementsController(
         IEngagementRepository repository,
@@ -29,7 +30,8 @@ public class EngagementsController : ControllerBase
         IGateEvaluator gateEvaluator,
         IClientActionService? actionService = null,
         INextActionService? nextActionService = null,
-        IStallRecorder? stallRecorder = null)
+        IStallRecorder? stallRecorder = null,
+        IReadinessService? readiness = null)
     {
         _repository = repository;
         _auditPublisher = auditPublisher;
@@ -37,6 +39,7 @@ public class EngagementsController : ControllerBase
         _actionService = actionService;
         _nextActionService = nextActionService;
         _stallRecorder = stallRecorder;
+        _readiness = readiness;
     }
 
     [HttpPost]
@@ -552,6 +555,183 @@ public class EngagementsController : ControllerBase
         Stage = e.Stage.ToString(),
         StageProgressPercentage = EngagementStageValidator.GetProgressPercentage(e.Stage),
         CreatedAt = e.CreatedAt,
-        ClosedAt = e.ClosedAt
+        ClosedAt = e.ClosedAt,
+        HandoffSummary = e.HandoffSummary,
+        HandedOffBy = e.HandedOffBy,
+        HandedOffAtUtc = e.HandedOffAtUtc,
+        ClosedBy = e.ClosedBy,
+        ClosureSummary = e.ClosureSummary,
     };
+
+        /// <summary>
+    /// CSTD-20: Evaluates readiness for handoff/closure. Read-only; reuses the gate evaluator.
+    /// </summary>
+    [HttpGet("{id}/readiness")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<ReadinessResponse>> GetReadiness(
+        Guid id,
+        [FromQuery] string? tenantId,
+        CancellationToken ct = default)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden) return Forbid();
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+            return BadRequest("Tenant identification is required.");
+
+        var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
+        if (engagement == null) return NotFound();
+
+        try
+        {
+            var result = await _readiness.EvaluateAsync(id, effectiveTenantId, ct);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+    }
+
+    /// <summary>
+    /// CSTD-20: Records final handoff context. Requires readiness; repeated calls
+    /// overwrite the previous handoff (last-write-wins, same actor or another staff).
+    /// </summary>
+    [HttpPost("{id}/handoff")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<EngagementResponse>> Handoff(
+        Guid id,
+        [FromBody] HandoffEngagementRequest request,
+        [FromQuery] string? tenantId,
+        CancellationToken ct = default)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden) return Forbid();
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+            return BadRequest("Tenant identification is required.");
+
+        var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
+        if (engagement == null) return NotFound();
+
+        if (engagement.Status is EngagementStatus.Closed or EngagementStatus.Cancelled)
+        {
+            return Conflict(new { message = $"Engagement in status '{engagement.Status}' cannot be handed off." });
+        }
+
+        ReadinessResponse readiness;
+        try
+        {
+            readiness = await _readiness.EvaluateAsync(id, effectiveTenantId, ct);
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+
+        if (!readiness.IsReady)
+        {
+            return Conflict(new
+            {
+                message = "Engagement is not ready for handoff.",
+                blockers = readiness.Blockers,
+            });
+        }
+
+        var actor = ResolveActor();
+        var now = DateTime.UtcNow;
+
+        engagement.HandoffSummary = request.Summary.Trim();
+        engagement.HandedOffBy = actor;
+        engagement.HandedOffAtUtc = now;
+        var updated = await _repository.UpdateAsync(engagement);
+
+        await _auditPublisher.PublishEventAsync(
+            id, effectiveTenantId, actor, "EngagementReady",
+            new
+            {
+                clientId = updated.ClientId,
+                handoffSummary = updated.HandoffSummary,
+                handedOffBy = updated.HandedOffBy,
+                handedOffAtUtc = updated.HandedOffAtUtc,
+            });
+
+        return Ok(MapToResponse(updated));
+    }
+
+    /// <summary>
+    /// CSTD-20: Explicit closure. Requires readiness; sets Closed + actor + summary;
+    /// publishes EngagementClosed. Repeated calls on an already-closed engagement
+    /// are idempotent (200 with the same state, no duplicate event).
+    /// </summary>
+    [HttpPost("{id}/close")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<EngagementResponse>> Close(
+        Guid id,
+        [FromBody] CloseEngagementRequest request,
+        [FromQuery] string? tenantId,
+        CancellationToken ct = default)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden) return Forbid();
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+            return BadRequest("Tenant identification is required.");
+
+        var engagement = await _repository.GetByIdAsync(id, effectiveTenantId);
+        if (engagement == null) return NotFound();
+
+        // Idempotent: already closed → return current state without publishing a duplicate event.
+        if (engagement.Status == EngagementStatus.Closed)
+        {
+            return Ok(MapToResponse(engagement));
+        }
+
+        if (engagement.Status == EngagementStatus.Cancelled)
+        {
+            return Conflict(new { message = "Engagement is cancelled and cannot be closed." });
+        }
+
+        if (engagement.Status == EngagementStatus.Draft)
+        {
+            return Conflict(new { message = "Start the engagement before closing it." });
+        }
+
+        ReadinessResponse readiness;
+        try
+        {
+            readiness = await _readiness.EvaluateAsync(id, effectiveTenantId, ct);
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+
+        if (!readiness.IsReady)
+        {
+            return Conflict(new
+            {
+                message = "Engagement is not ready for closure.",
+                blockers = readiness.Blockers,
+            });
+        }
+
+        var actor = ResolveActor();
+        var now = DateTime.UtcNow;
+
+        engagement.Status = EngagementStatus.Closed;
+        engagement.ClosedAt = now;
+        engagement.ClosedBy = actor;
+        engagement.ClosureSummary = string.IsNullOrWhiteSpace(request.Summary) ? null : request.Summary.Trim();
+        var updated = await _repository.UpdateAsync(engagement);
+
+        if (_stallRecorder != null)
+        {
+            await _stallRecorder.ResolveForEngagementAsync(updated.EngagementId, effectiveTenantId, StallResolution.EngagementClosed);
+        }
+
+        await _auditPublisher.PublishEventAsync(
+            id, effectiveTenantId, actor, "EngagementClosed",
+            new
+            {
+                clientId = updated.ClientId,
+                closureSummary = updated.ClosureSummary,
+                closedBy = updated.ClosedBy,
+                closedAt = updated.ClosedAt,
+            });
+
+        return Ok(MapToResponse(updated));
+    }
 }
