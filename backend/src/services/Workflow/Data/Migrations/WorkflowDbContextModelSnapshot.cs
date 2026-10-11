@@ -295,6 +295,11 @@ namespace Workflow.Data.Migrations
                         .HasColumnType("varchar(30)")
                         .HasColumnName("payment_type");
 
+                    b.Property<string>("RejectionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)")
+                        .HasColumnName("rejection_reason");
+
                     b.Property<string>("RequiredBeforeStage")
                         .IsRequired()
                         .HasMaxLength(40)

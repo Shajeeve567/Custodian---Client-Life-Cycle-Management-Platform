@@ -44,6 +44,10 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
         "ConditionAttached",
         "ConditionUpdated",
         "ConditionDeactivated",
+        // CSTD-144 (Client Approval Events)
+        "ApprovalAttached",
+        "ApprovalCompleted",
+        "ApprovalRejected",
         // CSTD-35 (Intervention & Recovery). Dot-case as Workflow publishes it; Identity reads the same
         // event for the client-safe "back on track" notification.
         "intervention.recovered",

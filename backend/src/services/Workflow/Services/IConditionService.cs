@@ -50,4 +50,14 @@ public interface IConditionService : IConditionReader
     /// Pending -> Satisfied | Rejected, Rejected -> Pending.
     /// </summary>
     Task SetConditionStatusAsync(Guid conditionId, string tenantId, string newStatus, string actor, string? reason = null);
+
+    /// <summary>
+    /// Client approves an active pending Approval condition (CSTD-143).
+    /// </summary>
+    Task<ClientSafeConditionDto> ApproveConditionAsync(Guid engagementId, Guid conditionId, string tenantId, string callerClientId, string actor);
+
+    /// <summary>
+    /// Client rejects an active pending Approval condition with a reason (CSTD-143).
+    /// </summary>
+    Task<ClientSafeConditionDto> RejectConditionAsync(Guid engagementId, Guid conditionId, string tenantId, string callerClientId, RejectApprovalDto dto, string actor);
 }
