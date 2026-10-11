@@ -7,6 +7,36 @@ export type MeetingType = 'Normal' | 'Intervention';
 export type MeetingStatus = 'Scheduled' | 'Completed' | 'Cancelled' | 'Missed' | 'Rescheduled';
 export type MeetingImportance = 'Normal' | 'Important';
 
+export type ReadinessState =
+    | 'Ready'
+    | 'NotReady'
+    | 'NotStarted'
+    | 'NotAtClosure'
+    | 'AlreadyClosed'
+    | 'AlreadyCancelled';
+
+export interface ReadinessBlocker {
+    kind: string;        // Document | Condition | Requirement | Task | Gate | External | Stage
+    title: string;
+    reason: string;
+}
+
+export interface ReadinessResponse {
+    engagementId: string;
+    isReady: boolean;
+    state: ReadinessState | string;
+    blockers: ReadinessBlocker[];
+    evaluatedAtUtc: string;
+}
+
+export interface HandoffEngagementRequest {
+    summary: string;
+}
+
+export interface CloseEngagementRequest {
+    summary?: string;
+}
+
 export interface UserProfile {
     userId: string;
     username?: string;
@@ -93,6 +123,11 @@ export interface Engagement {
     stageProgressPercentage: number;
     createdAt: string;
     closedAt?: string | null;
+    handoffSummary?: string | null;
+    handedOffBy?: string | null;
+    handedOffAtUtc?: string | null;
+    closedBy?: string | null;
+    closureSummary?: string | null;
 }
 
 export interface CreateEngagementRequest {
