@@ -26,6 +26,9 @@ public class Intervention
     /// </summary>
     public Guid? BlockerActionId { get; set; }
 
+    // CSTD-32
+    public Guid? MeetingId { get; set; }
+
     /// <summary>See <see cref="InterventionType"/>.</summary>
     public string Type { get; set; } = InterventionType.RecoveryAction;
 

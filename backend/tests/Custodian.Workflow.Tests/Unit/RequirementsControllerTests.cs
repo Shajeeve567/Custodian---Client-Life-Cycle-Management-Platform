@@ -1,6 +1,8 @@
 using System.Security.Claims;
 using Custodian.Workflow.Controllers;
 using Custodian.Workflow.DTOs;
+using Custodian.Workflow.Models;
+using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -14,13 +16,22 @@ public class RequirementsControllerTests
 {
     private readonly Mock<IRequirementService> _mockService;
     private readonly Mock<ILogger<RequirementsController>> _mockLogger;
+    private readonly Mock<IEngagementRepository> _engagements = new();
     private readonly RequirementsController _controller;
 
     public RequirementsControllerTests()
     {
         _mockService = new Mock<IRequirementService>();
         _mockLogger = new Mock<ILogger<RequirementsController>>();
-        _controller = new RequirementsController(_mockService.Object, _mockLogger.Object);
+
+        // Default: engagement exists and is Started, so the CSTD-20 post-closure guard
+        // (EnsureMutableAsync) passes for every test that isn't specifically about closure.
+        // Tests that need a Closed/Cancelled engagement override this.
+        _engagements
+            .Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<string>()))
+            .ReturnsAsync(new Engagement { Status = EngagementStatus.Started });
+
+        _controller = new RequirementsController(_mockService.Object, _engagements.Object, _mockLogger.Object);
     }
 
     private void SetupUser(string tenantId, string? role = null, string? clientId = null)
@@ -179,6 +190,25 @@ public class RequirementsControllerTests
     }
 
     [Fact]
+    public async Task RequestRequirement_ClosedEngagement_Returns409Conflict()
+    {
+        // CSTD-20: a Closed engagement is terminal — staff cannot request new information on it.
+        SetupUser("tenant-001", "Staff");
+        var engagementId = Guid.NewGuid();
+        _engagements
+            .Setup(r => r.GetByIdAsync(engagementId, "tenant-001"))
+            .ReturnsAsync(new Engagement { Status = EngagementStatus.Closed });
+
+        // Act
+        var result = await _controller.RequestRequirement(engagementId, new RequestRequirementDto { Type = "SourceOfFunds" }, tenantId: null);
+
+        // Assert
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(409, conflict.StatusCode);
+        _mockService.Verify(s => s.RequestRequirementAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<RequestRequirementDto>()), Times.Never);
+    }
+
+    [Fact]
     public async Task SubmitRequirement_ExistingRequirement_ReturnsOk()
     {
         // Arrange: any authenticated caller may submit (the client, typically)
@@ -230,6 +260,29 @@ public class RequirementsControllerTests
 
         // Assert
         Assert.IsType<ForbidResult>(result.Result);
+        _mockService.Verify(
+            s => s.SubmitRequirementAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<SubmitRequirementDto>(), It.IsAny<string>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task SubmitRequirement_ClosedEngagement_Returns409Conflict()
+    {
+        // CSTD-20: a client cannot submit an answer to a requirement on a Closed engagement.
+        SetupUser("tenant-001", "Client", clientId: "client-1");
+        var engagementId = Guid.NewGuid();
+        var requirementId = Guid.NewGuid();
+        var dto = new SubmitRequirementDto { Value = "Salary" };
+        _engagements
+            .Setup(r => r.GetByIdAsync(engagementId, "tenant-001"))
+            .ReturnsAsync(new Engagement { Status = EngagementStatus.Closed });
+
+        // Act
+        var result = await _controller.SubmitRequirement(engagementId, requirementId, dto, tenantId: null);
+
+        // Assert
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(409, conflict.StatusCode);
         _mockService.Verify(
             s => s.SubmitRequirementAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<SubmitRequirementDto>(), It.IsAny<string>()),
             Times.Never);
@@ -292,5 +345,26 @@ public class RequirementsControllerTests
         // Assert
         Assert.IsType<OkObjectResult>(result.Result);
         _mockService.Verify(s => s.ReviewRequirementAsync(engagementId, requirementId, "tenant-001", dto), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReviewRequirement_ClosedEngagement_Returns409Conflict()
+    {
+        // CSTD-20: a Closed engagement is terminal — staff cannot review requirements on it.
+        SetupUser("tenant-001", "Owner");
+        var engagementId = Guid.NewGuid();
+        var requirementId = Guid.NewGuid();
+        var dto = new ReviewRequirementDto { Status = RequirementReviewStatus.Approved, ReviewerActor = "owner-1" };
+        _engagements
+            .Setup(r => r.GetByIdAsync(engagementId, "tenant-001"))
+            .ReturnsAsync(new Engagement { Status = EngagementStatus.Closed });
+
+        // Act
+        var result = await _controller.ReviewRequirement(engagementId, requirementId, dto, tenantId: null);
+
+        // Assert
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(409, conflict.StatusCode);
+        _mockService.Verify(s => s.ReviewRequirementAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<ReviewRequirementDto>()), Times.Never);
     }
 }

@@ -9,7 +9,8 @@ namespace Custodian.Shared.Reporting.Rendering;
 
 /// <summary>
 /// CSTD-36-2: the one Custodian report layout, drawn with QuestPDF.
-/// - Header: "Custodian", report title, tenant, "Generated {UTC} by {actor}", data source.
+/// - Header: "Custodian", report title, tenant, "Generated {UTC} by {actor}", data source. For a
+///   <see cref="ReportAudience.Client"/> report: "Prepared for {actor}" and "Generated {UTC}", no tenant.
 /// - Filters block, then each section by type. Table headers repeat on every page.
 /// - Footer: "Generated from live data at time of request", report code, "Page X of Y".
 ///
@@ -40,10 +41,14 @@ public sealed class PdfReportRenderer : IReportRenderer
         ArgumentNullException.ThrowIfNull(model);
         var meta = model.Metadata;
 
+        var pageSize = model.Orientation == ReportPageOrientation.Landscape
+            ? PageSizes.A4.Landscape()
+            : PageSizes.A4;
+
         return Document
             .Create(document => document.Page(page =>
             {
-                page.Size(PageSizes.A4);
+                page.Size(pageSize);
                 page.Margin(36);
                 page.DefaultTextStyle(style => style.FontFamily(FontFamily).FontSize(9).FontColor(Colors.Grey.Darken4));
 
@@ -71,13 +76,21 @@ public sealed class PdfReportRenderer : IReportRenderer
             column.Item().Text("Custodian").FontSize(9).Bold().FontColor(AccentColor);
             column.Item().Text(meta.Title).FontSize(16).Bold();
 
-            var tenant = meta.TenantDisplayName is null
-                ? $"Tenant {meta.TenantId}"
-                : $"{meta.TenantDisplayName} ({meta.TenantId})";
-            column.Item().Text(tenant).FontColor(MutedColor);
-            column.Item().Text(
-                    $"Generated {meta.GeneratedAtUtc.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} UTC by {meta.GeneratedBy}")
-                .FontColor(MutedColor);
+            var generatedAt = meta.GeneratedAtUtc.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+            if (meta.Audience == ReportAudience.Client)
+            {
+                // CSTD-14: a client's copy never shows the tenant id (an internal identifier).
+                column.Item().Text($"Prepared for {meta.GeneratedBy}").FontColor(MutedColor);
+                column.Item().Text($"Generated {generatedAt} UTC").FontColor(MutedColor);
+            }
+            else
+            {
+                var tenant = meta.TenantDisplayName is null
+                    ? $"Tenant {meta.TenantId}"
+                    : $"{meta.TenantDisplayName} ({meta.TenantId})";
+                column.Item().Text(tenant).FontColor(MutedColor);
+                column.Item().Text($"Generated {generatedAt} UTC by {meta.GeneratedBy}").FontColor(MutedColor);
+            }
             column.Item().Text($"Source: {meta.DataSource}").FontColor(MutedColor);
         });
     }
@@ -161,15 +174,15 @@ public sealed class PdfReportRenderer : IReportRenderer
         {
             table.ColumnsDefinition(columns =>
             {
-                columns.RelativeColumn(2);
                 columns.RelativeColumn(1);
+                columns.RelativeColumn(2);
             });
 
             foreach (var pair in section.Pairs)
             {
                 table.Cell().Element(BodyCell).Text(pair.Label);
-                // Values line up on the right, numbers or not ("82.5%", "n/a").
-                table.Cell().Element(BodyCell).AlignRight().Text(ReportValue.Format(pair.Value)).SemiBold();
+                // Values line up with balanced spacing adjacent to labels
+                table.Cell().Element(BodyCell).Text(ReportValue.Format(pair.Value)).SemiBold();
             }
         });
     }
@@ -191,7 +204,7 @@ public sealed class PdfReportRenderer : IReportRenderer
             {
                 foreach (var column in section.Columns)
                 {
-                    var cell = header.Cell().Background(HeaderFill).Element(BodyCell);
+                    var cell = header.Cell().Background(HeaderFill).Element(HeaderCell);
                     Align(cell, column).Text(column.Header).SemiBold();
                 }
             });
@@ -207,8 +220,11 @@ public sealed class PdfReportRenderer : IReportRenderer
         });
     }
 
+    private static IContainer HeaderCell(IContainer container) =>
+        container.BorderBottom(1).BorderColor(RuleColor).PaddingVertical(3).PaddingHorizontal(4);
+
     private static IContainer BodyCell(IContainer container) =>
-        container.BorderBottom(0.5f).BorderColor(RuleColor).PaddingVertical(3).PaddingHorizontal(4);
+        container.ShowEntire().BorderBottom(0.5f).BorderColor(RuleColor).PaddingVertical(3).PaddingHorizontal(4);
 
     private static IContainer Align(IContainer container, ReportColumn column) =>
         column.Alignment == ReportColumnAlignment.Right ? container.AlignRight() : container.AlignLeft();

@@ -56,6 +56,16 @@ public class ReportExportAndErrorTests
         Assert.Equal("custodian-sla_performance-20260928-1030Z.csv", ReportResults.FileName(Metadata(), ReportFormat.Csv));
     }
 
+    [Theory]
+    [InlineData("ENG-A1B2C3", "custodian-sla_performance-eng-a1b2c3-20260928-1030Z.pdf")]
+    [InlineData("  Eng A1/\"x\"  ", "custodian-sla_performance-eng-a1--x-20260928-1030Z.pdf")]
+    [InlineData("---", "custodian-sla_performance-20260928-1030Z.pdf")]
+    public void FileName_WithSubject_IsSlugged_AndNeedsNoEscaping(string subject, string expected)
+    {
+        Assert.Equal(expected, ReportResults.FileName(Metadata(), ReportFormat.Pdf, subject));
+        Assert.Equal(expected, ReportResults.Output(Metadata(), ReportFormat.Pdf, [1], subject).Name);
+    }
+
     [Fact]
     public async Task File_SetsDownloadHeaders_AndWritesTheBytes()
     {

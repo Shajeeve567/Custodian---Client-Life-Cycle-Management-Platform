@@ -36,11 +36,17 @@ import {
     AttachConditionRequest,
     UpdateConditionRequest,
     DeactivateConditionRequest,
+    RejectApprovalRequest,
     NextActionResult,
     UpdateClientActionRequest,
     StallQueueItem,
     Intervention,
     RecordInterventionRequest,
+    Meeting,
+    CreateMeetingRequest,
+    UpdateMeetingRequest,
+    RescheduleMeetingRequest,
+    ReadinessResponse,
 } from '../types';
 
 export const API_BASE = {
@@ -159,6 +165,17 @@ export async function request<T = any>(
 /** Report endpoints (each hosted by the service that owns the data). */
 export const ReportsApi = {
     slaPerformanceUrl: () => `${API_BASE.WORKFLOW}/api/reports/sla-performance`,
+    validationVerificationUrl: () => `${API_BASE.DOCUMENTS}/api/reports/validation-verification`,
+    /** CSTD-14: the client's own engagement summary (Client role only). */
+    engagementSummaryClientUrl: (engagementId: string) =>
+        `${API_BASE.WORKFLOW}/api/portal/engagements/${encodeURIComponent(engagementId)}/summary-report`,
+    /** CSTD-14: the same summary for an Owner or the responsible Staff member. */
+    engagementSummaryStaffUrl: (engagementId: string) =>
+        `${API_BASE.WORKFLOW}/api/reports/engagement-summary/${encodeURIComponent(engagementId)}`,
+    /** CSTD-38: the delivery readiness & handoff summary for an engagement. */
+    deliveryReadinessHandoffUrl: (engagementId: string) =>
+        `${API_BASE.WORKFLOW}/api/reports/delivery-readiness-handoff?engagementId=${encodeURIComponent(engagementId)}`,
+    proofOfDeliveryUrl: () => `${API_BASE.AUDIT}/api/reports/proof-of-delivery`,
 };
 
 /** RFC 7807 body of a failed report request (see docs/reporting.md, Errors). */
@@ -648,13 +665,36 @@ export const WorkflowApi = {
     },
 
     async attachCondition(engagementId: string, req: AttachConditionRequest, tenantId?: string): Promise<EngagementCondition> {
+        const stageMap: Record<string, number> = {
+            Onboarding: 0,
+            DocumentCollection: 1,
+            Verification: 2,
+            Execution: 3,
+            Closure: 4,
+            onboarding: 0,
+            documentcollection: 1,
+            verification: 2,
+            execution: 3,
+            closure: 4,
+        };
+        const stageOrdinal = req.requiredBeforeStage !== undefined && req.requiredBeforeStage !== null
+            ? (typeof req.requiredBeforeStage === 'number'
+                ? req.requiredBeforeStage
+                : stageMap[req.requiredBeforeStage] ?? req.requiredBeforeStage)
+            : undefined;
+
+        const payload = {
+            ...req,
+            ...(stageOrdinal !== undefined ? { requiredBeforeStage: stageOrdinal } : {}),
+        };
+
         const url = tenantId
             ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions?tenantId=${encodeURIComponent(tenantId)}`
             : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions`;
         return request<EngagementCondition>(url, {
             method: 'POST',
             headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
-            body: JSON.stringify(req),
+            body: JSON.stringify(payload),
         });
     },
 
@@ -678,6 +718,100 @@ export const WorkflowApi = {
             headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
             body: JSON.stringify({ reason }),
         });
+    },
+
+    // CSTD-145: Client Approval Decisions
+    async approveCondition(engagementId: string, conditionId: string, tenantId?: string): Promise<ClientSafeCondition> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/approve?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/approve`;
+        return request<ClientSafeCondition>(url, {
+            method: 'POST',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+        });
+    },
+
+    async rejectCondition(engagementId: string, conditionId: string, req: RejectApprovalRequest, tenantId?: string): Promise<ClientSafeCondition> {
+        const url = tenantId
+            ? `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/reject?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/reject`;
+        return request<ClientSafeCondition>(url, {
+            method: 'POST',
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+            body: JSON.stringify(req),
+        });
+    },
+
+    async listMeetings(engagementId: string, tenantId: string): Promise<Meeting[]> {
+        return request<Meeting[]>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/meetings?tenantId=${encodeURIComponent(tenantId)}`,
+            { headers: { 'X-Tenant-ID': tenantId } });
+    },
+
+    async createMeeting(engagementId: string, req: CreateMeetingRequest, tenantId: string): Promise<Meeting> {
+        return request<Meeting>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/meetings?tenantId=${encodeURIComponent(tenantId)}`,
+            { method: 'POST', headers: { 'X-Tenant-ID': tenantId }, body: JSON.stringify(req) });
+    },
+
+    async updateMeeting(engagementId: string, meetingId: string, req: UpdateMeetingRequest, tenantId: string): Promise<Meeting> {
+        return request<Meeting>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/meetings/${meetingId}?tenantId=${encodeURIComponent(tenantId)}`,
+            { method: 'PUT', headers: { 'X-Tenant-ID': tenantId }, body: JSON.stringify(req) });
+    },
+
+    async updateMeetingStatus(engagementId: string, meetingId: string, status: string, tenantId: string): Promise<Meeting> {
+        return request<Meeting>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/meetings/${meetingId}/status?tenantId=${encodeURIComponent(tenantId)}`,
+            { method: 'PUT', headers: { 'X-Tenant-ID': tenantId }, body: JSON.stringify({ status }) });
+    },
+
+    async rescheduleMeeting(engagementId: string, meetingId: string, req: RescheduleMeetingRequest, tenantId: string): Promise<Meeting> {
+        return request<Meeting>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/meetings/${meetingId}/reschedule?tenantId=${encodeURIComponent(tenantId)}`,
+            { method: 'POST', headers: { 'X-Tenant-ID': tenantId }, body: JSON.stringify(req) });
+    },
+
+    async listMissedMeetings(tenantId: string): Promise<Meeting[]> {
+        return request<Meeting[]>(
+            `${API_BASE.WORKFLOW}/api/meetings/missed?tenantId=${encodeURIComponent(tenantId)}`,
+            { headers: { 'X-Tenant-ID': tenantId } });
+    },
+
+    async getReadiness(engagementId: string, tenantId: string): Promise<ReadinessResponse> {
+        return request<ReadinessResponse>(
+            `${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/readiness?tenantId=${encodeURIComponent(tenantId)}`,
+            { headers: { 'X-Tenant-ID': tenantId } });
+    },
+
+    async handoff(engagementId: string, summary: string, tenantId: string): Promise<Engagement> {
+        return request<Engagement>(
+            `${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/handoff?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'POST',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify({ summary }),
+            });
+    },
+
+    async closeEngagement(engagementId: string, summary: string | undefined, tenantId: string): Promise<Engagement> {
+        return request<Engagement>(
+            `${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/close?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'POST',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify({ summary }),
+            }
+        );
+    },
+
+    async satisfyCondition(engagementId: string, conditionId: string, tenantId: string): Promise<EngagementCondition> {
+        return request<EngagementCondition>(
+            `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/satisfy?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'POST',
+                headers: { 'X-Tenant-ID': tenantId },
+            });
     },
 };
 
@@ -744,6 +878,30 @@ export const AuditApi = {
         const params = new URLSearchParams({ engagementId });
         if (tenantId) params.append('tenantId', tenantId);
         return request<ChainVerificationResult>(`${API_BASE.AUDIT}/api/audit-events/verify?${params.toString()}`);
+    },
+
+    // CSTD-42: Flags an audit event with required reason, appending an immutable reference event to the chain.
+    async flagEvent(eventId: string, reason: string, tenantId?: string): Promise<AuditEvent> {
+        const url = tenantId
+            ? `${API_BASE.AUDIT}/api/audit-events/${encodeURIComponent(eventId)}/flag?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.AUDIT}/api/audit-events/${encodeURIComponent(eventId)}/flag`;
+        return request<AuditEvent>(url, {
+            method: 'POST',
+            body: JSON.stringify({ reason }),
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+        });
+    },
+
+    // CSTD-42: Archives an audit event with an optional reason without mutating the chain.
+    async archiveEvent(eventId: string, reason?: string, tenantId?: string): Promise<AuditEvent> {
+        const url = tenantId
+            ? `${API_BASE.AUDIT}/api/audit-events/${encodeURIComponent(eventId)}/archive?tenantId=${encodeURIComponent(tenantId)}`
+            : `${API_BASE.AUDIT}/api/audit-events/${encodeURIComponent(eventId)}/archive`;
+        return request<AuditEvent>(url, {
+            method: 'POST',
+            body: JSON.stringify({ reason: reason || undefined }),
+            headers: tenantId ? { 'X-Tenant-ID': tenantId } : undefined,
+        });
     },
 };
 
@@ -876,4 +1034,3 @@ export const DocumentsApi = {
         return query ? `${base}?${query}` : base;
     },
 };
-

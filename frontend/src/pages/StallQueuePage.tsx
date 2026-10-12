@@ -12,6 +12,7 @@ import {
     User,
     CheckCircle2,
 } from 'lucide-react';
+import MissedMeetingsPanel from '../components/MissedMeetingsPanel';
 
 function formatOverdue(hours: number): string {
     if (hours < 1) return '<1h';
@@ -215,6 +216,8 @@ export const StallQueuePage: React.FC = () => {
                         </span>
                     )}
                 </div>
+
+                {tenantId && <MissedMeetingsPanel tenantId={tenantId} />}
 
                 {/* Content */}
                 {isLoading && !hasItems ? (

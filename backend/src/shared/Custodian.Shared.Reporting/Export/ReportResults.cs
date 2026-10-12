@@ -21,10 +21,34 @@ public static class ReportResults
         return $"custodian-{metadata.ReportCode.ToLowerInvariant()}-{stamp}Z.{ReportFormats.Extension(format)}";
     }
 
+    /// <summary>
+    /// <c>custodian-{reportcode-lower}-{subject}-{yyyyMMdd-HHmm}Z.{ext}</c>, for a report about one subject
+    /// (e.g. an engagement code). The subject is lower-cased and reduced to letters, digits and dashes,
+    /// so the name still needs no escaping in Content-Disposition.
+    /// </summary>
+    public static string FileName(ReportMetadata metadata, ReportFormat format, string subject)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        var slug = new string(subject.Trim().ToLowerInvariant()
+            .Select(c => char.IsAsciiLetterOrDigit(c) ? c : '-')
+            .ToArray()).Trim('-');
+        if (slug.Length == 0) return FileName(metadata, format);
+
+        var stamp = metadata.GeneratedAtUtc.UtcDateTime.ToString("yyyyMMdd-HHmm", CultureInfo.InvariantCulture);
+        return $"custodian-{metadata.ReportCode.ToLowerInvariant()}-{slug}-{stamp}Z.{ReportFormats.Extension(format)}";
+    }
+
     public static ReportOutput Output(ReportMetadata metadata, ReportFormat format, byte[] content)
     {
         ArgumentNullException.ThrowIfNull(content);
         return new ReportOutput(FileName(metadata, format), content, ReportFormats.ContentType(format));
+    }
+
+    public static ReportOutput Output(ReportMetadata metadata, ReportFormat format, byte[] content, string subject)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        ArgumentNullException.ThrowIfNull(subject);
+        return new ReportOutput(FileName(metadata, format, subject), content, ReportFormats.ContentType(format));
     }
 
     /// <summary>

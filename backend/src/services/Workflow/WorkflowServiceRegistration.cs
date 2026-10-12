@@ -3,7 +3,9 @@ using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
 using Custodian.Workflow.Services.Gates;
 using Custodian.Workflow.Services.Kafka;
+using Custodian.Workflow.Services.Meetings;
 using Custodian.Workflow.Services.NextAction;
+using Custodian.Workflow.Services.Reports;
 using Custodian.Workflow.Services.Sla;
 using Custodian.Workflow.Services.Stall;
 
@@ -26,6 +28,9 @@ public static class WorkflowServiceRegistration
         services.AddScoped<IConditionService, ConditionService>();
         services.AddSingleton(TimeProvider.System);
 
+        // CSTD 32: Meeting Schedule
+        services.AddScoped<IMeetingService, MeetingService>();
+
         // CSTD-33: SLA thresholds are config driven (no runtime editing); stall state is computed on read.
         services.Configure<SlaOptions>(configuration.GetSection(SlaOptions.SectionName));
         services.AddScoped<IStallDetectionService, StallDetectionService>();
@@ -44,6 +49,8 @@ public static class WorkflowServiceRegistration
         services.AddScoped<ISlaCalculator, SlaCalculator>();
         // CSTD-37 SLA performance report numbers.
         services.AddScoped<Services.Reports.ISlaPerformanceReportService, Services.Reports.SlaPerformanceReportService>();
+        // CSTD-14 client engagement summary report.
+        services.AddScoped<Services.Reports.IEngagementSummaryReportService, Services.Reports.EngagementSummaryReportService>();
         services.AddScoped<IStallService, StallService>();
         services.AddScoped<INextActionService, NextActionService>();
 
@@ -61,6 +68,10 @@ public static class WorkflowServiceRegistration
         services.Configure<KafkaConsumerOptions>(configuration.GetSection(KafkaConsumerOptions.SectionName));
         services.AddHostedService<DocumentEventsConsumer>();
 
+        services.AddScoped<IReadinessService, ReadinessService>();
+
+        // CSTD-38: Delivery, Readiness and Handoff Summary
+        services.AddScoped<IReadinessHandoffReportService, ReadinessHandoffReportService>();
         return services;
     }
 }

@@ -18,6 +18,7 @@ A report is pure data: `ReportMetadata` plus an ordered list of sections (`Custo
 - `ReportCode`: upper case, digits, underscores (`SLA_PERFORMANCE`). It is used in the file name.
 - `Title`.
 - `TenantId` / `TenantDisplayName` (optional).
+- `Audience` (optional): `Internal` (default) or `Client`. A `Client` report's header shows "Prepared for {actor}" and no tenant id.
 - `GeneratedAtUtc`.
 - `GeneratedBy`.
 - `AppliedFilters`: printed in the order given.
@@ -136,6 +137,17 @@ public class ReportsController : ControllerBase
 - **Tenant from the JWT only.** The tenant always comes from the JWT `tenant_id` claim (the `TenantMember` policy already enforces it on every endpoint). Never take it from a query string or header.
 - **Staff reports:** Owner and Staff only; a Client gets 403.
 - **Client-facing reports** (e.g. CSTD-14, Sprint 4) must also check that the requested engagement belongs to the calling client, the same `client_id` check the portal uses. Otherwise return 404, so the engagement's existence isn't revealed.
+
+### Client-facing reports (CSTD-14 engagement summary)
+
+The engagement summary (`ENGAGEMENT_SUMMARY`, Workflow) is the first report a client downloads:
+
+- **Routes:** `GET api/portal/engagements/{id}/summary-report` (Client) and `GET api/reports/engagement-summary/{id}` (Owner, or the responsible Staff member). PDF only.
+- **Ownership:** the engagement must be in the JWT tenant and, for a Client, have `ClientId` equal to the JWT `client_id`; Staff are limited to engagements they are responsible for. Every denial is the same 404.
+- **Client-safe by construction:** the data (`EngagementSummaryData`) is filled only from the existing client-safe paths (portal dashboard, client view of actions, `ClientSafeConditionDto` mapper, Documents API) and its records have no field for tenant/client/staff ids, internal notes, audit actors or SLA internals. The staff route adds one "Staff details" section.
+- **Header:** `ReportAudience.Client`, so the tenant id is not printed.
+- **File name:** `ReportResults.Output(metadata, format, bytes, subject)` adds the engagement code: `custodian-engagement_summary-eng-a1b2c3-20261012-1030Z.pdf`.
+- **Dependencies:** if Documents cannot be read the request fails with 503; a summary is never produced with a section silently missing.
 
 ## Errors
 
@@ -256,6 +268,64 @@ Still open for DevOps (CSTD-36-5): render a PDF inside the Workflow Docker image
 **Tests:**
 - `tests/Custodian.Workflow.Tests/Unit/Reports/`: filters, maths (hand-computed fixture), builder;
 - `Integration/SlaPerformanceReportEndpointTests.cs`: the endpoint.
+
+### Proof of Delivery (CSTD-43)
+
+`GET {Audit}/api/reports/proof-of-delivery` (Owner, Staff), code `PROOF_OF_DELIVERY`.
+
+| Parameter | Values | Default | Description |
+|---|---|---|---|
+| `engagementId` | GUID (required) | none | Engagement subject identifier. Missing/empty/malformed → 400. Not in tenant / unassigned staff → 404. |
+| `format` | `pdf` | `pdf` | Download format. Only `pdf` is currently supported (`csv` or other formats → 400). |
+
+**Authorization & Access Rules:**
+- **Roles:** `[Authorize(Roles = "Owner,Staff")]`. Client callers get 403 Forbidden. Unauthenticated requests get 401 Unauthorized. Global tokens without tenant membership get 403 Forbidden.
+- **Tenant Isolation:** The tenant is resolved exclusively from the caller's JWT `tenant_id` claim. Cross-tenant engagement requests return 404 Not Found without leaking existence.
+- **Staff Access Restriction:** Staff members may only generate reports for engagements they are assigned to. Audit queries Workflow (`GET /api/engagements/{id}/can-access`) to verify this assignment. Unassigned Staff receive 404 Not Found (fail closed). If Workflow is unavailable, Audit fails closed with 503 Service Unavailable (`EngagementAccessUnavailableException`).
+
+**Download Headers:**
+- `Content-Type: application/pdf`
+- `Content-Disposition: attachment; filename="custodian-proof_of_delivery-{yyyyMMdd-HHmm}Z.pdf"`
+- `Cache-Control: no-store`
+- `X-Content-Type-Options: nosniff`
+
+**Report Content & Sections:**
+1. **Engagement summary (`KeyValueSection`):** Engagement ID, Client ID, Status, Stage, Stage progress %, Responsible staff, Created at (UTC), Closed at (UTC).
+2. **Cryptographic integrity & verification (`KeyValueSection`):** Integrity status (`VALID`, `TAMPERED`, `EMPTY`, `UNAVAILABLE`), Audit evidence recorded (`Yes`/`No`), Delivery confirmation established (`Yes`/`No`), Verified event count, Total events recorded, Verified sequence range (`First - Last` or `None`), Genesis hash (abbreviated), Chain tip hash (abbreviated), Verified at (UTC), Live-head consistency.
+3. **Evidence & integrity statement (`TextSection`):** Technical disclaimer explaining that cryptographic verification validates tamper-evident integrity of the SHA-256 hash chain and audit trail, but does not independently establish commercial delivery completion unless an authoritative delivery confirmation domain event is present.
+4. **Notice section (conditional `TextSection`):**
+   - *On TAMPERED:* "Integrity failure notice" identifying broken event ID, broken sequence number, and failure reason.
+   - *On UNAVAILABLE:* "Verification notice" explaining cryptographic or upstream dependency unavailability.
+   - *On Live-Head Mismatch:* "Live head consistency notice" declaring that the report reflects a historical snapshot and that subsequent unverified events exist on the live head.
+5. **Audit event timeline (`TableSection` or `EmptySection`):**
+   - If events exist: Seq #, Event ID (abbreviated), Timestamp (UTC), Actor, Event Type, Previous Hash (abbreviated), Current Hash (abbreviated). Footnote clarifies abbreviation format (`{hash[..8]}...`).
+   - If empty history: `EmptySection` with message *"No audit events have been recorded for this engagement. The audit ledger is empty."*
+
+**Integrity Verification Outcomes:**
+- **`VALID`:** Every recorded audit event from genesis (`"0"`) through the snapshot tip possesses an unbroken hash link and matches recomputed SHA-256 hashes.
+- **`TAMPERED`:** A hash mismatch or broken `previous_hash` link was detected. Subsequent events after the break cannot be verified.
+- **`EMPTY`:** Zero events exist in the engagement ledger.
+- **`UNAVAILABLE`:** An internal cryptographic or database error prevented verification. The report status is set to `UNAVAILABLE` and **never** labelled `VALID`.
+
+**Verified Boundary & Concurrent Appends:**
+- The report snapshot captures the exact sequence boundary (`FirstSequenceNumber` to `LastSequenceNumber`), chain tip hash, and timestamp.
+- If a concurrent append occurs between query and verification, the service re-reads the latest chain tip once to synchronize. If the database tip still differs, the report marks live-head consistency as `Historical snapshot only (sequence {seq}; live head differs/unverified)`, with an explicit disclaimer that events appended after the snapshot boundary are unverified.
+
+**Limitations:**
+- Cryptographic hash-chain verification confirms tamper-evident mathematical integrity of recorded audit history; it does not constitute absolute external non-repudiation.
+- The presence of audit history or a "Closed" engagement status does not imply delivery completion. Delivery confirmation is only confirmed when an explicit, authoritative delivery event (such as `ProofOfDelivery`) exists in the verified chain.
+
+**Code:**
+- `Services/Reports/ProofOfDeliveryReportService.cs`: data aggregation, snapshot boundary calculation, fresh SHA-256 verification, and live-head consistency checks;
+- `Services/Reports/ProofOfDeliveryReportBuilder.cs`: deterministic section generation, abbreviated visual hashes, and disclaimers;
+- `Services/EngagementAccess/WorkflowEngagementAccessClient.cs`: cross-service engagement summary and staff authorization;
+- `Controllers/ReportsController.cs`: authenticated endpoint with `[ReportErrors("PROOF_OF_DELIVERY")]`;
+- `frontend/src/components/reports/ProofOfDeliveryReportSection.tsx`: UI selector and download button.
+
+**Tests:**
+- `tests/Custodian.Audit.Tests/Unit/Reports/`: aggregate queries, verification edge cases, tampered payload detection, builder formatting;
+- `tests/Custodian.Audit.Tests/Unit/EngagementAccess/`: Workflow HTTP client unit tests;
+- `tests/Custodian.Audit.Tests/Integration/ProofOfDeliveryReportEndpointTests.cs`: 16 comprehensive HTTP integration tests covering Owner/Staff authorization, Client denial, tenant isolation, extractable PDF text, tamper detection, verification unavailability, deterministic fixtures, and existing endpoint regression safety.
 
 ## Status
 

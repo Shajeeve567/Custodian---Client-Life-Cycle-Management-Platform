@@ -3,6 +3,40 @@ export type UserRole = 'Owner' | 'Staff' | 'Client' | 'Admin';
 export type InterventionType = 'Meeting' | 'RecoveryAction';
 export type InterventionOutcome = 'Recovered' | 'Progressing' | 'NoChange' | 'Escalated';
 
+export type MeetingType = 'Normal' | 'Intervention';
+export type MeetingStatus = 'Scheduled' | 'Completed' | 'Cancelled' | 'Missed' | 'Rescheduled';
+export type MeetingImportance = 'Normal' | 'Important';
+
+export type ReadinessState =
+    | 'Ready'
+    | 'NotReady'
+    | 'NotStarted'
+    | 'NotAtClosure'
+    | 'AlreadyClosed'
+    | 'AlreadyCancelled';
+
+export interface ReadinessBlocker {
+    kind: string;        // Document | Condition | Requirement | Task | Gate | External | Stage
+    title: string;
+    reason: string;
+}
+
+export interface ReadinessResponse {
+    engagementId: string;
+    isReady: boolean;
+    state: ReadinessState | string;
+    blockers: ReadinessBlocker[];
+    evaluatedAtUtc: string;
+}
+
+export interface HandoffEngagementRequest {
+    summary: string;
+}
+
+export interface CloseEngagementRequest {
+    summary?: string;
+}
+
 export interface UserProfile {
     userId: string;
     username?: string;
@@ -89,6 +123,11 @@ export interface Engagement {
     stageProgressPercentage: number;
     createdAt: string;
     closedAt?: string | null;
+    handoffSummary?: string | null;
+    handedOffBy?: string | null;
+    handedOffAtUtc?: string | null;
+    closedBy?: string | null;
+    closureSummary?: string | null;
 }
 
 export interface CreateEngagementRequest {
@@ -390,6 +429,23 @@ export interface AuditEvent {
     sequenceNumber: number;
     hash: string;
     previousHash?: string | null;
+    isFlagged?: boolean;
+    flagReason?: string | null;
+    flaggedBy?: string | null;
+    flaggedAt?: string | null;
+    flagReferenceEventId?: string | null;
+    isArchived?: boolean;
+    archiveReason?: string | null;
+    archivedBy?: string | null;
+    archivedAt?: string | null;
+}
+
+export interface FlagAuditEventRequest {
+    reason: string;
+}
+
+export interface ArchiveAuditEventRequest {
+    reason?: string;
 }
 
 // CSTD-40: result of verifying one engagement's hash chain (GET /api/audit-events/verify).
@@ -471,9 +527,11 @@ export interface EngagementCondition {
     conditionId: string;
     engagementId: string;
     tenantId: string;
+    targetClientId?: string;
     type: ConditionType;
     isActive: boolean;
     status: ConditionStatus;
+    approvalStatus?: 'Pending' | 'Approved' | 'Rejected' | null;
     requiredBeforeStage: EngagementStage | string;
     title: string;
     description?: string;
@@ -489,6 +547,7 @@ export interface EngagementCondition {
     deactivatedBy?: string;
     deactivatedAt?: string;
     deactivationReason?: string;
+    rejectionReason?: string | null;
     satisfiedAt?: string;
     satisfiedBy?: string;
     isOverdue?: boolean;
@@ -500,6 +559,8 @@ export interface ClientSafeCondition {
     description?: string;
     type: ConditionType;
     status: ConditionStatus;
+    approvalStatus?: 'Pending' | 'Approved' | 'Rejected' | null;
+    rejectionReason?: string | null;
     requiredBeforeStage: string;
     dueDateUtc?: string;
     amount?: number;
@@ -510,7 +571,7 @@ export interface ClientSafeCondition {
 
 export interface AttachConditionRequest {
     type: ConditionType;
-    requiredBeforeStage?: EngagementStage | string;
+    requiredBeforeStage?: EngagementStage | number | string;
     title: string;
     description?: string;
     dueDateUtc?: string;
@@ -534,6 +595,10 @@ export interface DeactivateConditionRequest {
     reason: string;
 }
 
+export interface RejectApprovalRequest {
+    reason: string;
+}
+
 export interface Intervention {
     interventionId: string;
     engagementId: string;
@@ -553,4 +618,46 @@ export interface RecordInterventionRequest {
     outcome: InterventionOutcome | string;
     blockerActionId?: string | null;
     stallId?: string | null;
+    meetingId?: string | null;
+}
+
+export interface Meeting {
+    meetingId: string;
+    tenantId: string;
+    engagementId: string;
+    type: MeetingType | string;
+    purpose: string;
+    scheduledAtUtc: string;
+    durationMinutes?: number | null;
+    participants: string[];
+    status: MeetingStatus | string;
+    importance: MeetingImportance | string;
+    rescheduledFromMeetingId?: string | null;
+    rescheduleReason?: string | null;
+    createdBy: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface CreateMeetingRequest {
+    type: MeetingType | string;
+    purpose: string;
+    scheduledAtUtc: string;
+    durationMinutes?: number | null;
+    participants?: string[];
+    importance?: MeetingImportance | string;
+}
+
+export interface UpdateMeetingRequest {
+    purpose: string;
+    scheduledAtUtc: string;
+    durationMinutes?: number | null;
+    participants?: string[];
+    importance?: MeetingImportance | string;
+}
+
+export interface RescheduleMeetingRequest {
+    newScheduledAtUtc: string;
+    durationMinutes?: number | null;
+    reason?: string | null;
 }

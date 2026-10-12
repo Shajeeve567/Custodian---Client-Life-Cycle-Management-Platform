@@ -4,6 +4,7 @@ using Custodian.Audit.Services;
 using Custodian.Shared.Auth;
 using Custodian.Audit.Services.Kafka;
 using Custodian.Shared.Http;
+using Custodian.Shared.Reporting;
 using Custodian.Shared.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
@@ -41,8 +42,11 @@ builder.Services.AddDbContext<AuditDbContext>(options =>
     options.UseMySql(connectionString, serverVersion));
 
 // Register Application Services & Repositories
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddCustodianReporting();
 builder.Services.AddScoped<IAuditEventRepository, AuditEventRepository>();
 builder.Services.AddScoped<IAuditEventService, AuditEventService>();
+builder.Services.AddScoped<Custodian.Audit.Services.Reports.IProofOfDeliveryReportService, Custodian.Audit.Services.Reports.ProofOfDeliveryReportService>();
 
 // Engagement assignment lives in Workflow: Staff only read the audit trail of engagements they are the
 // responsible staff for. Audit asks Workflow as the caller; fails closed (503) when Workflow is unreachable.

@@ -15,4 +15,9 @@ public sealed class DocumentSummaryDto
     public string VerificationStatus { get; set; } = string.Empty;
     public string? RejectionReason { get; set; }
     public bool IsDeleted { get; set; }
+
+    // CSTD-14: read by the engagement summary report only; gate evaluation ignores them.
+    public string? FileName { get; set; }
+    public DateTime? UploadedAt { get; set; }
+    public string? VerificationReason { get; set; }
 }

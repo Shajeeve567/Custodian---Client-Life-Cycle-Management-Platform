@@ -460,4 +460,99 @@ public class NextActionServiceTests
             Assert.All(measurements, m => Assert.Equal(new[] { "overall_state", "view" }, m.Tags.Keys.OrderBy(k => k)));
         }
     }
+
+    #region CSTD-146 Client Approval Workflow — Gate Clearing Regression
+
+    /// <summary>
+    /// After a client approves an Approval condition:
+    ///   - ConditionService transitions it to Satisfied in the DB
+    ///   - The next call to GetNextActionAsync (which reads active conditions from the
+    ///     condition service mock) reflects no pending approval blocker
+    ///   - OverallState changes from WaitingOnClient → ReadyToAdvance
+    ///
+    /// This pins the integration contract between ConditionService approval logic
+    /// and the NextActionService decision engine (Jira CSTD-146, coverage item E).
+    /// </summary>
+    [Fact]
+    public async Task CSTD146_ApproveCondition_ThenGetNextAction_ReflectsNoApprovalBlocker()
+    {
+        using var db = CreateInMemoryDbContext(Guid.NewGuid().ToString());
+
+        var engagementId = Guid.NewGuid();
+        var conditionId  = Guid.NewGuid();
+        const string tenantId  = "tenant-cstd146-na";
+        const string clientId  = "client-cstd146-na";
+
+        var engagement = new Engagement
+        {
+            EngagementId = engagementId,
+            TenantId     = tenantId,
+            ClientId     = clientId,
+            StaffId      = "staff-001",
+            Status       = EngagementStatus.Started,
+            Stage        = EngagementStage.Onboarding,
+            CreatedAt    = DateTime.UtcNow
+        };
+        await db.Engagements.AddAsync(engagement);
+
+        var condition = new EngagementCondition
+        {
+            ConditionId          = conditionId,
+            EngagementId         = engagementId,
+            TenantId             = tenantId,
+            Type                 = ConditionType.Approval,
+            Status               = ConditionStatus.Pending,
+            IsActive             = true,
+            RequiredBeforeStage  = EngagementStage.DocumentCollection,
+            Title                = "Onboarding Sign-off"
+        };
+        await db.EngagementConditions.AddAsync(condition);
+        await db.SaveChangesAsync();
+
+        // --- Phase 1: before approval — condition service returns Pending condition ---
+        var mockConditionService = new Mock<IConditionService>();
+        mockConditionService
+            .Setup(c => c.GetActiveConditionsAsync(engagementId, tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { condition });
+
+        var mockDocClient = new Mock<IDocumentComplianceClient>();
+        mockDocClient
+            .Setup(d => d.GetDocumentsAsync(engagementId, tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<DocumentSummaryDto>());
+
+        var mockGate = new Mock<IGateEvaluator>();
+        SetupGate(mockGate, GateEvaluationResult.Satisfied());
+
+        var naService = CreateService(db, mockConditionService.Object, mockDocClient.Object, mockGate.Object);
+
+        var beforeApproval = await naService.GetNextActionAsync(engagementId, tenantId, NextActionView.Staff);
+        Assert.NotNull(beforeApproval);
+        Assert.Equal(NextActionKind.ConditionApproval, beforeApproval!.PrimaryAction?.Kind);
+
+        // --- Phase 2: approve via real ConditionService ---
+        var conditionService = new Custodian.Workflow.Services.ConditionService(
+            db,
+            new Mock<IClientActionService>().Object,
+            new Mock<IAuditPublisher>().Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Custodian.Workflow.Services.ConditionService>.Instance);
+
+        await conditionService.ApproveConditionAsync(engagementId, conditionId, tenantId, clientId, clientId);
+
+        // Reload from DB so the mock returns the updated (Satisfied) condition
+        var updatedCondition = await db.EngagementConditions.FindAsync(conditionId);
+        Assert.Equal(ConditionStatus.Satisfied, updatedCondition!.Status);
+
+        // Update mock to reflect the now-Satisfied state (mirrors real read-from-DB behaviour)
+        mockConditionService
+            .Setup(c => c.GetActiveConditionsAsync(engagementId, tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { updatedCondition });
+
+        // --- Phase 3: after approval — NextActionService must report ReadyToAdvance ---
+        var afterApproval = await naService.GetNextActionAsync(engagementId, tenantId, NextActionView.Staff);
+        Assert.NotNull(afterApproval);
+        Assert.Equal(OverallState.ReadyToAdvance, afterApproval!.OverallState);
+        Assert.Equal(NextActionKind.AdvanceStage, afterApproval.PrimaryAction?.Kind);
+    }
+
+    #endregion
 }

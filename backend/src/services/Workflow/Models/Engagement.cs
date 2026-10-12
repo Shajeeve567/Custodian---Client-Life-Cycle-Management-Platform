@@ -28,4 +28,16 @@ public class Engagement
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime? ClosedAt { get; set; }
+    
+    public string? HandoffSummary { get; set; }
+
+    [MaxLength(100)]
+    public string? HandedOffBy { get; set; }
+
+    public DateTime? HandedOffAtUtc { get; set; }
+
+    [MaxLength(100)]
+    public string? ClosedBy { get; set; }
+
+    public string? ClosureSummary { get; set; }
 }

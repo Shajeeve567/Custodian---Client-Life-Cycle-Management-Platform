@@ -12,6 +12,7 @@ interface RecordInterventionModalProps {
     engagementLabel: string;
     blockerActionId?: string | null;
     blockerActionTitle?: string | null;
+    meetingId?: string | null;
     stallId?: string | null;
 }
 
@@ -27,6 +28,7 @@ export const RecordInterventionModal: React.FC<RecordInterventionModalProps> = (
     engagementLabel,
     blockerActionId,
     blockerActionTitle,
+    meetingId,
     stallId,
 }) => {
     const [type, setType] = useState<(typeof TYPES)[number]>('RecoveryAction');
@@ -73,6 +75,7 @@ export const RecordInterventionModal: React.FC<RecordInterventionModalProps> = (
                 reason: trimmed,
                 blockerActionId: blockerActionId ?? null,
                 stallId: stallId ?? null,
+                meetingId: type === 'Meeting' ? (meetingId ?? null) : null,
             };
 
             await WorkflowApi.recordIntervention(engagementId, payload, tenantId);
