@@ -11,9 +11,11 @@ public class ConditionResponseDto
     public Guid ConditionId { get; set; }
     public Guid EngagementId { get; set; }
     public string TenantId { get; set; } = string.Empty;
+    public string? TargetClientId { get; set; }
     public string Type { get; set; } = string.Empty;
     public bool IsActive { get; set; }
     public string Status { get; set; } = string.Empty;
+    public string? ApprovalStatus { get; set; }
     public string RequiredBeforeStage { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
@@ -29,6 +31,7 @@ public class ConditionResponseDto
     public string? DeactivatedBy { get; set; }
     public DateTime? DeactivatedAt { get; set; }
     public string? DeactivationReason { get; set; }
+    public string? RejectionReason { get; set; }
     public DateTime? SatisfiedAt { get; set; }
     public string? SatisfiedBy { get; set; }
     public bool IsOverdue { get; set; }
@@ -44,6 +47,8 @@ public class ClientSafeConditionDto
     public string? Description { get; set; }
     public string Type { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+    public string? ApprovalStatus { get; set; }
+    public string? RejectionReason { get; set; }
     public string RequiredBeforeStage { get; set; } = string.Empty;
     public DateTime? DueDateUtc { get; set; }
     public decimal? Amount { get; set; }
@@ -107,3 +112,24 @@ public class DeactivateConditionDto
     [MaxLength(500)]
     public string Reason { get; set; } = string.Empty;
 }
+
+public class RejectApprovalDto : IValidatableObject
+{
+    [Required(AllowEmptyStrings = false, ErrorMessage = "Rejection reason is required.")]
+    [MinLength(1, ErrorMessage = "Rejection reason cannot be empty.")]
+    [MaxLength(500, ErrorMessage = "Rejection reason cannot exceed 500 characters.")]
+    public string Reason { get; set; } = string.Empty;
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (string.IsNullOrWhiteSpace(Reason))
+        {
+            yield return new ValidationResult("Rejection reason cannot be empty or whitespace only.", new[] { nameof(Reason) });
+        }
+        else if (Reason.Trim().Length > 500)
+        {
+            yield return new ValidationResult("Rejection reason cannot exceed 500 characters.", new[] { nameof(Reason) });
+        }
+    }
+}
+

@@ -73,14 +73,14 @@ Set the same keys on the staging and the production App Service; only the values
 
 | Service | Keys |
 |---|---|
-| **Identity** | `ConnectionStrings__AzureMySqlConnection`, `Jwt__Issuer`, `Jwt__Audience`, `Jwt__SigningKey`, `Jwt__ExpiryMinutes`, `Resend__ApiKey`, `Resend__FromEmail`, `Resend__ApiUrl`, `Kafka__Enabled`, `Kafka__BootstrapServers`, `Kafka__Topic`, `Kafka__GroupId`, `Kafka__AutoOffsetReset`, `Cors__AllowedOrigins__0` |
+| **Identity** | `ConnectionStrings__AzureMySqlConnection`, `Jwt__Issuer`, `Jwt__Audience`, `Jwt__SigningKey`, `Jwt__ExpiryMinutes`, `Resend__ApiKey`, `Resend__FromEmail`, `Resend__ApiUrl`, `Kafka__Enabled`, `Kafka__BootstrapServers`, `Kafka__Topic`, `Kafka__GroupId`, `Kafka__AutoOffsetReset`, `Kafka__SecurityProtocol`, `Kafka__SaslMechanism`, `Kafka__SaslUsername`, `Kafka__SaslPassword`, `Cors__AllowedOrigins__0` |
 | **Workflow** | `ConnectionStrings__AzureMySqlConnection`, `Jwt__*` (as above), `Services__AuditUrl`, `Services__DocumentsUrl`, `AuditIngestion__ApiKey`, `Audit__Transport`, `Kafka__BootstrapServers`, `Kafka__Topic`, `Kafka__ClientId`, `Kafka__SecurityProtocol`, `Kafka__SaslMechanism`, `Kafka__SaslUsername`, `Kafka__SaslPassword`, `Kafka__ConsumerEnabled`, `Kafka__GroupId`, `Kafka__AutoOffsetReset`, `Sla__DefaultOverdueHours`, `Sla__StageOverdueHours__<n>`, `Sla__Urgency__GatingWeight`, `Sla__Urgency__DefaultWeight`, `Cors__AllowedOrigins__0` |
 | **Documents** | `ConnectionStrings__AzureMySqlConnection`, `Jwt__*`, `Storage__UploadPath`, `ComplianceRules__*`, `Services__AuditUrl`, `Services__WorkflowUrl`, `AuditIngestion__ApiKey`, `Audit__Transport`, `Kafka__BootstrapServers`, `Kafka__Topic`, `Kafka__ClientId`, `Kafka__SecurityProtocol`, `Kafka__SaslMechanism`, `Kafka__SaslUsername`, `Kafka__SaslPassword`, `Cors__AllowedOrigins__0` |
 | **Audit** | `ConnectionStrings__AzureMySqlConnection`, `Jwt__*`, `Services__WorkflowUrl`, `AuditIngestion__ApiKey`, `Kafka__Enabled`, `Kafka__BootstrapServers`, `Kafka__Topic`, `Kafka__GroupId`, `Kafka__AutoOffsetReset`, `Kafka__SecurityProtocol`, `Kafka__SaslMechanism`, `Kafka__SaslUsername`, `Kafka__SaslPassword`, `Cors__AllowedOrigins__0` |
 
 The `Sla__*` keys are optional (defaults: 72 hours, weights 2.0 / 1.0). `ComplianceRules__*` is optional; the defaults are in the Documents `appsettings.json`. Kafka values for Event Hubs are in [event-hubs-kafka.md](event-hubs-kafka.md).
 
-> **Identity and Event Hubs.** Identity's Kafka options have no `SecurityProtocol` / `Sasl*` settings, so its notification consumer cannot authenticate to Azure Event Hubs as the code stands. It works against a local Kafka broker.
+> **Identity and Event Hubs.** Identity supports Azure Event Hubs via `SecurityProtocol` / `Sasl*` settings (CSTD-144). When configured with `SaslSsl` and SASL credentials, its notification consumer authenticates to Azure Event Hubs; when omitted, it works against a local Kafka broker.
 
 `ASPNETCORE_ENVIRONMENT` must not be `Development` on a deployed App Service: that environment accepts the public development JWT key.
 

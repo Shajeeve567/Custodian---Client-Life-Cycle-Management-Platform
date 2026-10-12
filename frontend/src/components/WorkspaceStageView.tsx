@@ -540,6 +540,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     };
 
     const handleOpenEditCondition = (cond: EngagementCondition) => {
+        if (isTerminalStatus || !cond.isActive || cond.status !== 'Pending') return;
         setUpdateConditionError(null);
         setConditionToEdit(cond);
         setEditCondTitle(cond.title);
@@ -601,6 +602,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     };
 
     const handleOpenDeactivateCondition = (cond: EngagementCondition) => {
+        if (isTerminalStatus || !cond.isActive) return;
         setDeactivateConditionError(null);
         setDeactivateReason('');
         setConditionToDeactivate(cond);
@@ -1236,6 +1238,8 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                     const stageDef = getStageDefinition(cond.requiredBeforeStage as EngagementStage);
                                     const isEditable = cond.isActive && cond.status === 'Pending';
                                     const canSatisfy = isEditable && isPayment;
+                                    const isEditable = !isTerminalStatus && cond.isActive && cond.status === 'Pending';
+                                    const isDeactivatable = !isTerminalStatus && cond.isActive;
 
                                     return (
                                         <div
@@ -1365,7 +1369,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                 </div>
 
                                                 {/* Action Buttons */}
-                                                {isEditable && (
+                                                {(isEditable || isDeactivatable) && (
                                                     <div className="flex items-center gap-1.5 shrink-0 sm:self-center">
                                                         {/* CSTD-26: Mark a pending Payment condition satisfied — clears the gate */}
                                                         {canSatisfy && (
@@ -1399,6 +1403,26 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                         >
                                                             <Trash2 className="w-3.5 h-3.5" />
                                                         </button>
+                                                        {isEditable && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleOpenEditCondition(cond)}
+                                                                className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 transition"
+                                                                title="Edit condition"
+                                                            >
+                                                                <Edit3 className="w-3.5 h-3.5" />
+                                                            </button>
+                                                        )}
+                                                        {isDeactivatable && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleOpenDeactivateCondition(cond)}
+                                                                className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition"
+                                                                title="Deactivate condition"
+                                                            >
+                                                                <Trash2 className="w-3.5 h-3.5" />
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>

@@ -394,6 +394,23 @@ export interface AuditEvent {
     sequenceNumber: number;
     hash: string;
     previousHash?: string | null;
+    isFlagged?: boolean;
+    flagReason?: string | null;
+    flaggedBy?: string | null;
+    flaggedAt?: string | null;
+    flagReferenceEventId?: string | null;
+    isArchived?: boolean;
+    archiveReason?: string | null;
+    archivedBy?: string | null;
+    archivedAt?: string | null;
+}
+
+export interface FlagAuditEventRequest {
+    reason: string;
+}
+
+export interface ArchiveAuditEventRequest {
+    reason?: string;
 }
 
 // CSTD-40: result of verifying one engagement's hash chain (GET /api/audit-events/verify).
@@ -475,9 +492,11 @@ export interface EngagementCondition {
     conditionId: string;
     engagementId: string;
     tenantId: string;
+    targetClientId?: string;
     type: ConditionType;
     isActive: boolean;
     status: ConditionStatus;
+    approvalStatus?: 'Pending' | 'Approved' | 'Rejected' | null;
     requiredBeforeStage: EngagementStage | string;
     title: string;
     description?: string;
@@ -493,6 +512,7 @@ export interface EngagementCondition {
     deactivatedBy?: string;
     deactivatedAt?: string;
     deactivationReason?: string;
+    rejectionReason?: string | null;
     satisfiedAt?: string;
     satisfiedBy?: string;
     isOverdue?: boolean;
@@ -504,6 +524,8 @@ export interface ClientSafeCondition {
     description?: string;
     type: ConditionType;
     status: ConditionStatus;
+    approvalStatus?: 'Pending' | 'Approved' | 'Rejected' | null;
+    rejectionReason?: string | null;
     requiredBeforeStage: string;
     dueDateUtc?: string;
     amount?: number;
@@ -514,7 +536,7 @@ export interface ClientSafeCondition {
 
 export interface AttachConditionRequest {
     type: ConditionType;
-    requiredBeforeStage?: EngagementStage | string;
+    requiredBeforeStage?: EngagementStage | number | string;
     title: string;
     description?: string;
     dueDateUtc?: string;
@@ -535,6 +557,10 @@ export interface UpdateConditionRequest {
 }
 
 export interface DeactivateConditionRequest {
+    reason: string;
+}
+
+export interface RejectApprovalRequest {
     reason: string;
 }
 
