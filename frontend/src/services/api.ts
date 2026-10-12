@@ -165,6 +165,12 @@ export async function request<T = any>(
 export const ReportsApi = {
     slaPerformanceUrl: () => `${API_BASE.WORKFLOW}/api/reports/sla-performance`,
     validationVerificationUrl: () => `${API_BASE.DOCUMENTS}/api/reports/validation-verification`,
+    /** CSTD-14: the client's own engagement summary (Client role only). */
+    engagementSummaryClientUrl: (engagementId: string) =>
+        `${API_BASE.WORKFLOW}/api/portal/engagements/${encodeURIComponent(engagementId)}/summary-report`,
+    /** CSTD-14: the same summary for an Owner or the responsible Staff member. */
+    engagementSummaryStaffUrl: (engagementId: string) =>
+        `${API_BASE.WORKFLOW}/api/reports/engagement-summary/${encodeURIComponent(engagementId)}`,
 };
 
 /** RFC 7807 body of a failed report request (see docs/reporting.md, Errors). */
