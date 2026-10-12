@@ -1,4 +1,6 @@
 using Custodian.Workflow.DTOs;
+using Custodian.Workflow.Repositories;
+using Custodian.Workflow.Services;
 using Custodian.Workflow.Services.Meetings;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -11,10 +13,12 @@ namespace Custodian.Workflow.Controllers;
 public class MeetingsController : ControllerBase
 {
     private readonly IMeetingService _meetings;
+    private readonly IEngagementRepository _engagements;
 
-    public MeetingsController(IMeetingService meetings)
+    public MeetingsController(IMeetingService meetings, IEngagementRepository engagements)
     {
         _meetings = meetings;
+        _engagements = engagements;
     }
 
     [HttpPost]
@@ -28,6 +32,9 @@ public class MeetingsController : ControllerBase
         if (isForbidden) return Forbid();
         if (string.IsNullOrWhiteSpace(effectiveTenantId)) return BadRequest(new { message = "Tenant identification is required." });
         if (!ModelState.IsValid) return BadRequest(ModelState);
+
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
 
         try
         {
@@ -79,6 +86,9 @@ public class MeetingsController : ControllerBase
         if (string.IsNullOrWhiteSpace(effectiveTenantId)) return BadRequest(new { message = "Tenant identification is required." });
         if (!ModelState.IsValid) return BadRequest(ModelState);
 
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
+
         try
         {
             var result = await _meetings.UpdateAsync(engagementId, meetingId, effectiveTenantId, ResolveActor(), request, ct);
@@ -100,6 +110,9 @@ public class MeetingsController : ControllerBase
         if (string.IsNullOrWhiteSpace(effectiveTenantId)) return BadRequest(new { message = "Tenant identification is required." });
         if (!ModelState.IsValid) return BadRequest(ModelState);
 
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
+
         try
         {
             var result = await _meetings.UpdateStatusAsync(engagementId, meetingId, effectiveTenantId, ResolveActor(), request.Status, ct);
@@ -120,6 +133,9 @@ public class MeetingsController : ControllerBase
         if (isForbidden) return Forbid();
         if (string.IsNullOrWhiteSpace(effectiveTenantId)) return BadRequest(new { message = "Tenant identification is required." });
         if (!ModelState.IsValid) return BadRequest(ModelState);
+
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
 
         try
         {
@@ -148,5 +164,26 @@ public class MeetingsController : ControllerBase
         }
 
         return (!string.IsNullOrWhiteSpace(queryTenantId) ? queryTenantId.Trim() : null, false);
+    }
+
+    /// <summary>
+    /// CSTD-20: Closed and Cancelled engagements are terminal. Every mutation on this
+    /// controller calls this before touching state. Returns null when the engagement is
+    /// mutable; otherwise returns the action result the caller should return.
+    /// </summary>
+    private async Task<ActionResult?> EnsureMutableAsync(Guid engagementId, string tenantId)
+    {
+        var engagement = await _engagements.GetByIdAsync(engagementId, tenantId);
+        if (engagement is null) return NotFound();
+
+        if (!EngagementLifecycleValidator.CanMutate(engagement.Status))
+        {
+            return Conflict(new
+            {
+                message = $"Engagement is {engagement.Status.ToString().ToLowerInvariant()} and cannot accept this change."
+            });
+        }
+
+        return null;
     }
 }

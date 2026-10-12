@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Custodian.Workflow.Controllers;
 using Custodian.Workflow.DTOs;
 using Custodian.Workflow.Models;
+using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -16,15 +17,32 @@ public class EngagementConditionsControllerTests
     private readonly Mock<IConditionService> _mockConditionService;
     private readonly Mock<IClientActionService> _mockClientActionService;
     private readonly EngagementConditionsController _controller;
+    private readonly Mock<IEngagementRepository> _mockEngagementRepository;
 
     public EngagementConditionsControllerTests()
     {
         _mockConditionService = new Mock<IConditionService>();
         _mockClientActionService = new Mock<IClientActionService>();
+        _mockEngagementRepository = new Mock<IEngagementRepository>();
         _controller = new EngagementConditionsController(
             _mockConditionService.Object,
             _mockClientActionService.Object,
-            NullLogger<EngagementConditionsController>.Instance);
+            _mockEngagementRepository.Object,
+            NullLogger<EngagementConditionsController>.Instance
+        );
+
+        _mockEngagementRepository
+        .Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<string>()))
+        .ReturnsAsync(new Engagement
+        {
+            EngagementId = Guid.NewGuid(),
+            TenantId = "tenant-001",
+            ClientId = "client-1",
+            StaffId = "staff-1",
+            Status = EngagementStatus.Started,
+            Stage = EngagementStage.Onboarding,
+            CreatedAt = DateTime.UtcNow,
+        });
     }
 
     private void SetupUser(string tenantId, string? role = null, string? clientId = null)

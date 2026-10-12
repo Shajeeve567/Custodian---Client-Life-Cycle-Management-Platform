@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { WorkflowApi, IdentityApi, DocumentsApi } from '../services/api';
-import { Engagement, ClientProfile, UserAccountResponse, ClientAction, DocumentMetadata, EngagementStage, EngagementCondition, ConditionType, ConditionPaymentType, AttachConditionRequest, UpdateConditionRequest, NextActionResult, RequirementResponse } from '../types';
+import { Engagement, ClientProfile, UserAccountResponse, ClientAction, DocumentMetadata, EngagementStage, EngagementCondition, ConditionType, ConditionPaymentType, AttachConditionRequest, UpdateConditionRequest, NextActionResult, RequirementResponse, ReadinessResponse } from '../types';
 import { NextActionPanel } from './NextActionPanel';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import { EditTaskModal, CancelTaskModal, ApplyChecklistModal, isStaffManagedTask, REQUEST_INFORMATION_OPTION } from './StageTaskModals';
@@ -42,7 +42,9 @@ import {
     Trash2,
     Info,
     Ban,
-    XCircle
+    XCircle,
+    Handshake,
+    Flag,
 } from 'lucide-react';
 import { MeetingList } from './MeetingList';
 
@@ -166,6 +168,17 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [rejectReason, setRejectReason] = useState<string>('');
     const [isRejectingAction, setIsRejectingAction] = useState<boolean>(false);
 
+    // CSTD-20: readiness + handoff + closure
+    const [readiness, setReadiness] = useState<ReadinessResponse | null>(null);
+    const [isReadinessLoading, setIsReadinessLoading] = useState(false);
+    const [isHandingOff, setIsHandingOff] = useState(false);
+    const [isClosing, setIsClosing] = useState(false);
+    const [isHandoffOpen, setIsHandoffOpen] = useState(false);
+    const [isCloseOpen, setIsCloseOpen] = useState(false);
+    const [handoffSummary, setHandoffSummary] = useState('');
+    const [closureSummary, setClosureSummary] = useState('');
+    const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+
     // Evidence document of a task: only the document uploaded through that task. Workflow records it
     // as LinkedDocumentId (and documentId in SourceMetadata) on upload. Matching by document type or
     // title used to attach one upload to every task of the same type, offering Verify/Reject on tasks
@@ -212,6 +225,21 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             setNextActionError(err?.message || 'Next action is unavailable.');
         } finally {
             setIsNextActionLoading(false);
+        }
+    }, [tenantId, engagementId]);
+
+    // CSTD-20: readiness is computed on read, so it refreshes with the rest of the workspace.
+    const loadReadiness = useCallback(async () => {
+        if (!tenantId || !engagementId) return;
+        setIsReadinessLoading(true);
+        try {
+            const r = await WorkflowApi.getReadiness(engagementId, tenantId);
+            setReadiness(r);
+        } catch (err) {
+            console.warn('Failed to load readiness:', err);
+            setReadiness(null);
+        } finally {
+            setIsReadinessLoading(false);
         }
     }, [tenantId, engagementId]);
 
@@ -288,12 +316,13 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             }
 
             await loadNextAction();
+            await loadReadiness();
         } catch (err) {
             console.error(err);
         } finally {
             setIsLoading(false);
         }
-    }, [tenantId, engagementId, token, role, loadNextAction]);
+    }, [tenantId, engagementId, token, role, loadNextAction, loadReadiness]);
 
     useEffect(() => {
         loadWorkspaceData();
@@ -632,6 +661,43 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
         }
     };
 
+    // CSTD-20: record handoff on a ready engagement.
+    const handleHandoff = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!tenantId || !handoffSummary.trim()) return;
+        setIsHandingOff(true);
+        setLifecycleError(null);
+        try {
+            await WorkflowApi.handoff(engagementId, handoffSummary.trim(), tenantId);
+            setHandoffSummary('');
+            setIsHandoffOpen(false);
+            await loadWorkspaceData();
+        } catch (err: any) {
+            setLifecycleError(err?.message || 'Failed to record handoff.');
+        } finally {
+            setIsHandingOff(false);
+        }
+    };
+
+    // CSTD-20: seal and complete. Terminal; guards reject post-closure writes.
+    const handleClose = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!tenantId) return;
+        setIsClosing(true);
+        setLifecycleError(null);
+        try {
+            await WorkflowApi.closeEngagement(
+                engagementId,
+                closureSummary.trim() || undefined,
+                tenantId
+            );
+            setClosureSummary('');
+            setIsCloseOpen(false);
+            await loadWorkspaceData();
+        } catch (err: any) {
+            setLifecycleError(err?.message || 'Failed to close the engagement.');
+        } finally {
+            setIsClosing(false);
     // CSTD-26: mark a pending Payment condition as satisfied — clears the gate
     // blocking the stage the condition was gated on. Publishes PaymentStatusChanged
     // server-side, which triggers a client-safe notification via Identity.
@@ -931,6 +997,138 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                 onStart={handleStartEngagement}
             />
 
+            {/* CSTD-20: Lifecycle — readiness, handoff, closure */}
+            {(isTerminalStatus || readiness) && (
+                <div className="bg-white/90 backdrop-blur-md p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                        <div className="flex items-center gap-2">
+                            <Flag className={`w-5 h-5 ${isTerminalStatus ? 'text-slate-500' : readiness?.isReady ? 'text-emerald-600' : 'text-amber-600'}`} />
+                            <h2 className="text-base font-bold text-slate-900">Lifecycle</h2>
+                        </div>
+                        {isReadinessLoading && (
+                            <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+                        )}
+                    </div>
+
+                    {lifecycleError && (
+                        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start gap-2">
+                            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                            <span>{lifecycleError}</span>
+                        </div>
+                    )}
+
+                    {/* Readiness status */}
+                    {readiness && (
+                        <div className={`p-3.5 rounded-xl border ${
+                            readiness.isReady
+                                ? 'bg-emerald-50/60 border-emerald-200'
+                                : readiness.state === 'AlreadyClosed'
+                                ? 'bg-slate-50 border-slate-200'
+                                : 'bg-amber-50/60 border-amber-200'
+                        }`}>
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                    {readiness.isReady ? (
+                                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                    ) : readiness.state === 'AlreadyClosed' ? (
+                                        <Lock className="w-4 h-4 text-slate-500" />
+                                    ) : (
+                                        <AlertTriangle className="w-4 h-4 text-amber-600" />
+                                    )}
+                                    <span className="text-sm font-bold text-slate-900">
+                                        {readiness.isReady
+                                            ? 'Ready for handoff and closure'
+                                            : readiness.state === 'AlreadyClosed'
+                                            ? 'Engagement closed'
+                                            : readiness.state === 'AlreadyCancelled'
+                                            ? 'Engagement cancelled'
+                                            : readiness.state === 'NotStarted'
+                                            ? 'Engagement not started'
+                                            : readiness.state === 'NotAtClosure'
+                                            ? 'Not at final stage'
+                                            : 'Not ready'}
+                                    </span>
+                                </div>
+                                {!isTerminalStatus && (
+                                    <button
+                                        type="button"
+                                        onClick={loadReadiness}
+                                        disabled={isReadinessLoading}
+                                        className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 transition disabled:opacity-50"
+                                        title="Re-evaluate readiness"
+                                    >
+                                        <RefreshCw className={`w-3.5 h-3.5 ${isReadinessLoading ? 'animate-spin' : ''}`} />
+                                    </button>
+                                )}
+                            </div>
+
+                            {!readiness.isReady && readiness.blockers.length > 0 && (
+                                <ul className="mt-2 space-y-1">
+                                    {readiness.blockers.map((b, i) => (
+                                        <li key={i} className="text-xs text-slate-700 flex items-start gap-1.5">
+                                            <span className="font-semibold text-slate-500 min-w-[68px]">{b.kind}:</span>
+                                            <span>{b.reason}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Handoff context */}
+                    {engagement?.handedOffAtUtc && (
+                        <div className="p-3 rounded-xl bg-indigo-50/50 border border-indigo-200 text-xs text-slate-700 space-y-1">
+                            <div className="font-semibold text-indigo-900 flex items-center gap-1.5">
+                                <Handshake className="w-3.5 h-3.5" />
+                                Handed off
+                            </div>
+                            {engagement.handoffSummary && <div>{engagement.handoffSummary}</div>}
+                            <div className="text-[11px] text-slate-500">
+                                by {engagement.handedOffBy} · {new Date(engagement.handedOffAtUtc).toLocaleString()}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Closure context */}
+                    {engagement?.closedAt && (
+                        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-1">
+                            <div className="font-semibold text-slate-900 flex items-center gap-1.5">
+                                <Lock className="w-3.5 h-3.5" />
+                                Closed
+                            </div>
+                            {engagement.closureSummary && <div>{engagement.closureSummary}</div>}
+                            <div className="text-[11px] text-slate-500">
+                                by {engagement.closedBy} · {new Date(engagement.closedAt).toLocaleString()}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Actions */}
+                    {!isTerminalStatus && readiness?.isReady && (
+                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                            {!engagement?.handedOffAtUtc && (
+                                <button
+                                    type="button"
+                                    onClick={() => { setLifecycleError(null); setIsHandoffOpen(true); }}
+                                    className="px-4 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 inline-flex items-center gap-1.5"
+                                >
+                                    <Handshake className="w-4 h-4" />
+                                    Record handoff
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => { setLifecycleError(null); setIsCloseOpen(true); }}
+                                className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-sm"
+                            >
+                                <Lock className="w-4 h-4" />
+                                Seal &amp; complete
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* 5-Stage Pipeline Stepper */}
             <div className="bg-white/90 backdrop-blur-md p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -1174,21 +1372,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             </div>
                         )}
 
-                        {isViewingCurrentStage && engagement?.stage === 'Closure' && !isTerminalStatus && (
-                            <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-                                <span className="text-xs text-slate-500">
-                                    Final stage reached.
-                                </span>
-                                <button
-                                    type="button"
-                                    onClick={() => alert('Engagement deliverables sealed into immutable audit ledger.')}
-                                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-2 shadow-sm transition"
-                                >
-                                    <Lock className="w-4 h-4" />
-                                    <span>Seal & Complete Engagement</span>
-                                </button>
-                            </div>
-                        )}
+                        {/* Old "Seal & Complete" placeholder removed — the Lifecycle card above owns this action now. */}
                     </div>
 
                     {/* CSTD-24: Engagement Conditions Management Panel */}
@@ -2662,7 +2846,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
 
                         <form onSubmit={handleConfirmDeactivateCondition} className="space-y-3.5">
                             <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">
+                                                                <label className="block text-xs font-bold text-slate-700 mb-1">
                                     Deactivation Reason <span className="text-rose-500">*</span>
                                 </label>
                                 <textarea
@@ -2670,7 +2854,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                     required
                                     value={deactivateReason}
                                     onChange={(e) => setDeactivateReason(e.target.value)}
-                                    placeholder="Explain why this condition is being deactivated (recorded in immutable audit log)..."
+                                    placeholder="E.g., Client provided exemption certificate, gate no longer applicable..."
                                     className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
                                 />
                             </div>
@@ -2696,7 +2880,171 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                     ) : (
                                         <>
                                             <Trash2 className="w-4 h-4" />
-                                            <span>Confirm Deactivation</span>
+                                            <span>Deactivate Condition</span>
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* CSTD-20: Handoff Modal */}
+            {isHandoffOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+                    <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <div className="flex items-center gap-2.5">
+                                <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
+                                    <Handshake className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-900">Record Handoff</h3>
+                                    <p className="text-xs text-slate-500">Confirm the engagement is being transferred to the client for closure.</p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setIsHandoffOpen(false)}
+                                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {lifecycleError && (
+                            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs font-semibold flex items-center gap-2">
+                                <AlertTriangle className="w-4 h-4 shrink-0" />
+                                <span>{lifecycleError}</span>
+                            </div>
+                        )}
+
+                        <form onSubmit={handleHandoff} className="space-y-3.5">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">
+                                    Handoff Summary <span className="text-rose-500">*</span>
+                                </label>
+                                <textarea
+                                    rows={4}
+                                    required
+                                    value={handoffSummary}
+                                    onChange={(e) => setHandoffSummary(e.target.value)}
+                                    placeholder="Summarize deliverables, outstanding items, and final notes for the client..."
+                                    className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                                />
+                                <p className="text-[11px] text-slate-400 mt-1">
+                                    This summary is recorded on the engagement record and shown to the client at closure.
+                                </p>
+                            </div>
+
+                            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsHandoffOpen(false)}
+                                    className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 transition"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isHandingOff || !handoffSummary.trim()}
+                                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition disabled:opacity-50"
+                                >
+                                    {isHandingOff ? (
+                                        <>
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            <span>Recording Handoff...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Handshake className="w-4 h-4" />
+                                            <span>Record Handoff</span>
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* CSTD-20: Seal & Complete Modal */}
+            {isCloseOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+                    <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <div className="flex items-center gap-2.5">
+                                <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-100">
+                                    <Lock className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-900">Seal &amp; Complete Engagement</h3>
+                                    <p className="text-xs text-slate-500">This is a terminal action — the engagement cannot be reopened.</p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setIsCloseOpen(false)}
+                                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {lifecycleError && (
+                            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs font-semibold flex items-center gap-2">
+                                <AlertTriangle className="w-4 h-4 shrink-0" />
+                                <span>{lifecycleError}</span>
+                            </div>
+                        )}
+
+                        <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-1">
+                            <div className="font-bold flex items-center gap-1.5">
+                                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                                <span>Terminal Action</span>
+                            </div>
+                            <p className="text-[11px] text-amber-800 leading-relaxed">
+                                Once sealed, this engagement is moved to <strong>Closed</strong>. All writes are locked, conditions are frozen, and the audit trail is sealed. This cannot be undone.
+                            </p>
+                        </div>
+
+                        <form onSubmit={handleClose} className="space-y-3.5">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">
+                                    Closure Summary <span className="text-slate-400 font-normal">(Optional)</span>
+                                </label>
+                                <textarea
+                                    rows={4}
+                                    value={closureSummary}
+                                    onChange={(e) => setClosureSummary(e.target.value)}
+                                    placeholder="Final notes recorded to the immutable audit ledger..."
+                                    className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                                />
+                            </div>
+
+                            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsCloseOpen(false)}
+                                    className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 transition"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isClosing}
+                                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 shadow-sm transition disabled:opacity-50"
+                                >
+                                    {isClosing ? (
+                                        <>
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            <span>Sealing...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Lock className="w-4 h-4" />
+                                            <span>Seal &amp; Complete</span>
                                         </>
                                     )}
                                 </button>

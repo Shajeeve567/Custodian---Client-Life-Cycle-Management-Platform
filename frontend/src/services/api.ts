@@ -46,6 +46,7 @@ import {
     CreateMeetingRequest,
     UpdateMeetingRequest,
     RescheduleMeetingRequest,
+    ReadinessResponse,
 } from '../types';
 
 export const API_BASE = {
@@ -767,6 +768,29 @@ export const WorkflowApi = {
             { headers: { 'X-Tenant-ID': tenantId } });
     },
 
+    async getReadiness(engagementId: string, tenantId: string): Promise<ReadinessResponse> {
+        return request<ReadinessResponse>(
+            `${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/readiness?tenantId=${encodeURIComponent(tenantId)}`,
+            { headers: { 'X-Tenant-ID': tenantId } });
+    },
+
+    async handoff(engagementId: string, summary: string, tenantId: string): Promise<Engagement> {
+        return request<Engagement>(
+            `${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/handoff?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'POST',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify({ summary }),
+            });
+    },
+
+    async closeEngagement(engagementId: string, summary: string | undefined, tenantId: string): Promise<Engagement> {
+        return request<Engagement>(
+            `${API_BASE.WORKFLOW}/api/Engagements/${engagementId}/close?tenantId=${encodeURIComponent(tenantId)}`,
+            {
+                method: 'POST',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify({ summary }),
     async satisfyCondition(engagementId: string, conditionId: string, tenantId: string): Promise<EngagementCondition> {
         return request<EngagementCondition>(
             `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/satisfy?tenantId=${encodeURIComponent(tenantId)}`,
