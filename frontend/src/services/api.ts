@@ -172,6 +172,9 @@ export const ReportsApi = {
     /** CSTD-14: the same summary for an Owner or the responsible Staff member. */
     engagementSummaryStaffUrl: (engagementId: string) =>
         `${API_BASE.WORKFLOW}/api/reports/engagement-summary/${encodeURIComponent(engagementId)}`,
+    /** CSTD-38: the delivery readiness & handoff summary for an engagement. */
+    deliveryReadinessHandoffUrl: (engagementId: string) =>
+        `${API_BASE.WORKFLOW}/api/reports/delivery-readiness-handoff?engagementId=${encodeURIComponent(engagementId)}`,
     proofOfDeliveryUrl: () => `${API_BASE.AUDIT}/api/reports/proof-of-delivery`,
 };
 
@@ -801,6 +804,7 @@ export const WorkflowApi = {
             }
         );
     },
+
     async satisfyCondition(engagementId: string, conditionId: string, tenantId: string): Promise<EngagementCondition> {
         return request<EngagementCondition>(
             `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/satisfy?tenantId=${encodeURIComponent(tenantId)}`,
@@ -1030,4 +1034,3 @@ export const DocumentsApi = {
         return query ? `${base}?${query}` : base;
     },
 };
-

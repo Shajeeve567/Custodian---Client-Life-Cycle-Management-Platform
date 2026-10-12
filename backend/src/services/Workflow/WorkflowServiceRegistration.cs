@@ -5,6 +5,7 @@ using Custodian.Workflow.Services.Gates;
 using Custodian.Workflow.Services.Kafka;
 using Custodian.Workflow.Services.Meetings;
 using Custodian.Workflow.Services.NextAction;
+using Custodian.Workflow.Services.Reports;
 using Custodian.Workflow.Services.Sla;
 using Custodian.Workflow.Services.Stall;
 
@@ -69,6 +70,8 @@ public static class WorkflowServiceRegistration
 
         services.AddScoped<IReadinessService, ReadinessService>();
 
+        // CSTD-38: Delivery, Readiness and Handoff Summary
+        services.AddScoped<IReadinessHandoffReportService, ReadinessHandoffReportService>();
         return services;
     }
 }

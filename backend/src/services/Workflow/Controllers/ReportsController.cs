@@ -20,6 +20,7 @@ namespace Custodian.Workflow.Controllers;
 public class ReportsController : ControllerBase
 {
     private readonly ISlaPerformanceReportService _slaReport;
+    private readonly IReadinessHandoffReportService _readinessReport;
     private readonly IReportRenderer _renderer;
     private readonly ICsvExporter _csv;
     private readonly ReportTelemetry _telemetry;
@@ -27,12 +28,14 @@ public class ReportsController : ControllerBase
 
     public ReportsController(
         ISlaPerformanceReportService slaReport,
+        IReadinessHandoffReportService readinessReport,
         IReportRenderer renderer,
         ICsvExporter csv,
         ReportTelemetry telemetry,
         TimeProvider timeProvider)
     {
         _slaReport = slaReport;
+        _readinessReport = readinessReport;
         _renderer = renderer;
         _csv = csv;
         _telemetry = telemetry;
@@ -63,6 +66,44 @@ public class ReportsController : ControllerBase
 
             var bytes = format == ReportFormat.Csv ? _csv.ToCsv(report.Detail) : _renderer.RenderPdf(report);
             return new ReportRun(ReportResults.Output(report.Metadata, format, bytes), data.IsEmpty);
+        });
+
+        return ReportResults.File(output);
+    }
+    
+    /// <summary>
+    /// CSTD-38: Delivery Readiness & Handoff Summary for one engagement. Reuses CSTD-20's
+    /// readiness result and the persisted handoff/closure context; renders a PDF through the
+    /// shared reporting pipeline. Owner sees any engagement in the tenant; Staff only engagements
+    /// they are responsible for (a 404 otherwise, same as any other staff-restricted read).
+    /// Errors are ProblemDetails: 400 invalid engagement id, 404 engagement not in tenant, 503
+    /// database unreachable. The frontend passes <c>?format=pdf</c> for parity with the other
+    /// report endpoints; any additional query params are ignored (PDF only).
+    /// </summary>
+    [HttpGet("delivery-readiness-handoff")]
+    [ReportErrors(ReadinessHandoffReportBuilder.ReportCode)]
+    public async Task<IActionResult> DeliveryReadinessHandoff(
+        [FromQuery] string? engagementId,
+        CancellationToken ct)
+    {
+        ReportAuthorization.EnsureStaffOrOwner(User);
+        var tenantId = ReportAuthorization.RequireTenantId(User);
+
+        if (!Guid.TryParse(engagementId, out var id) || id == Guid.Empty)
+        {
+            throw ReportGenerationException.InvalidFilter(
+                "engagementId", "'engagementId' is required and must be a valid engagement id.");
+        }
+
+        var now = _timeProvider.GetUtcNow();
+        var restrictToStaffId = EngagementAccess.RestrictedStaffId(User);
+
+        var output = await _telemetry.MeasureAsync(ReadinessHandoffReportBuilder.ReportCode, ReportFormat.Pdf, async () =>
+        {
+            var data = await _readinessReport.ComputeAsync(tenantId, id, now, restrictToStaffId, ct);
+            var report = ReadinessHandoffReportBuilder.Build(data, tenantId, ReportAuthorization.ResolveActor(User));
+            var bytes = _renderer.RenderPdf(report);
+            return new ReportRun(ReportResults.Output(report.Metadata, ReportFormat.Pdf, bytes), IsEmpty: false);
         });
 
         return ReportResults.File(output);
