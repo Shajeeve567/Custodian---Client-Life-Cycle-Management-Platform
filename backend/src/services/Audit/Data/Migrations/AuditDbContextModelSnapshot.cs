@@ -96,6 +96,76 @@ namespace Audit.Data.Migrations
                     b.ToTable("events", (string)null);
                 });
 
+            modelBuilder.Entity("Custodian.Audit.Models.AuditEventMetadata", b =>
+                {
+                    b.Property<Guid>("EventId")
+                        .HasMaxLength(36)
+                        .HasColumnType("char(36)")
+                        .HasColumnName("event_id");
+
+                    b.Property<string>("ArchiveReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)")
+                        .HasColumnName("archive_reason");
+
+                    b.Property<DateTime?>("ArchivedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("archived_at");
+
+                    b.Property<string>("ArchivedBy")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("archived_by");
+
+                    b.Property<string>("FlagReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)")
+                        .HasColumnName("flag_reason");
+
+                    b.Property<Guid?>("FlagReferenceEventId")
+                        .HasMaxLength(36)
+                        .HasColumnType("char(36)")
+                        .HasColumnName("flag_reference_event_id");
+
+                    b.Property<DateTime?>("FlaggedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("flagged_at");
+
+                    b.Property<string>("FlaggedBy")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("flagged_by");
+
+                    b.Property<bool>("IsArchived")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_archived");
+
+                    b.Property<bool>("IsFlagged")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("tinyint(1)")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_flagged");
+
+                    b.Property<Guid>("TenantId")
+                        .HasMaxLength(36)
+                        .HasColumnType("char(36)")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("EventId");
+
+                    b.HasIndex(new[] { "TenantId", "EventId" }, "idx_metadata_tenant_event");
+
+                    b.HasIndex(new[] { "TenantId" }, "idx_metadata_tenant_id");
+
+                    b.ToTable("audit_event_metadata", (string)null);
+                });
+
             modelBuilder.Entity("Custodian.Audit.Models.EngagementChainHead", b =>
                 {
                     b.Property<Guid>("EngagementId")
@@ -127,6 +197,17 @@ namespace Audit.Data.Migrations
                     b.HasKey("EngagementId");
 
                     b.ToTable("engagement_chain_heads", (string)null);
+                });
+
+            modelBuilder.Entity("Custodian.Audit.Models.AuditEventMetadata", b =>
+                {
+                    b.HasOne("Custodian.Audit.Models.AuditEvent", "Event")
+                        .WithOne()
+                        .HasForeignKey("Custodian.Audit.Models.AuditEventMetadata", "EventId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Event");
                 });
 #pragma warning restore 612, 618
         }

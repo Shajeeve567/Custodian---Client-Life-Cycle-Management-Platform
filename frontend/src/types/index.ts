@@ -394,6 +394,23 @@ export interface AuditEvent {
     sequenceNumber: number;
     hash: string;
     previousHash?: string | null;
+    isFlagged?: boolean;
+    flagReason?: string | null;
+    flaggedBy?: string | null;
+    flaggedAt?: string | null;
+    flagReferenceEventId?: string | null;
+    isArchived?: boolean;
+    archiveReason?: string | null;
+    archivedBy?: string | null;
+    archivedAt?: string | null;
+}
+
+export interface FlagAuditEventRequest {
+    reason: string;
+}
+
+export interface ArchiveAuditEventRequest {
+    reason?: string;
 }
 
 // CSTD-40: result of verifying one engagement's hash chain (GET /api/audit-events/verify).
