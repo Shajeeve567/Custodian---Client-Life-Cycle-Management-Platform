@@ -20,10 +20,12 @@
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.0" />
     <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.0.2" />
+    <PackageReference Include="PdfPig" Version="0.1.16" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\services\Audit\Audit.csproj" />
+    <ProjectReference Include="..\..\src\shared\Custodian.Shared.Reporting\Custodian.Shared.Reporting.csproj" />
   </ItemGroup>
 
 </Project>

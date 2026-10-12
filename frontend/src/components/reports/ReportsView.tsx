@@ -5,6 +5,7 @@ import { ClientProfile, Engagement, UserAccountResponse } from '../../types';
 import { IdentityApi, ReportsApi, WorkflowApi } from '../../services/api';
 import { ReportDownloadButton } from './ReportDownloadButton';
 import { ValidationVerificationReportSection } from './ValidationVerificationReportSection';
+import { ProofOfDeliveryReportSection } from './ProofOfDeliveryReportSection';
 
 // Mirrors the SLA report's server-side limits (SlaReportFilter): defaults to the last 30 days, max 366.
 const DEFAULT_RANGE_DAYS = 30;
@@ -262,6 +263,9 @@ export const ReportsView: React.FC = () => {
 
             {/* Validation & Verification (CSTD-31 / CSTD-182) */}
             <ValidationVerificationReportSection />
+
+            {/* Proof of Delivery (CSTD-43 / CSTD-249) */}
+            <ProofOfDeliveryReportSection />
         </div>
     );
 };

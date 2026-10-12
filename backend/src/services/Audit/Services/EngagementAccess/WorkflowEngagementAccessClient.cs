@@ -1,7 +1,24 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 
 namespace Custodian.Audit.Services.EngagementAccess;
+
+/// <summary>
+/// CSTD-246: Strongly-typed engagement summary representing the actual Workflow EngagementResponse contract.
+/// </summary>
+public sealed record WorkflowEngagementSummary
+{
+    public required Guid EngagementId { get; init; }
+    public required string TenantId { get; init; }
+    public required string ClientId { get; init; }
+    public required string StaffId { get; init; }
+    public required string Status { get; init; }
+    public required string Stage { get; init; }
+    public required int StageProgressPercentage { get; init; }
+    public required DateTime CreatedAt { get; init; }
+    public DateTime? ClosedAt { get; init; }
+}
 
 /// <summary>
 /// Asks the Workflow service which engagements the current caller may see. Engagement assignment lives in
@@ -17,6 +34,13 @@ public interface IEngagementAccessClient
     /// <summary>The ids of every engagement the caller may open in the tenant.</summary>
     /// <exception cref="EngagementAccessUnavailableException">Workflow could not be reached or answered unexpectedly.</exception>
     Task<IReadOnlySet<Guid>> GetAccessibleEngagementIdsAsync(Guid tenantId, CancellationToken ct = default);
+
+    /// <summary>
+    /// CSTD-246: Retrieves the Workflow engagement summary using the caller's JWT token for authorization and tenant isolation.
+    /// Returns null if Workflow returns 404/403/401 (engagement does not exist or caller has no access).
+    /// Throws EngagementAccessUnavailableException if Workflow cannot be reached or returns an error status.
+    Task<WorkflowEngagementSummary?> GetEngagementSummaryAsync(Guid engagementId, Guid tenantId, CancellationToken ct = default)
+        => Task.FromResult<WorkflowEngagementSummary?>(null);
 }
 
 public sealed class EngagementAccessUnavailableException : Exception
@@ -48,6 +72,54 @@ public sealed class WorkflowEngagementAccessClient : IEngagementAccessClient
 
         _logger.LogWarning("Workflow returned {StatusCode} while checking access to engagement {EngagementId}", response.StatusCode, engagementId);
         throw new EngagementAccessUnavailableException($"Workflow returned {(int)response.StatusCode}.");
+    }
+
+    public async Task<WorkflowEngagementSummary?> GetEngagementSummaryAsync(Guid engagementId, Guid tenantId, CancellationToken ct = default)
+    {
+        using var response = await SendAsCallerAsync($"/api/Engagements/{engagementId}?tenantId={tenantId}", ct);
+        if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized)
+        {
+            return null;
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Workflow returned {StatusCode} while getting engagement {EngagementId}", response.StatusCode, engagementId);
+            throw new EngagementAccessUnavailableException($"Workflow returned {(int)response.StatusCode}.");
+        }
+
+        WorkflowEngagementSummary? summary;
+        try
+        {
+            summary = await response.Content.ReadFromJsonAsync<WorkflowEngagementSummary>(cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException)
+        {
+            _logger.LogWarning(ex, "Failed to parse engagement summary from Workflow for engagement {EngagementId}", engagementId);
+            throw new EngagementAccessUnavailableException("Workflow returned an unreadable engagement payload.", ex);
+        }
+
+        if (summary == null)
+        {
+            _logger.LogWarning("Workflow returned 200 OK but empty engagement payload for {EngagementId}", engagementId);
+            throw new EngagementAccessUnavailableException("Workflow returned an empty engagement payload.");
+        }
+
+        // Strict validation: returned engagement identity must match requested engagement ID
+        if (summary.EngagementId != engagementId)
+        {
+            _logger.LogWarning("Workflow returned engagement {ReturnedId} which does not match requested {RequestedId}", summary.EngagementId, engagementId);
+            throw new EngagementAccessUnavailableException("Workflow returned an inconsistent engagement identity.");
+        }
+
+        // Strict validation: returned tenant identity must match requested tenant ID
+        if (!Guid.TryParse(summary.TenantId, out var parsedTenant) || parsedTenant != tenantId)
+        {
+            _logger.LogWarning("Workflow returned tenant {ReturnedTenant} which does not match requested tenant {RequestedTenant}", summary.TenantId, tenantId);
+            throw new EngagementAccessUnavailableException("Workflow returned an inconsistent tenant identity.");
+        }
+
+        return summary;
     }
 
     public async Task<IReadOnlySet<Guid>> GetAccessibleEngagementIdsAsync(Guid tenantId, CancellationToken ct = default)
