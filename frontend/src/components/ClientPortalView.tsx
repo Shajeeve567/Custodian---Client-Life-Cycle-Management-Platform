@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { ClientPortalDashboard, ClientSafeAction, DocumentMetadata, ClientSafeCondition } from '../types';
-import { PortalApi, WorkflowApi, DocumentsApi } from '../services/api';
+import { PortalApi, WorkflowApi, DocumentsApi, ReportsApi } from '../services/api';
+import { ReportDownloadButton } from './reports/ReportDownloadButton';
 import { UploadEvidenceModal } from './UploadEvidenceModal';
 import { SubmitRequirementModal } from './SubmitRequirementModal';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
@@ -474,7 +475,16 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-start gap-3">
+                        {/* CSTD-14: clients download their own summary; staff previewing use the staff route (the client route is Client-only). */}
+                        <ReportDownloadButton
+                            url={role === 'Client'
+                                ? ReportsApi.engagementSummaryClientUrl(engagementId)
+                                : ReportsApi.engagementSummaryStaffUrl(engagementId)}
+                            format="pdf"
+                            label="Download summary (PDF)"
+                            variant="secondary"
+                        />
                         {renderConditionBadge(conditionStatus)}
                         <button
                             type="button"

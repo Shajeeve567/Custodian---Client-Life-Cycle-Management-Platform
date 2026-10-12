@@ -140,5 +140,28 @@ public class PdfReportRendererTests
         Assert.Equal(GeneratedAt, document.Information.GetCreatedDateTimeOffset());
     }
 
+    [Fact]
+    public void ClientAudience_HeaderSaysPreparedFor_AndHasNoTenant()
+    {
+        var metadata = new ReportMetadata(
+            "ENGAGEMENT_SUMMARY", "Engagement Summary", "tenant-secret-42", GeneratedAt, "client@example.com",
+            [new("Engagement", "ENG-A1B2C3")], "Workflow and Documents services, live data",
+            tenantDisplayName: "Acme Advisory", audience: ReportAudience.Client);
+
+        var text = Compact(AllText(_renderer.RenderPdf(new TestReport(metadata, [new EmptySection("Summary", "None")]))));
+
+        Assert.Contains(Compact("Prepared for client@example.com"), text);
+        Assert.Contains(Compact("Generated 2026-09-28 10:30 UTC"), text);
+        Assert.DoesNotContain("tenant-secret-42", text);
+        Assert.DoesNotContain(Compact("Acme Advisory"), text);
+        Assert.DoesNotContain(Compact("UTC by"), text);
+    }
+
+    [Fact]
+    public void Audience_DefaultsToInternal()
+    {
+        Assert.Equal(ReportAudience.Internal, Metadata().Audience);
+    }
+
     private static string Compact(string value) => new(value.Where(c => !char.IsWhiteSpace(c)).ToArray());
 }

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { WorkflowApi, IdentityApi, DocumentsApi } from '../services/api';
+import { WorkflowApi, IdentityApi, DocumentsApi, ReportsApi } from '../services/api';
+import { ReportDownloadButton } from './reports/ReportDownloadButton';
 import { Engagement, ClientProfile, UserAccountResponse, ClientAction, DocumentMetadata, EngagementStage, EngagementCondition, ConditionType, ConditionPaymentType, AttachConditionRequest, UpdateConditionRequest, NextActionResult, RequirementResponse, ReadinessResponse } from '../types';
 import { NextActionPanel } from './NextActionPanel';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
@@ -864,7 +865,14 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                     <span>Back to Engagements</span>
                 </button>
 
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-start gap-2.5">
+                    {/* CSTD-14: the client-safe engagement summary, as an Owner or the responsible Staff member sees it. */}
+                    <ReportDownloadButton
+                        url={ReportsApi.engagementSummaryStaffUrl(engagementId)}
+                        format="pdf"
+                        label="Engagement summary (PDF)"
+                        variant="secondary"
+                    />
                     <button
                         onClick={() => navigate(`/portal?engagementId=${engagementId}`)}
                         className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-50 to-purple-50 hover:from-indigo-100 hover:to-purple-100 border border-indigo-200 text-xs font-semibold text-indigo-700 flex items-center gap-2 shadow-xs transition"
