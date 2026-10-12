@@ -227,6 +227,23 @@ Recording an intervention never changes the blocker action or the stage. Call `P
 
 Query: `from`, `to`, `engagementId`, `stage`, `staffId`, `actionType`, `format=pdf|csv`. Returns a file download. See [reporting.md](../reporting.md) for the full contract, file naming and error format.
 
+### Engagement summary — CSTD-14
+
+| Method | Route | Role |
+|---|---|---|
+| `GET` | `/api/portal/engagements/{engagementId}/summary-report` | Client (own engagement only) |
+| `GET` | `/api/reports/engagement-summary/{engagementId}` | Owner (any in tenant) / Staff (assigned only) |
+
+PDF only (`application/pdf`, `Content-Disposition: attachment; filename="custodian-engagement_summary-eng-xxxxxx-{yyyyMMdd-HHmm}Z.pdf"`). Built from live Workflow data and the Documents service at request time.
+
+| Status | When |
+|---|---|
+| 200 | The PDF |
+| 401 | No or invalid token |
+| 403 | Wrong role for the route, or no `tenant_id` in the token |
+| 404 | Malformed id, unknown engagement, other tenant, another client's engagement, or a Staff member not assigned to it (one answer, so existence is not revealed) |
+| 503 | The Documents service (or the status behind the next action) cannot be read; no partial report is returned |
+
 ---
 
 ## Unchanged endpoints (for reference)

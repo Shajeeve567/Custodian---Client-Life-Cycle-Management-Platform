@@ -18,6 +18,7 @@ A report is pure data: `ReportMetadata` plus an ordered list of sections (`Custo
 - `ReportCode`: upper case, digits, underscores (`SLA_PERFORMANCE`). It is used in the file name.
 - `Title`.
 - `TenantId` / `TenantDisplayName` (optional).
+- `Audience` (optional): `Internal` (default) or `Client`. A `Client` report's header shows "Prepared for {actor}" and no tenant id.
 - `GeneratedAtUtc`.
 - `GeneratedBy`.
 - `AppliedFilters`: printed in the order given.
@@ -136,6 +137,17 @@ public class ReportsController : ControllerBase
 - **Tenant from the JWT only.** The tenant always comes from the JWT `tenant_id` claim (the `TenantMember` policy already enforces it on every endpoint). Never take it from a query string or header.
 - **Staff reports:** Owner and Staff only; a Client gets 403.
 - **Client-facing reports** (e.g. CSTD-14, Sprint 4) must also check that the requested engagement belongs to the calling client, the same `client_id` check the portal uses. Otherwise return 404, so the engagement's existence isn't revealed.
+
+### Client-facing reports (CSTD-14 engagement summary)
+
+The engagement summary (`ENGAGEMENT_SUMMARY`, Workflow) is the first report a client downloads:
+
+- **Routes:** `GET api/portal/engagements/{id}/summary-report` (Client) and `GET api/reports/engagement-summary/{id}` (Owner, or the responsible Staff member). PDF only.
+- **Ownership:** the engagement must be in the JWT tenant and, for a Client, have `ClientId` equal to the JWT `client_id`; Staff are limited to engagements they are responsible for. Every denial is the same 404.
+- **Client-safe by construction:** the data (`EngagementSummaryData`) is filled only from the existing client-safe paths (portal dashboard, client view of actions, `ClientSafeConditionDto` mapper, Documents API) and its records have no field for tenant/client/staff ids, internal notes, audit actors or SLA internals. The staff route adds one "Staff details" section.
+- **Header:** `ReportAudience.Client`, so the tenant id is not printed.
+- **File name:** `ReportResults.Output(metadata, format, bytes, subject)` adds the engagement code: `custodian-engagement_summary-eng-a1b2c3-20261012-1030Z.pdf`.
+- **Dependencies:** if Documents cannot be read the request fails with 503; a summary is never produced with a section silently missing.
 
 ## Errors
 
