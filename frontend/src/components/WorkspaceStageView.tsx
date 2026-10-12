@@ -1238,7 +1238,6 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                     const stageDef = getStageDefinition(cond.requiredBeforeStage as EngagementStage);
                                     const isEditable = cond.isActive && cond.status === 'Pending';
                                     const canSatisfy = isEditable && isPayment;
-                                    const isEditable = !isTerminalStatus && cond.isActive && cond.status === 'Pending';
                                     const isDeactivatable = !isTerminalStatus && cond.isActive;
 
                                     return (
