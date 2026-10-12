@@ -119,14 +119,13 @@ public static class EngagementSummaryReportBuilder
         if (data.OutstandingActions.Count == 0) return new EmptySection(title, None);
 
         return new TableSection(title,
-            [Text("Action", 3), Text("Type", 1.5f), Number("Stage", 0.7f), Text("Due (UTC)", 2), Text("Status", 1.5f), Text("Overdue", 0.9f), Text("Reason", 2)],
+            [Text("Action", 3), Text("Type", 1.6f), Number("Stage", 0.8f), Text("Due (UTC)", 2.7f), Text("Status", 1.8f), Text("Reason", 2.1f)],
             data.OutstandingActions.Select(a => Row(
                 a.Title,
                 SlaPerformanceReportBuilder.TypeLabel(a.Type),
                 a.StageNumber,
                 a.DeadlineUtc,
-                a.IsAvailable ? a.Status : $"Opens at stage {a.StageNumber}",
-                a.IsOverdue,
+                a.IsAvailable ? WithOverdue(a.Status, a.IsOverdue) : $"Opens at stage {a.StageNumber}",
                 a.RejectionReason)),
             footnote: "Most urgent first: overdue, then earliest due date.");
     }
@@ -137,7 +136,7 @@ public static class EngagementSummaryReportBuilder
         if (data.RecentlyCompletedActions.Count == 0) return new EmptySection(title, None);
 
         return new TableSection(title,
-            [Text("Action", 3), Text("Type", 1.5f), Number("Stage", 0.7f), Text("Completed (UTC)", 2)],
+            [Text("Action", 3), Text("Type", 1.6f), Number("Stage", 0.8f), Text("Completed (UTC)", 2.7f)],
             data.RecentlyCompletedActions.Select(a => Row(a.Title, SlaPerformanceReportBuilder.TypeLabel(a.Type), a.StageNumber, a.CompletedAtUtc)),
             footnote: string.Create(CultureInfo.InvariantCulture,
                 $"Newest first; up to {EngagementSummaryAggregator.RecentlyCompletedLimit} actions."));
@@ -149,9 +148,9 @@ public static class EngagementSummaryReportBuilder
         if (data.Approvals.Count == 0) return new EmptySection(title, None);
 
         return new TableSection(title,
-            [Text("Approval", 3), Text("Status", 1.2f), Text("Needed before", 1.5f), Text("Due (UTC)", 2), Text("Completed (UTC)", 2), Text("Overdue", 0.9f), Text("Reason", 2)],
+            [Text("Approval", 2.3f), Text("Status", 1.8f), Text("Needed before", 1.4f), Text("Due (UTC)", 2.7f), Text("Completed (UTC)", 2.7f), Text("Reason", 1.8f)],
             data.Approvals.Select(c => Row(
-                c.Title, c.Status, Humanize(c.RequiredBeforeStage), c.DueDateUtc, c.CompletedAtUtc, c.IsOverdue, c.RejectionReason)));
+                c.Title, WithOverdue(c.Status, c.IsOverdue), Humanize(c.RequiredBeforeStage), c.DueDateUtc, c.CompletedAtUtc, c.RejectionReason)));
     }
 
     private static ReportSection Payments(EngagementSummaryData data)
@@ -160,9 +159,9 @@ public static class EngagementSummaryReportBuilder
         if (data.Payments.Count == 0) return new EmptySection(title, None);
 
         return new TableSection(title,
-            [Text("Payment", 2.5f), Text("Kind", 1.1f), Number("Amount", 1.2f), Text("Currency", 0.9f), Text("Status", 1.1f), Text("Due (UTC)", 2), Text("Completed (UTC)", 2), Text("Overdue", 0.9f)],
+            [Text("Payment", 1.9f), Text("Kind", 1.1f), Number("Amount", 1.1f), Text("Currency", 1.3f), Text("Status", 1.8f), Text("Due (UTC)", 2.7f), Text("Completed (UTC)", 2.7f)],
             data.Payments.Select(c => Row(
-                c.Title, c.PaymentType, c.Amount, c.Currency, c.Status, c.DueDateUtc, c.CompletedAtUtc, c.IsOverdue)));
+                c.Title, c.PaymentType, c.Amount, c.Currency, WithOverdue(c.Status, c.IsOverdue), c.DueDateUtc, c.CompletedAtUtc)));
     }
 
     private static KeyValueSection DocumentSummary(EngagementSummaryData data)
@@ -183,9 +182,12 @@ public static class EngagementSummaryReportBuilder
         if (data.Documents.Count == 0) return new EmptySection(title, None);
 
         return new TableSection(title,
-            [Text("Document type", 2), Text("File name", 2.5f), Text("Uploaded (UTC)", 2), Text("Status", 1.3f), Text("Reason", 2.5f)],
-            data.Documents.Select(d => Row(d.Type, d.FileName, d.UploadedAtUtc, d.Status, d.RejectionReason)));
+            [Text("Document type", 2), Text("File name", 2.4f), Text("Uploaded (UTC)", 2.5f), Text("Status", 1.3f), Text("Reason", 2.4f)],
+            data.Documents.Select(d => Row(Humanize(d.Type), d.FileName, d.UploadedAtUtc, d.Status, d.RejectionReason)));
     }
+
+    // A4 portrait has no room for a separate overdue column beside two full UTC timestamps.
+    private static string WithOverdue(string status, bool isOverdue) => isOverdue ? $"{status} (overdue)" : status;
 
     /// <summary>"DocumentCollection" → "Document Collection".</summary>
     public static string Humanize(string value)
