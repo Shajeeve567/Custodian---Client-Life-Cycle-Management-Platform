@@ -165,7 +165,7 @@ public class AuditEventsController : ControllerBase
             return BadRequest(new { message = "engagementId is required" });
         }
 
-        var denied = await EnsureCanReadEngagementAsync(engagementId, effectiveTenantId);
+        var denied = await EnsureEngagementExistsAsync(engagementId, effectiveTenantId);
         if (denied != null)
         {
             return denied;
@@ -213,6 +213,154 @@ public class AuditEventsController : ControllerBase
         }
 
         return Ok(result);
+    }
+
+    /// <summary>
+    /// CSTD-42: Flags an audit event by recording non-cryptographic flag metadata and appending an immutable
+    /// AuditEventFlagged reference event to the chain. Idempotent: repeated calls return the existing flagged
+    /// state without appending another reference event or advancing the chain.
+    /// </summary>
+    [Authorize(Roles = "Owner,Staff")]
+    [HttpPost("{eventId:guid}/flag")]
+    public async Task<ActionResult<AuditEventResponse>> FlagEvent(
+        Guid eventId,
+        [FromBody] FlagAuditEventRequest request,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (effectiveTenantId == Guid.Empty)
+        {
+            return BadRequest(new { message = "Tenant ID could not be resolved from JWT claim or query parameters." });
+        }
+
+        if (request == null || string.IsNullOrWhiteSpace(request.Reason))
+        {
+            return BadRequest(new { message = "Reason is required." });
+        }
+
+        var trimmedReason = request.Reason.Trim();
+        if (trimmedReason.Length > 500)
+        {
+            return BadRequest(new { message = "Reason must not exceed 500 characters." });
+        }
+
+        var existingEvent = await _eventService.GetEventByIdAsync(eventId, effectiveTenantId);
+        if (existingEvent == null)
+        {
+            return NotFound(new { message = $"Audit event with ID '{eventId}' was not found for tenant '{effectiveTenantId}'." });
+        }
+
+        var denied = await EnsureCanReadEngagementAsync(existingEvent.EngagementId, effectiveTenantId);
+        if (denied is NotFoundObjectResult)
+        {
+            return NotFound(new { message = $"Audit event with ID '{eventId}' was not found for tenant '{effectiveTenantId}'." });
+        }
+        if (denied != null)
+        {
+            return denied;
+        }
+
+        var actor = ResolveActor();
+
+        try
+        {
+            var result = await _eventService.FlagEventAsync(eventId, effectiveTenantId, trimmedReason, actor);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Audit event with ID '{eventId}' was not found for tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (Custodian.Audit.Repositories.AuditChainConflictException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// CSTD-42: Archives an audit event by updating non-cryptographic archive metadata.
+    /// Idempotent: repeated calls return the existing archived state without appending an event or mutating the chain.
+    /// </summary>
+    [Authorize(Roles = "Owner,Staff")]
+    [HttpPost("{eventId:guid}/archive")]
+    public async Task<ActionResult<AuditEventResponse>> ArchiveEvent(
+        Guid eventId,
+        [FromBody] ArchiveAuditEventRequest? request,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (effectiveTenantId == Guid.Empty)
+        {
+            return BadRequest(new { message = "Tenant ID could not be resolved from JWT claim or query parameters." });
+        }
+
+        var trimmedReason = string.IsNullOrWhiteSpace(request?.Reason) ? null : request.Reason.Trim();
+        if (trimmedReason != null && trimmedReason.Length > 500)
+        {
+            return BadRequest(new { message = "Reason must not exceed 500 characters." });
+        }
+
+        var existingEvent = await _eventService.GetEventByIdAsync(eventId, effectiveTenantId);
+        if (existingEvent == null)
+        {
+            return NotFound(new { message = $"Audit event with ID '{eventId}' was not found for tenant '{effectiveTenantId}'." });
+        }
+
+        var denied = await EnsureCanReadEngagementAsync(existingEvent.EngagementId, effectiveTenantId);
+        if (denied is NotFoundObjectResult)
+        {
+            return NotFound(new { message = $"Audit event with ID '{eventId}' was not found for tenant '{effectiveTenantId}'." });
+        }
+        if (denied != null)
+        {
+            return denied;
+        }
+
+        var actor = ResolveActor();
+
+        try
+        {
+            var result = await _eventService.ArchiveEventAsync(eventId, effectiveTenantId, trimmedReason, actor);
+            if (result == null)
+            {
+                return NotFound(new { message = $"Audit event with ID '{eventId}' was not found for tenant '{effectiveTenantId}'." });
+            }
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (Custodian.Audit.Repositories.AuditChainConflictException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    private string ResolveActor()
+    {
+        return User?.FindFirst(ClaimTypes.Email)?.Value
+            ?? User?.FindFirst(ClaimTypes.Name)?.Value
+            ?? User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+            ?? User?.FindFirst("sub")?.Value
+            ?? User?.FindFirst("email")?.Value
+            ?? "system";
     }
 
     /// <summary>
@@ -277,6 +425,28 @@ public class AuditEventsController : ControllerBase
         return CryptographicOperations.FixedTimeEquals(
             Encoding.UTF8.GetBytes(supplied),
             Encoding.UTF8.GetBytes(_ingestion.ApiKey!));
+    }
+
+    /// <summary>
+    /// Unconditional existence/visibility check used by the verify path. Unlike
+    /// EnsureCanReadEngagementAsync, it does not short-circuit for Owners: a verify
+    /// request must 404 for an unknown engagement rather than return a valid-empty
+    /// result, which would manufacture proof of an engagement that does not exist.
+    /// </summary>
+    private async Task<ActionResult?> EnsureEngagementExistsAsync(Guid engagementId, Guid tenantId)
+    {
+        if (_engagementAccess is null) return AccessUnavailable();
+
+        try
+        {
+            var allowed = await _engagementAccess.CanAccessEngagementAsync(
+                engagementId, tenantId, HttpContext?.RequestAborted ?? default);
+            return allowed ? null : NotFound(new { message = EngagementNotFound });
+        }
+        catch (EngagementAccessUnavailableException)
+        {
+            return AccessUnavailable();
+        }
     }
 
     private (Guid TenantId, bool IsForbidden) TryResolveTenantId(string? tenantIdQuery = null, params Guid?[] fallbackTenantIds)

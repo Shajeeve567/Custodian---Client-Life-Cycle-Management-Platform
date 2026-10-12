@@ -18,6 +18,7 @@ import {
     Search,
     ShieldCheck,
     Flag,
+    Archive,
     LifeBuoy,
 } from 'lucide-react';
 
@@ -192,6 +193,8 @@ export const AuditLogView: React.FC = () => {
     const verificationList = verification ? Object.values(verification) : [];
     const brokenChains = verificationList.filter((v) => !v.isVerified);
 
+    const [actionInProgress, setActionInProgress] = useState<string | null>(null);
+
     const toggle = (id: string) =>
         setExpanded((prev) => {
             const next = new Set(prev);
@@ -199,6 +202,51 @@ export const AuditLogView: React.FC = () => {
             else next.add(id);
             return next;
         });
+
+    const handleFlag = async (evt: AuditEvent) => {
+        if (evt.isFlagged) return;
+        const reason = window.prompt(`Enter reason for flagging event #${evt.sequenceNumber} (${evt.type}):`);
+        if (reason === null) return;
+        const trimmed = reason.trim();
+        if (!trimmed) {
+            alert('A reason is required to flag an audit event.');
+            return;
+        }
+        if (trimmed.length > 500) {
+            alert('Reason must not exceed 500 characters.');
+            return;
+        }
+        try {
+            setActionInProgress(evt.eventId);
+            const updated = await AuditApi.flagEvent(evt.eventId, trimmed, tenantId || undefined);
+            setEvents((prev) => prev.map((e) => (e.eventId === evt.eventId ? updated : e)));
+            await load();
+        } catch (err: any) {
+            alert(err instanceof ApiError ? err.message : err?.message || 'Failed to flag audit event.');
+        } finally {
+            setActionInProgress(null);
+        }
+    };
+
+    const handleArchive = async (evt: AuditEvent) => {
+        if (evt.isArchived) return;
+        const reason = window.prompt(`Enter reason for archiving event #${evt.sequenceNumber} (optional, cancel to abort):`, '');
+        if (reason === null) return;
+        const trimmed = reason.trim();
+        if (trimmed.length > 500) {
+            alert('Reason must not exceed 500 characters.');
+            return;
+        }
+        try {
+            setActionInProgress(evt.eventId);
+            const updated = await AuditApi.archiveEvent(evt.eventId, trimmed || undefined, tenantId || undefined);
+            setEvents((prev) => prev.map((e) => (e.eventId === evt.eventId ? updated : e)));
+        } catch (err: any) {
+            alert(err instanceof ApiError ? err.message : err?.message || 'Failed to archive audit event.');
+        } finally {
+            setActionInProgress(null);
+        }
+    };
 
     return (
         <div className="space-y-6">
@@ -381,6 +429,16 @@ export const AuditLogView: React.FC = () => {
                                                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
                                                             {engagementName(evt.engagementId)} · {engagementCode(evt.engagementId)}
                                                         </span>
+                                                        {evt.isFlagged && (
+                                                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1">
+                                                                <Flag className="w-3 h-3 text-amber-600" /> Flagged
+                                                            </span>
+                                                        )}
+                                                        {evt.isArchived && (
+                                                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 flex items-center gap-1">
+                                                                <Archive className="w-3 h-3 text-slate-500" /> Archived
+                                                            </span>
+                                                        )}
                                                     </div>
                                                     {info.details.length > 0 && (
                                                         <ul className="mt-1 space-y-0.5">
@@ -396,7 +454,7 @@ export const AuditLogView: React.FC = () => {
                                                 {isOpen ? <ChevronDown className="w-4 h-4 text-slate-400 mt-1" /> : <ChevronRight className="w-4 h-4 text-slate-400 mt-1" />}
                                             </button>
                                             {isOpen && (
-                                                <div className="mt-3 ml-11 p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] space-y-1.5">
+                                                <div className="mt-3 ml-11 p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] space-y-2">
                                                     <div className="text-slate-500">
                                                         Event <span className="font-mono text-slate-700">{evt.type}</span> · #{evt.sequenceNumber} ·{' '}
                                                         <span className="font-mono">{evt.eventId}</span>
@@ -406,6 +464,60 @@ export const AuditLogView: React.FC = () => {
                                                     <pre className="font-mono text-slate-700 whitespace-pre-wrap break-all bg-white p-2 rounded-lg border border-slate-200 max-h-60 overflow-auto">
                                                         {JSON.stringify(parsePayload(evt), null, 2)}
                                                     </pre>
+
+                                                    {/* Metadata details */}
+                                                    {evt.isFlagged && (
+                                                        <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 space-y-1">
+                                                            <div className="font-semibold flex items-center gap-1.5">
+                                                                <Flag className="w-3.5 h-3.5 text-amber-600" />
+                                                                Flagged by {evt.flaggedBy || 'Staff'} {evt.flaggedAt ? `on ${new Date(evt.flaggedAt).toLocaleString()}` : ''}
+                                                            </div>
+                                                            <div className="text-amber-800">Reason: {evt.flagReason || 'None specified'}</div>
+                                                            {evt.flagReferenceEventId && (
+                                                                <div className="font-mono text-[10px] text-amber-700">Reference Event: {evt.flagReferenceEventId}</div>
+                                                            )}
+                                                        </div>
+                                                    )}
+
+                                                    {evt.isArchived && (
+                                                        <div className="p-2.5 rounded-lg bg-slate-100 border border-slate-300 text-slate-800 space-y-1">
+                                                            <div className="font-semibold flex items-center gap-1.5">
+                                                                <Archive className="w-3.5 h-3.5 text-slate-600" />
+                                                                Archived by {evt.archivedBy || 'Staff'} {evt.archivedAt ? `on ${new Date(evt.archivedAt).toLocaleString()}` : ''}
+                                                            </div>
+                                                            {evt.archiveReason && <div className="text-slate-700">Reason: {evt.archiveReason}</div>}
+                                                        </div>
+                                                    )}
+
+                                                    {/* Staff / Owner Actions */}
+                                                    <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
+                                                        <button
+                                                            type="button"
+                                                            disabled={evt.isFlagged || actionInProgress === evt.eventId}
+                                                            onClick={() => handleFlag(evt)}
+                                                            className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                                                                evt.isFlagged
+                                                                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+                                                                    : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
+                                                            }`}
+                                                        >
+                                                            <Flag className="w-3.5 h-3.5" />
+                                                            <span>{evt.isFlagged ? 'Flagged' : 'Flag Event'}</span>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            disabled={evt.isArchived || actionInProgress === evt.eventId}
+                                                            onClick={() => handleArchive(evt)}
+                                                            className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                                                                evt.isArchived
+                                                                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+                                                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300'
+                                                            }`}
+                                                        >
+                                                            <Archive className="w-3.5 h-3.5" />
+                                                            <span>{evt.isArchived ? 'Archived' : 'Archive Event'}</span>
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>

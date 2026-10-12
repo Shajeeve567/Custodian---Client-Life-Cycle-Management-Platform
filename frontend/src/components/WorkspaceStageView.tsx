@@ -156,6 +156,9 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [isDeactivatingCondition, setIsDeactivatingCondition] = useState(false);
     const [deactivateConditionError, setDeactivateConditionError] = useState<string | null>(null);
 
+    // CSTD-26: mark a pending Payment condition as satisfied (clears the gate).
+    const [satisfyingConditionId, setSatisfyingConditionId] = useState<string | null>(null);
+
     // Stage Action Verification Modals State
     const [actionToVerify, setActionToVerify] = useState<{ action: ClientAction; doc?: DocumentMetadata } | null>(null);
     const [verifyNotes, setVerifyNotes] = useState<string>('');
@@ -695,6 +698,30 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             setLifecycleError(err?.message || 'Failed to close the engagement.');
         } finally {
             setIsClosing(false);
+    // CSTD-26: mark a pending Payment condition as satisfied — clears the gate
+    // blocking the stage the condition was gated on. Publishes PaymentStatusChanged
+    // server-side, which triggers a client-safe notification via Identity.
+    const handleSatisfyCondition = async (cond: EngagementCondition) => {
+        if (!tenantId || !engagementId) return;
+
+        const amountText = cond.amount != null
+            ? `${cond.amount.toLocaleString()} ${cond.currency ?? ''}`.trim()
+            : '';
+        const label = amountText ? `${cond.title} (${amountText})` : cond.title;
+
+        if (!window.confirm(
+            `Mark '${label}' as satisfied?\n\n` +
+            'This clears the gate blocking the next stage. The client will be notified.'
+        )) return;
+
+        setSatisfyingConditionId(cond.conditionId);
+        try {
+            await WorkflowApi.satisfyCondition(engagementId, cond.conditionId, tenantId);
+            await loadWorkspaceData();
+        } catch (err: any) {
+            alert(err?.message || 'Failed to mark the payment satisfied.');
+        } finally {
+            setSatisfyingConditionId(null);
         }
     };
 
@@ -1393,7 +1420,8 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                 {conditions.map((cond) => {
                                     const isPayment = cond.type === 'Payment';
                                     const stageDef = getStageDefinition(cond.requiredBeforeStage as EngagementStage);
-                                    const isEditable = !isTerminalStatus && cond.isActive && cond.status === 'Pending';
+                                    const isEditable = cond.isActive && cond.status === 'Pending';
+                                    const canSatisfy = isEditable && isPayment;
                                     const isDeactivatable = !isTerminalStatus && cond.isActive;
 
                                     return (
@@ -1526,6 +1554,38 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                 {/* Action Buttons */}
                                                 {(isEditable || isDeactivatable) && (
                                                     <div className="flex items-center gap-1.5 shrink-0 sm:self-center">
+                                                        {/* CSTD-26: Mark a pending Payment condition satisfied — clears the gate */}
+                                                        {canSatisfy && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleSatisfyCondition(cond)}
+                                                                disabled={satisfyingConditionId === cond.conditionId}
+                                                                className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 border border-slate-200 transition disabled:opacity-50"
+                                                                title="Mark payment satisfied"
+                                                            >
+                                                                {satisfyingConditionId === cond.conditionId ? (
+                                                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                                ) : (
+                                                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                                                )}
+                                                            </button>
+                                                        )}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleOpenEditCondition(cond)}
+                                                            className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 transition"
+                                                            title="Edit condition"
+                                                        >
+                                                            <Edit3 className="w-3.5 h-3.5" />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleOpenDeactivateCondition(cond)}
+                                                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition"
+                                                            title="Deactivate condition"
+                                                        >
+                                                            <Trash2 className="w-3.5 h-3.5" />
+                                                        </button>
                                                         {isEditable && (
                                                             <button
                                                                 type="button"

@@ -37,6 +37,17 @@ public class AuditEventResponse
     public long SequenceNumber { get; set; }
     public string? Hash { get; set; }
     public string? PreviousHash { get; set; }
+
+    // Non-cryptographic metadata (CSTD-42 / CSTD-241)
+    public bool IsFlagged { get; set; } = false;
+    public string? FlagReason { get; set; }
+    public string? FlaggedBy { get; set; }
+    public DateTime? FlaggedAt { get; set; }
+    public Guid? FlagReferenceEventId { get; set; }
+    public bool IsArchived { get; set; } = false;
+    public string? ArchiveReason { get; set; }
+    public string? ArchivedBy { get; set; }
+    public DateTime? ArchivedAt { get; set; }
 }
 
 public class ChainVerificationResult

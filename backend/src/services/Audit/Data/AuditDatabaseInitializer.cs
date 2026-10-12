@@ -18,7 +18,7 @@ public static class AuditDatabaseInitializer
 {
     public static void Migrate(AuditDbContext dbContext, ILogger logger)
     {
-        if (!dbContext.Database.IsRelational())
+        if (!dbContext.Database.IsRelational() || dbContext.Database.ProviderName != "Pomelo.EntityFrameworkCore.MySql")
         {
             return;
         }

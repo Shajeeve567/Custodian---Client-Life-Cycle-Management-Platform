@@ -11,12 +11,18 @@ using Custodian.Shared.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Scalar.AspNetCore;
+using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add controllers & CORS
 // Staff only reach engagements they are responsible for (Owners: all; see EngagementAccess).
-builder.Services.AddControllers(options => options.Filters.Add<StaffEngagementAccessFilter>());
+builder.Services.AddControllers(options => options.Filters.Add<StaffEngagementAccessFilter>())
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    });
+
 builder.Services.AddCustodianCors(builder.Configuration, builder.Environment);
 builder.Services.AddTenantContext();
 builder.Services.AddJwtAuthentication(builder.Configuration, builder.Environment);
