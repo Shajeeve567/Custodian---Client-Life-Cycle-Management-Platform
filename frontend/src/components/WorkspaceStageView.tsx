@@ -701,6 +701,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             setIsClosing(false);
         }
     };
+
     // CSTD-26: mark a pending Payment condition as satisfied — clears the gate
     // blocking the stage the condition was gated on. Publishes PaymentStatusChanged
     // server-side, which triggers a client-safe notification via Identity.
@@ -1113,29 +1114,37 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                         </div>
                     )}
 
-                    {/* Actions */}
-                    {!isTerminalStatus && readiness?.isReady && (
-                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-                            {!engagement?.handedOffAtUtc && (
+                    {/* Actions: report is always available; handoff/close only when ready and not terminal */}
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                        <ReportDownloadButton
+                            url={ReportsApi.deliveryReadinessHandoffUrl(engagementId)}
+                            format="pdf"
+                            label="Download readiness report"
+                            variant="secondary"
+                        />
+                        {!isTerminalStatus && readiness?.isReady && (
+                            <div className="flex items-center gap-2">
+                                {!engagement?.handedOffAtUtc && (
+                                    <button
+                                        type="button"
+                                        onClick={() => { setLifecycleError(null); setIsHandoffOpen(true); }}
+                                        className="px-4 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 inline-flex items-center gap-1.5"
+                                    >
+                                        <Handshake className="w-4 h-4" />
+                                        Record handoff
+                                    </button>
+                                )}
                                 <button
                                     type="button"
-                                    onClick={() => { setLifecycleError(null); setIsHandoffOpen(true); }}
-                                    className="px-4 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 inline-flex items-center gap-1.5"
+                                    onClick={() => { setLifecycleError(null); setIsCloseOpen(true); }}
+                                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-sm"
                                 >
-                                    <Handshake className="w-4 h-4" />
-                                    Record handoff
+                                    <Lock className="w-4 h-4" />
+                                    Seal &amp; complete
                                 </button>
-                            )}
-                            <button
-                                type="button"
-                                onClick={() => { setLifecycleError(null); setIsCloseOpen(true); }}
-                                className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-sm"
-                            >
-                                <Lock className="w-4 h-4" />
-                                Seal &amp; complete
-                            </button>
-                        </div>
-                    )}
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
@@ -1430,7 +1439,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                 {conditions.map((cond) => {
                                     const isPayment = cond.type === 'Payment';
                                     const stageDef = getStageDefinition(cond.requiredBeforeStage as EngagementStage);
-                                    const isEditable = cond.isActive && cond.status === 'Pending';
+                                    const isEditable = !isTerminalStatus && cond.isActive && cond.status === 'Pending';
                                     const canSatisfy = isEditable && isPayment;
                                     const isDeactivatable = !isTerminalStatus && cond.isActive;
 
@@ -1562,7 +1571,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                 </div>
 
                                                 {/* Action Buttons */}
-                                                {(isEditable || isDeactivatable) && (
+                                                {(canSatisfy || isEditable || isDeactivatable) && (
                                                     <div className="flex items-center gap-1.5 shrink-0 sm:self-center">
                                                         {/* CSTD-26: Mark a pending Payment condition satisfied — clears the gate */}
                                                         {canSatisfy && (
@@ -1580,22 +1589,6 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                                 )}
                                                             </button>
                                                         )}
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleOpenEditCondition(cond)}
-                                                            className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 transition"
-                                                            title="Edit condition"
-                                                        >
-                                                            <Edit3 className="w-3.5 h-3.5" />
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleOpenDeactivateCondition(cond)}
-                                                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition"
-                                                            title="Deactivate condition"
-                                                        >
-                                                            <Trash2 className="w-3.5 h-3.5" />
-                                                        </button>
                                                         {isEditable && (
                                                             <button
                                                                 type="button"
@@ -2856,7 +2849,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
 
                         <form onSubmit={handleConfirmDeactivateCondition} className="space-y-3.5">
                             <div>
-                                                                <label className="block text-xs font-bold text-slate-700 mb-1">
+                                <label className="block text-xs font-bold text-slate-700 mb-1">
                                     Deactivation Reason <span className="text-rose-500">*</span>
                                 </label>
                                 <textarea
