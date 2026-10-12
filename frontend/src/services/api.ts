@@ -794,6 +794,7 @@ export const WorkflowApi = {
                 body: JSON.stringify({ summary }),
             }
         );
+    },
     async satisfyCondition(engagementId: string, conditionId: string, tenantId: string): Promise<EngagementCondition> {
         return request<EngagementCondition>(
             `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/satisfy?tenantId=${encodeURIComponent(tenantId)}`,
