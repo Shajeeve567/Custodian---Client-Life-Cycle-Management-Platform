@@ -792,6 +792,8 @@ export const WorkflowApi = {
                 method: 'POST',
                 headers: { 'X-Tenant-ID': tenantId },
                 body: JSON.stringify({ summary }),
+            }
+        );
     async satisfyCondition(engagementId: string, conditionId: string, tenantId: string): Promise<EngagementCondition> {
         return request<EngagementCondition>(
             `${API_BASE.WORKFLOW}/api/engagements/${engagementId}/conditions/${conditionId}/satisfy?tenantId=${encodeURIComponent(tenantId)}`,
