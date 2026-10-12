@@ -698,6 +698,8 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             setLifecycleError(err?.message || 'Failed to close the engagement.');
         } finally {
             setIsClosing(false);
+        }
+    };
     // CSTD-26: mark a pending Payment condition as satisfied — clears the gate
     // blocking the stage the condition was gated on. Publishes PaymentStatusChanged
     // server-side, which triggers a client-safe notification via Identity.
