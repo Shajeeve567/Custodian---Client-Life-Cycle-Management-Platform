@@ -48,6 +48,8 @@ public static class WorkflowServiceRegistration
         services.AddScoped<ISlaCalculator, SlaCalculator>();
         // CSTD-37 SLA performance report numbers.
         services.AddScoped<Services.Reports.ISlaPerformanceReportService, Services.Reports.SlaPerformanceReportService>();
+        // CSTD-14 client engagement summary report.
+        services.AddScoped<Services.Reports.IEngagementSummaryReportService, Services.Reports.EngagementSummaryReportService>();
         services.AddScoped<IStallService, StallService>();
         services.AddScoped<INextActionService, NextActionService>();
 

@@ -929,7 +929,8 @@ public class ConditionService : IConditionService
         };
     }
 
-    private static ClientSafeConditionDto MapToClientSafeDto(EngagementCondition condition)
+    // internal: the engagement summary report (CSTD-14) reuses this client-safe projection.
+    internal static ClientSafeConditionDto MapToClientSafeDto(EngagementCondition condition)
     {
         return new ClientSafeConditionDto
         {
