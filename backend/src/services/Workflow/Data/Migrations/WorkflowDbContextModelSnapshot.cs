@@ -181,9 +181,26 @@ namespace Workflow.Data.Migrations
                         .HasColumnType("datetime(6)")
                         .HasColumnName("closed_at");
 
+                    b.Property<string>("ClosedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("ClosureSummary")
+                        .HasColumnType("longtext");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime(6)")
                         .HasColumnName("created_at");
+
+                    b.Property<DateTime?>("HandedOffAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("HandedOffBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("HandoffSummary")
+                        .HasColumnType("longtext");
 
                     b.Property<string>("StaffId")
                         .IsRequired()

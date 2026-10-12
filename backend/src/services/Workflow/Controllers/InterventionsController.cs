@@ -42,6 +42,17 @@ public class InterventionsController : ControllerBase
         if (engagement == null)
             return NotFound(new { message = $"Engagement '{engagementId}' not found in tenant." });
 
+        // CSTD-20: recovery interventions are onboarding mutations and are rejected
+        // once the engagement is Closed or Cancelled. A stall cannot exist on a
+        // terminal engagement, so recording one is meaningless as well as unguarded.
+        if (!EngagementLifecycleValidator.CanMutate(engagement.Status))
+        {
+            return Conflict(new
+            {
+                message = $"Engagement is {engagement.Status.ToString().ToLowerInvariant()} and cannot accept this change."
+            });
+        }
+
         try
         {
             var result = await _interventions.RecordAsync(

@@ -1,7 +1,7 @@
 # CSTD-42: Audit Flag & Archive — Developer Verification Evidence
 
 ## Overview
-This document records developer verification evidence for **CSTD-42 (Audit Flag & Archive)** and its developer subtasks (`CSTD-241`, `CSTD-242`, `CSTD-243`, `CSTD-244`). 
+This document records developer verification evidence for **CSTD-42 (Audit Flag & Archive)** and its developer subtasks (`CSTD-241`, `CSTD-242`, `CSTD-243`, `CSTD-244`).
 
 > **Important**: `CSTD-245` is assigned to independent QA (Shajeeve Balakrishnan) and is NOT claimed complete by development.
 

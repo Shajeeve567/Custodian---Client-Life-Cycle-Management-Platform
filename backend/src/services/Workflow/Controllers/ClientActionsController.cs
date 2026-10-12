@@ -5,6 +5,7 @@ using Custodian.Workflow.Services.Gates;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Custodian.Workflow.Repositories;
 
 namespace Custodian.Workflow.Controllers;
 
@@ -18,18 +19,21 @@ public class ClientActionsController : ControllerBase
     private readonly IStallActionsProvider _stallActionsProvider;
     private readonly IStallRecorder _stallRecorder;
     private readonly IDocumentComplianceClient _documentClient;
+    private readonly IEngagementRepository _engagements;
 
     public ClientActionsController(
         IClientActionService actionService,
         IStallActionsProvider stallActionsProvider,
         IStallRecorder stallRecorder,
         IDocumentComplianceClient documentClient,
+        IEngagementRepository engagements,
         ILogger<ClientActionsController> logger)
     {
         _documentClient = documentClient;
         _actionService = actionService;
         _stallActionsProvider = stallActionsProvider;
         _stallRecorder = stallRecorder;
+        _engagements = engagements;
         _logger = logger;
     }
 
@@ -132,6 +136,9 @@ public class ClientActionsController : ControllerBase
             return BadRequest(ModelState);
         }
 
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
+
         var authResult = CheckStaffAuthorization();
         if (authResult != null)
         {
@@ -163,10 +170,6 @@ public class ClientActionsController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Opt-in standard checklist: applies the default lifecycle tasks for the current stage and later.
-    /// Idempotent — tasks already applied are not duplicated. Owner/Staff only.
-    /// </summary>
     /// <summary>
     /// Lists the tasks the standard checklist would add (current and later stages, skipping ones already
     /// present) without adding anything, so staff can review them before applying.
@@ -218,6 +221,9 @@ public class ClientActionsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
+
         var authResult = CheckStaffAuthorization();
         if (authResult != null)
         {
@@ -262,6 +268,9 @@ public class ClientActionsController : ControllerBase
         {
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
+
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
 
         var authResult = CheckStaffAuthorization();
         if (authResult != null)
@@ -316,6 +325,9 @@ public class ClientActionsController : ControllerBase
         {
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
+
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
 
         var authResult = CheckStaffAuthorization();
         if (authResult != null)
@@ -373,6 +385,9 @@ public class ClientActionsController : ControllerBase
         {
             return BadRequest(ModelState);
         }
+
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
 
         if (User.IsInRole("Client"))
         {
@@ -447,6 +462,9 @@ public class ClientActionsController : ControllerBase
             return BadRequest(ModelState);
         }
 
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
+
         if (User.IsInRole("Client"))
         {
             var callerClientId = ResolveCallerClientId();
@@ -518,6 +536,9 @@ public class ClientActionsController : ControllerBase
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
 
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
+
         var authResult = CheckStaffAuthorization();
         if (authResult != null)
         {
@@ -574,6 +595,9 @@ public class ClientActionsController : ControllerBase
         {
             return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
         }
+
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
 
         var authResult = CheckStaffAuthorization();
         if (authResult != null)
@@ -753,6 +777,27 @@ public class ClientActionsController : ControllerBase
         }
 
         return (null, false);
+    }
+
+    /// <summary>
+    /// CSTD-20: Closed and Cancelled engagements are terminal. Every mutation on this
+    /// controller calls this before touching state. Returns null when the engagement is
+    /// mutable; otherwise returns the action result the caller should return.
+    /// </summary>
+    private async Task<ActionResult?> EnsureMutableAsync(Guid engagementId, string tenantId)
+    {
+        var engagement = await _engagements.GetByIdAsync(engagementId, tenantId);
+        if (engagement is null) return NotFound();
+
+        if (!EngagementLifecycleValidator.CanMutate(engagement.Status))
+        {
+            return Conflict(new
+            {
+                message = $"Engagement is {engagement.Status.ToString().ToLowerInvariant()} and cannot accept this change."
+            });
+        }
+
+        return null;
     }
 
     [HttpGet("~/api/engagements/{engagementId:guid}/stall")]

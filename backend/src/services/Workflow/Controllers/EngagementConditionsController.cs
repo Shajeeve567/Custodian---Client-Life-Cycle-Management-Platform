@@ -1,4 +1,5 @@
 using Custodian.Workflow.DTOs;
+using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -12,15 +13,18 @@ public class EngagementConditionsController : ControllerBase
 {
     private readonly IConditionService _conditionService;
     private readonly IClientActionService _clientActionService;
+    private readonly IEngagementRepository _engagements;
     private readonly ILogger<EngagementConditionsController> _logger;
 
     public EngagementConditionsController(
         IConditionService conditionService,
         IClientActionService clientActionService,
+        IEngagementRepository engagements,
         ILogger<EngagementConditionsController> logger)
     {
         _conditionService = conditionService;
         _clientActionService = clientActionService;
+        _engagements = engagements;
         _logger = logger;
     }
 
@@ -56,6 +60,9 @@ public class EngagementConditionsController : ControllerBase
         {
             return BadRequest(ModelState);
         }
+
+        var mutability = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (mutability != null) return mutability;
 
         var actor = ResolveActor() ?? "staff-user";
 
@@ -225,6 +232,9 @@ public class EngagementConditionsController : ControllerBase
             return BadRequest(ModelState);
         }
 
+        var mutability = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (mutability != null) return mutability;
+
         var actor = ResolveActor() ?? "staff-user";
 
         try
@@ -280,11 +290,62 @@ public class EngagementConditionsController : ControllerBase
             return BadRequest(ModelState);
         }
 
+        var mutability = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (mutability != null) return mutability;
+
         var actor = ResolveActor() ?? "staff-user";
 
         try
         {
             var result = await _conditionService.DeactivateConditionAsync(engagementId, conditionId, effectiveTenantId, dto, actor);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// POST /api/engagements/{engagementId}/conditions/{conditionId}/satisfy
+    /// Staff marks a pending Payment or Approval condition satisfied.
+    /// Satisfying clears the gate for the stage the condition was blocking.
+    /// </summary>
+    [HttpPost("{conditionId:guid}/satisfy")]
+    [Authorize(Roles = "Owner,Staff")]
+    public async Task<ActionResult<ConditionResponseDto>> SatisfyCondition(
+        [FromRoute] Guid engagementId,
+        [FromRoute] Guid conditionId,
+        [FromQuery] string? tenantId)
+    {
+        var (effectiveTenantId, isForbidden) = TryResolveTenantId(tenantId);
+        if (isForbidden)
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveTenantId))
+        {
+            return BadRequest(new { message = "Tenant identification is required via JWT claim, X-Tenant-ID header, or tenantId parameter." });
+        }
+
+        var forbiddenResult = EnsureStaffOrOwner();
+        if (forbiddenResult != null) return forbiddenResult;
+
+        var actor = ResolveActor() ?? "staff-user";
+
+        try
+        {
+            var result = await _conditionService.SatisfyConditionAsync(
+                engagementId, conditionId, effectiveTenantId, actor);
             return Ok(result);
         }
         catch (KeyNotFoundException ex)
@@ -333,6 +394,9 @@ public class EngagementConditionsController : ControllerBase
         {
             return Forbid();
         }
+
+        var mutability = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (mutability != null) return mutability;
 
         var actor = ResolveActor() ?? callerClientId;
 
@@ -408,6 +472,9 @@ public class EngagementConditionsController : ControllerBase
         {
             return BadRequest(new { message = "Rejection reason cannot exceed 500 characters." });
         }
+
+        var mutability = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (mutability != null) return mutability;
 
         var actor = ResolveActor() ?? callerClientId;
 
@@ -527,5 +594,26 @@ public class EngagementConditionsController : ControllerBase
         }
 
         return (null, false);
+    }
+
+    /// <summary>
+    /// CSTD-20: Closed and Cancelled engagements are terminal. Every mutation on this
+    /// controller calls this before touching state. Returns null when the engagement is
+    /// mutable; otherwise returns the action result the caller should return.
+    /// </summary>
+    private async Task<ActionResult?> EnsureMutableAsync(Guid engagementId, string tenantId)
+    {
+        var engagement = await _engagements.GetByIdAsync(engagementId, tenantId);
+        if (engagement is null) return NotFound();
+
+        if (!EngagementLifecycleValidator.CanMutate(engagement.Status))
+        {
+            return Conflict(new
+            {
+                message = $"Engagement is {engagement.Status.ToString().ToLowerInvariant()} and cannot accept this change."
+            });
+        }
+
+        return null;
     }
 }

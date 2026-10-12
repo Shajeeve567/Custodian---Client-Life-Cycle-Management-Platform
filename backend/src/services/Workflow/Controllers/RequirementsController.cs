@@ -1,4 +1,5 @@
 using Custodian.Workflow.DTOs;
+using Custodian.Workflow.Repositories;
 using Custodian.Workflow.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -18,11 +19,16 @@ namespace Custodian.Workflow.Controllers;
 public class RequirementsController : ControllerBase
 {
     private readonly IRequirementService _requirementService;
+    private readonly IEngagementRepository _engagements;
     private readonly ILogger<RequirementsController> _logger;
 
-    public RequirementsController(IRequirementService requirementService, ILogger<RequirementsController> logger)
+    public RequirementsController(
+        IRequirementService requirementService,
+        IEngagementRepository engagements,
+        ILogger<RequirementsController> logger)
     {
         _requirementService = requirementService;
+        _engagements = engagements;
         _logger = logger;
     }
 
@@ -127,6 +133,9 @@ public class RequirementsController : ControllerBase
             return BadRequest(ModelState);
         }
 
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
+
         dto.RequestedByActor = ResolveActor() ?? dto.RequestedByActor; // actor from the JWT, not the body
 
         try
@@ -177,6 +186,9 @@ public class RequirementsController : ControllerBase
                 return Forbid();
             }
         }
+
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
 
         dto.SubmittedByActor = ResolveActor() ?? dto.SubmittedByActor; // actor from the JWT, not the body
 
@@ -230,6 +242,9 @@ public class RequirementsController : ControllerBase
         {
             return BadRequest(ModelState);
         }
+
+        var forbidden = await EnsureMutableAsync(engagementId, effectiveTenantId);
+        if (forbidden != null) return forbidden;
 
         dto.ReviewerActor = ResolveActor() ?? dto.ReviewerActor ?? string.Empty; // actor from the JWT, not the body
 
@@ -342,5 +357,26 @@ public class RequirementsController : ControllerBase
         }
 
         return (null, false);
+    }
+
+    /// <summary>
+    /// CSTD-20: Closed and Cancelled engagements are terminal. Every mutation on this
+    /// controller calls this before touching state. Returns null when the engagement is
+    /// mutable; otherwise returns the action result the caller should return.
+    /// </summary>
+    private async Task<ActionResult?> EnsureMutableAsync(Guid engagementId, string tenantId)
+    {
+        var engagement = await _engagements.GetByIdAsync(engagementId, tenantId);
+        if (engagement is null) return NotFound();
+
+        if (!EngagementLifecycleValidator.CanMutate(engagement.Status))
+        {
+            return Conflict(new
+            {
+                message = $"Engagement is {engagement.Status.ToString().ToLowerInvariant()} and cannot accept this change."
+            });
+        }
+
+        return null;
     }
 }

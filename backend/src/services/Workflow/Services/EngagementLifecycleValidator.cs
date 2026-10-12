@@ -36,4 +36,12 @@ public static class EngagementLifecycleValidator
             _ => false
         };
     }
+
+    /// <summary>
+    /// CSTD-20: True when the engagement accepts new onboarding mutations.
+    /// Closed and Cancelled engagements are terminal — no new actions,
+    /// conditions, meetings, or requirement submissions are accepted.
+    /// </summary>
+    public static bool CanMutate(EngagementStatus status) =>
+        status != EngagementStatus.Closed && status != EngagementStatus.Cancelled;
 }

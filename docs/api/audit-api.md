@@ -15,6 +15,7 @@ Tenant rules match the Workflow API: the tenant comes from the JWT; an optional 
 | `GET` | `/api/audit-events/verify?engagementId=` | Owner/Staff | Verify that engagement's hash chain (**Sprint 3 / CSTD-40**) |
 | `POST` | `/api/audit-events/{id}/flag` | Owner/Staff | Flag an event with reason, appending an immutable reference event (**Sprint 3 / CSTD-42**) |
 | `POST` | `/api/audit-events/{id}/archive` | Owner/Staff | Archive an event with optional reason via metadata (**Sprint 3 / CSTD-42**) |
+| `GET` | `/api/reports/proof-of-delivery?engagementId=&format=pdf` | Owner/Staff | Generate and download Proof-of-Delivery PDF report (**Sprint 4 / CSTD-43**) |
 
 User tokens (any role) cannot append arbitrary domain events; only services holding the ingestion key can. Authenticated Staff and Owners can perform authorized management commands (`flag` and `archive`).
 
@@ -95,3 +96,33 @@ User tokens (any role) cannot append arbitrary domain events; only services hold
    - Only `Owner` and `Staff` roles are authorized (`Client` receives `403 Forbidden`).
    - Staff access to an event's engagement is verified against Workflow assignment; unassigned Staff receive `404 Not Found` (anti-disclosure).
    - Cross-tenant requests are strictly rejected (`403` on claim mismatch, `404` or `409` on cross-tenant event IDs).
+
+## Proof-of-Delivery Report (CSTD-43)
+
+`GET /api/reports/proof-of-delivery?engagementId={guid}&format=pdf`
+
+Generates an authenticated, tamper-evident Proof-of-Delivery PDF report containing the engagement summary, chronological audit event timeline, live SHA-256 hash-chain verification status, and verified history boundary.
+
+### Query Parameters
+- `engagementId` (GUID, required): The target engagement. Missing/empty/malformed GUID returns `400 Bad Request` with field `"engagementId"`.
+- `format` (string, optional, default: `"pdf"`): Desired format. Currently only `pdf` is supported. Unsupported formats return `400 Bad Request` with field `"format"`.
+
+### Authorization & Tenant Isolation
+- **Roles:** `[Authorize(Roles = "Owner,Staff")]`. Client callers receive `403 Forbidden`. Requests without valid bearer tokens receive `401 Unauthorized`.
+- **Tenant Scope:** Tenant is resolved strictly from the JWT `tenant_id` claim. Cross-tenant engagement requests return `404 Not Found` without disclosing existence.
+- **Staff Access:** Staff users may only access engagements they are assigned to. Audit verifies assignment with Workflow (`GET /api/engagements/{id}/can-access`); unassigned Staff receive `404 Not Found`.
+
+### Response Headers
+- `Content-Type: application/pdf`
+- `Content-Disposition: attachment; filename="custodian-proof_of_delivery-{timestamp}Z.pdf"`
+- `Cache-Control: no-store`
+- `X-Content-Type-Options: nosniff`
+
+### Verification Outcomes & Boundaries
+- **Integrity Status:**
+  - `VALID`: Cryptographically unbroken chain from genesis to tip.
+  - `TAMPERED`: Hash mismatch or broken chain link detected; broken event ID and sequence number reported with failure notice.
+  - `EMPTY`: Ledger has no recorded events; renders empty notice.
+  - `UNAVAILABLE`: Verification could not complete due to dependency fault; reports `UNAVAILABLE` and is **never** labelled valid.
+- **Concurrent Append / Live Head Consistency:** If the live database tip advances during generation, the report documents a historical snapshot boundary and warns that subsequent appended events are unverified, avoiding false claims of live-head verification.
+- **Delivery Confirmation Disclaimer:** Confirms mathematical integrity of the audit history; does not infer delivery completion merely from an engagement being Closed or having audit records, unless an explicit delivery domain event is present.

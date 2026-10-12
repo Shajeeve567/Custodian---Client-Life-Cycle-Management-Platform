@@ -52,6 +52,10 @@ public interface IConditionService : IConditionReader
     Task SetConditionStatusAsync(Guid conditionId, string tenantId, string newStatus, string actor, string? reason = null);
 
     /// <summary>
+    /// CSTD-26: Staff satisfies a pending condition
+    /// Publishes PaymentStatusChanged for Payment conditions, ConditionUpdated for Approval
+    /// </summary>
+    Task<ConditionResponseDto> SatisfyConditionAsync(Guid engagementId, Guid conditionId, string tenantId, string actor);
     /// Client approves an active pending Approval condition (CSTD-143).
     /// </summary>
     Task<ClientSafeConditionDto> ApproveConditionAsync(Guid engagementId, Guid conditionId, string tenantId, string callerClientId, string actor);

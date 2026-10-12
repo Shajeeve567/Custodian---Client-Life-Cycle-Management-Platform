@@ -528,6 +528,13 @@ public class AuditTestFixture : WebApplicationFactory<Program>
         .AddEntityFrameworkInMemoryDatabase()
         .BuildServiceProvider();
 
+    public AuditTestFixture()
+    {
+        MockEngagementAccess
+            .Setup(x => x.CanAccessEngagementAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseSetting(AuditIngestion.ConfigKey, "integration-test-ingestion-key-0123456789");
