@@ -5,7 +5,9 @@ on:
     branches: [dev]
     paths:
       - 'backend/src/services/Audit/**'
-      - '.github/workflows/deploy-audit.yml'
+      # Shared auth/messaging code is compiled into every service
+      - 'backend/src/shared/**'
+      - '.github/workflows/staging-audit.yml'
 
 jobs:
   deploy:
@@ -27,8 +29,9 @@ jobs:
       - name: Build
         run: dotnet build backend/src/services/Audit --no-restore --configuration Release
 
+      # The service project has no tests; run its test project (it also builds the service).
       - name: Test
-        run: dotnet test backend/src/services/Audit --no-build --configuration Release --verbosity normal
+        run: dotnet test backend/tests/Custodian.Audit.Tests --configuration Release --verbosity normal
 
       - name: Publish
         run: dotnet publish backend/src/services/Audit --configuration Release --output ./publish/audit
