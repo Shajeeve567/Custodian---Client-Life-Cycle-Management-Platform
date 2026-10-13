@@ -25,7 +25,8 @@ builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddSingleton<IDocumentValidator, DocumentValidator>();
 
-builder.Services.AddScoped<IStorageService, LocalStorageService>();
+// Storage:Provider=Blob stores document files in Azure Blob Storage; otherwise they go to local disk.
+builder.Services.AddDocumentStorage(builder.Configuration);
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<IValidationVerificationReportService, ValidationVerificationReportService>();
 
