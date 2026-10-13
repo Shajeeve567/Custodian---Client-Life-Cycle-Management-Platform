@@ -1,3 +1,4 @@
+using Custodian.Shared.Observability;
 using Microsoft.EntityFrameworkCore;
 using Identity.Data;
 using Scalar.AspNetCore;
@@ -60,6 +61,9 @@ builder.Services.AddJwtAuthentication(builder.Configuration, builder.Environment
 
 
 var app = builder.Build();
+
+// Prometheus metrics at /metrics (protected by Metrics:ScrapeKey outside Development; see MetricsExtensions).
+app.UseCustodianMetrics();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
