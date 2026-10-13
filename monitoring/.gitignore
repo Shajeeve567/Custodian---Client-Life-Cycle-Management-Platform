@@ -1,0 +1,3 @@
+# Secrets created on the monitoring VM; never commit them.
+.env
+prometheus/scrape_key
