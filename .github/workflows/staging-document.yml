@@ -5,7 +5,9 @@ on:
     branches: [dev]
     paths:
       - 'backend/src/services/Documents/**'
-      - '.github/workflows/deploy-document.yml'
+      # Shared auth/messaging code is compiled into every service
+      - 'backend/src/shared/**'
+      - '.github/workflows/staging-document.yml'
 
 jobs:
   deploy:
@@ -27,8 +29,9 @@ jobs:
       - name: Build
         run: dotnet build backend/src/services/Documents --no-restore --configuration Release
 
+      # The service project has no tests; run its test project (it also builds the service).
       - name: Test
-        run: dotnet test backend/src/services/Documents --no-build --configuration Release --verbosity normal
+        run: dotnet test backend/tests/Custodian.Documents.Tests --configuration Release --verbosity normal
 
       - name: Publish
         run: dotnet publish backend/src/services/Documents --configuration Release --output ./publish/documents
