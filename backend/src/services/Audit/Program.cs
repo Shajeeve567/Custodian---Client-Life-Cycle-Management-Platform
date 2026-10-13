@@ -1,3 +1,4 @@
+using Custodian.Shared.Observability;
 using Custodian.Audit.Data;
 using Custodian.Audit.Repositories;
 using Custodian.Audit.Services;
@@ -67,6 +68,9 @@ builder.Services.Configure<KafkaOptions>(builder.Configuration.GetSection(KafkaO
 builder.Services.AddHostedService<KafkaAuditEventConsumer>();
 
 var app = builder.Build();
+
+// Prometheus metrics at /metrics (protected by Metrics:ScrapeKey outside Development; see MetricsExtensions).
+app.UseCustodianMetrics();
 
 // Configure HTTP request pipeline
 if (app.Environment.IsDevelopment())

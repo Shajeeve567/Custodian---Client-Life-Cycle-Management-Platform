@@ -1,3 +1,4 @@
+using Custodian.Shared.Observability;
 using Confluent.Kafka;
 using Custodian.Workflow;
 using Custodian.Workflow.Data;
@@ -105,6 +106,9 @@ else
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
+
+// Prometheus metrics at /metrics (protected by Metrics:ScrapeKey outside Development; see MetricsExtensions).
+app.UseCustodianMetrics();
 
 Custodian.Shared.Messaging.AuditTransport.LogSelection(app.Logger, builder.Configuration, auditTransport);
 
