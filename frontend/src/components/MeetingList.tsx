@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { WorkflowApi, ApiError } from '../services/api';
 import { Meeting, CreateMeetingRequest } from '../types';
 import { Calendar, Plus, RefreshCw, Loader2, X, AlertTriangle, Link2 } from 'lucide-react';
+import { formatDateTime, formatDuration } from '../utils/formatDate';
+import { RescheduleMeetingModal } from './RescheduleMeetingModal';
 
 interface MeetingListProps {
     engagementId: string;
@@ -18,6 +20,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
     const [modalMode, setModalMode] = useState<ModalMode>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [formError, setFormError] = useState<string | null>(null);
+    const [meetingToReschedule, setMeetingToReschedule] = useState<Meeting | null>(null);
 
     // Create form fields
     const [purpose, setPurpose] = useState('');
@@ -109,24 +112,8 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
         }
     };
 
-    const handleReschedule = async (meeting: Meeting) => {
-        const input = window.prompt(
-            `Reschedule "${meeting.purpose}" — enter new date/time (YYYY-MM-DDTHH:MM):`,
-            '');
-        if (!input) return;
-        const newDate = new Date(input);
-        if (isNaN(newDate.getTime()) || newDate.getTime() <= Date.now()) {
-            alert('Invalid or past date.');
-            return;
-        }
-        const reason = window.prompt('Reason (optional):', '') || undefined;
-        try {
-            await WorkflowApi.rescheduleMeeting(engagementId, meeting.meetingId,
-                { newScheduledAtUtc: newDate.toISOString(), reason }, tenantId);
-            await load();
-        } catch (err: any) {
-            alert(err instanceof ApiError ? err.message : 'Failed to reschedule.');
-        }
+    const handleReschedule = (meeting: Meeting) => {
+        setMeetingToReschedule(meeting);
     };
 
     const statusBadge = (status: string) => {
@@ -177,52 +164,91 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
             ) : (
                 <div className="space-y-2">
                     {meetings.map(m => (
-                        <div key={m.meetingId} className="p-3 rounded-xl border border-slate-200 bg-white flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="font-semibold text-slate-900 text-sm truncate max-w-[260px]">{m.purpose}</span>
-                                    {statusBadge(m.status)}
-                                    {m.importance === 'Important' && (
-                                        <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">IMPORTANT</span>
-                                    )}
+                        <div key={m.meetingId} className="p-4 rounded-xl border border-slate-200 bg-white space-y-2">
+                            {/* Row 1: Title (left, truncating) + Status badge (right) */}
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <span className="font-semibold text-slate-900 text-sm truncate" title={m.purpose}>
+                                        {m.purpose}
+                                    </span>
                                     {m.rescheduledFromMeetingId && (
-                                        <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
+                                        <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 shrink-0">
                                             <Link2 className="w-3 h-3" /> rescheduled
                                         </span>
                                     )}
                                 </div>
-                                <div className="text-xs text-slate-600 mt-1">
-                                    {new Date(m.scheduledAtUtc).toLocaleString()}
-                                    {m.durationMinutes ? ` · ${m.durationMinutes} min` : ''}
-                                    {m.type === 'Intervention' ? ' · Intervention' : ''}
-                                </div>
-                                {m.participants.length > 0 && (
-                                    <div className="text-[11px] text-slate-500 mt-0.5 truncate">
-                                        With: {m.participants.join(', ')}
-                                    </div>
+                                <div className="shrink-0">{statusBadge(m.status)}</div>
+                            </div>
+
+                            {/* Row 2: Single line — calendar icon, formatted date, duration, importance */}
+                            <div className="flex items-center gap-1.5 text-xs text-slate-600 truncate">
+                                <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                <span>{formatDateTime(m.scheduledAtUtc)}</span>
+                                {m.durationMinutes ? (
+                                    <>
+                                        <span className="text-slate-300">·</span>
+                                        <span>{formatDuration(m.durationMinutes)}</span>
+                                    </>
+                                ) : null}
+                                {m.importance === 'Important' && (
+                                    <>
+                                        <span className="text-slate-300">·</span>
+                                        <span className="font-bold text-amber-700">Important</span>
+                                    </>
                                 )}
-                                {m.rescheduleReason && (
-                                    <div className="text-[11px] text-slate-500 mt-0.5 italic">
-                                        Reason: {m.rescheduleReason}
-                                    </div>
+                                {m.type === 'Intervention' && (
+                                    <>
+                                        <span className="text-slate-300">·</span>
+                                        <span className="text-indigo-600 font-medium">Intervention</span>
+                                    </>
                                 )}
                             </div>
-                            {m.status === 'Scheduled' && (
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                    <button onClick={() => handleStatus(m.meetingId, 'Completed')}
-                                        className="px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[11px] font-bold">
-                                        Complete
-                                    </button>
-                                    <button onClick={() => handleStatus(m.meetingId, 'Missed')}
-                                        className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-800 text-[11px] font-bold">
-                                        Missed
-                                    </button>
-                                    <button onClick={() => handleReschedule(m)}
-                                        className="px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 text-[11px] font-bold">
-                                        Reschedule
-                                    </button>
-                                    <button onClick={() => handleStatus(m.meetingId, 'Cancelled')}
-                                        className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold">
+
+                            {m.participants.length > 0 && (
+                                <div className="text-[11px] text-slate-500 truncate">
+                                    With: {m.participants.join(', ')}
+                                </div>
+                            )}
+
+                            {m.rescheduleReason && (
+                                <div className="text-[11px] text-slate-500 italic truncate">
+                                    Reason: {m.rescheduleReason}
+                                </div>
+                            )}
+
+                            {/* Row 3: Action controls */}
+                            {(m.status === 'Scheduled' || m.status === 'Rescheduled') && (
+                                <div className="flex items-center gap-1.5 pt-2.5 mt-1 border-t border-slate-100">
+                                    {m.status === 'Scheduled' && (
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleStatus(m.meetingId, 'Completed')}
+                                                className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[11px] font-bold transition"
+                                            >
+                                                Complete
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleStatus(m.meetingId, 'Missed')}
+                                                className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-800 text-[11px] font-bold transition"
+                                            >
+                                                Missed
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleReschedule(m)}
+                                                className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 text-[11px] font-bold transition"
+                                            >
+                                                Reschedule
+                                            </button>
+                                        </>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => handleStatus(m.meetingId, 'Cancelled')}
+                                        className="ml-auto px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold transition"
+                                    >
                                         Cancel
                                     </button>
                                 </div>
@@ -318,6 +344,19 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                         </form>
                     </div>
                 </div>
+            )}
+
+            {meetingToReschedule && tenantId && (
+                <RescheduleMeetingModal
+                    meeting={meetingToReschedule}
+                    engagementId={engagementId}
+                    tenantId={tenantId}
+                    onClose={() => setMeetingToReschedule(null)}
+                    onRescheduled={async () => {
+                        setMeetingToReschedule(null);
+                        await load();
+                    }}
+                />
             )}
         </div>
     );

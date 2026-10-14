@@ -46,8 +46,10 @@ import {
     XCircle,
     Handshake,
     Flag,
+    MoreHorizontal,
 } from 'lucide-react';
 import { MeetingList } from './MeetingList';
+import { formatDate } from '../utils/formatDate';
 
 interface WorkspaceStageViewProps {
     engagementId: string;
@@ -126,6 +128,19 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [taskToCancel, setTaskToCancel] = useState<ClientAction | null>(null);
     const [isChecklistModalOpen, setIsChecklistModalOpen] = useState(false);
     const [checklistMessage, setChecklistMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+    const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!openActionMenuId) return;
+        const handleClickOutside = (e: MouseEvent) => {
+            const target = e.target as HTMLElement | null;
+            if (!target?.closest(`[data-action-menu="${openActionMenuId}"]`)) {
+                setOpenActionMenuId(null);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [openActionMenuId]);
 
     // CSTD-24: Conditions Modals State
     const [isAddConditionOpen, setIsAddConditionOpen] = useState(false);
@@ -1540,7 +1555,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                     {cond.dueDateUtc && (
                                                         <div className="flex items-center gap-1.5 text-[11px] text-slate-500 pt-0.5">
                                                             <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                                                            <span>Due: {new Date(cond.dueDateUtc).toLocaleDateString()}</span>
+                                                            <span>Due: {formatDate(cond.dueDateUtc)}</span>
                                                         </div>
                                                     )}
 
@@ -1579,8 +1594,9 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                                 type="button"
                                                                 onClick={() => handleSatisfyCondition(cond)}
                                                                 disabled={satisfyingConditionId === cond.conditionId}
-                                                                className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 border border-slate-200 transition disabled:opacity-50"
+                                                                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 border border-slate-200 transition disabled:opacity-50"
                                                                 title="Mark payment satisfied"
+                                                                aria-label="Mark payment satisfied"
                                                             >
                                                                 {satisfyingConditionId === cond.conditionId ? (
                                                                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1593,8 +1609,9 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                             <button
                                                                 type="button"
                                                                 onClick={() => handleOpenEditCondition(cond)}
-                                                                className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 transition"
+                                                                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 transition"
                                                                 title="Edit condition"
+                                                                aria-label="Edit condition"
                                                             >
                                                                 <Edit3 className="w-3.5 h-3.5" />
                                                             </button>
@@ -1603,8 +1620,9 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                             <button
                                                                 type="button"
                                                                 onClick={() => handleOpenDeactivateCondition(cond)}
-                                                                className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition"
+                                                                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition"
                                                                 title="Deactivate condition"
+                                                                aria-label="Deactivate condition"
                                                             >
                                                                 <Trash2 className="w-3.5 h-3.5" />
                                                             </button>
@@ -1676,11 +1694,11 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                         <h3 className="text-sm font-bold text-slate-900">Stage Action Queue</h3>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[11px]">
+                                        <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[11px] h-7">
                                             <button
                                                 type="button"
                                                 onClick={() => setStageFilterMode('stage')}
-                                                className={`px-2 py-0.5 rounded-md transition ${
+                                                className={`h-full px-2 rounded-md transition flex items-center ${
                                                     stageFilterMode === 'stage'
                                                         ? 'bg-white text-indigo-700 shadow-xs font-semibold'
                                                         : 'text-slate-600 hover:text-slate-900'
@@ -1691,7 +1709,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                             <button
                                                 type="button"
                                                 onClick={() => setStageFilterMode('all')}
-                                                className={`px-2 py-0.5 rounded-md transition ${
+                                                className={`h-full px-2 rounded-md transition flex items-center ${
                                                     stageFilterMode === 'all'
                                                         ? 'bg-white text-indigo-700 shadow-xs font-semibold'
                                                         : 'text-slate-600 hover:text-slate-900'
@@ -1707,7 +1725,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                 setIsAddTaskOpen(true);
                                             }}
                                             disabled={isTerminalStatus}
-                                            className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold flex items-center gap-1 transition shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                                            className="h-7 px-2.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold inline-flex items-center gap-1 transition shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
                                             title="Add a task for the current stage or a later one"
                                         >
                                             <Plus className="w-3.5 h-3.5" />
@@ -1767,10 +1785,17 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                     const isDocAction = act.type === 'DocumentUpload' || act.type === 'KycDocument' || act.type === 'SignAgreement' || act.title.toLowerCase().includes('document') || act.title.toLowerCase().includes('kyc') || act.title.toLowerCase().includes('agreement');
                                     const isAwaitingClientUpload = isDocAction && !isStaffTask && !isActionCancelled && !act.isCompleted && act.status !== 'Completed';
 
+                                    const canEditTask = isStaffManagedTask(act) && !isTerminalStatus && !isActionCancelled && act.status === 'Pending';
+                                    const canCancelTask = isStaffManagedTask(act) && !isTerminalStatus && !isActionCancelled && act.status !== 'Completed' && !act.isCompleted;
+                                    const canEditQuestion = Boolean(act.linkedRequirementId && act.status === 'Pending' && !isTerminalStatus &&
+                                        requirements.find((r) => r.requirementId === act.linkedRequirementId)?.status === 'Requested');
+                                    const hasMenuActions = canEditTask || canCancelTask || canEditQuestion;
+                                    const isMenuOpen = openActionMenuId === act.actionId;
+
                                     return (
                                         <div
                                             key={act.actionId}
-                                            className={`p-3.5 rounded-xl border transition space-y-2.5 ${
+                                            className={`p-4 rounded-xl border transition space-y-3 ${
                                                 isActionCancelled
                                                     ? 'bg-slate-100/60 border-slate-200 opacity-60'
                                                     : isActionVerified
@@ -1780,58 +1805,119 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                     : 'bg-slate-50/80 border-slate-200'
                                             }`}
                                         >
-                                            {/* Action Header */}
-                                            <div className="flex items-start justify-between gap-2">
-                                                <div>
-                                                    <div className="flex items-center gap-1.5 mb-1">
-                                                        <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-white text-indigo-700 border border-indigo-100 shadow-xs">
-                                                            {act.type}
-                                                        </span>
-                                                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-50/80 text-indigo-600 border border-indigo-100">
-                                                            {act.sourceType || 'Manual'}
-                                                        </span>
-                                                        {isDocAction && (
-                                                            <span className="text-[10px] font-medium text-slate-400">• Evidence Action</span>
-                                                        )}
-                                                    </div>
-                                                    <span className={`text-xs font-bold block leading-tight ${isActionCancelled ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
-                                                        {act.title}
+                                            {/* Row 1: Badges + Status + Ellipsis Menu */}
+                                            <div className="flex items-center justify-between gap-2 mb-2.5">
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-white text-indigo-700 border border-indigo-100 shadow-xs">
+                                                        {act.type}
                                                     </span>
-                                                </div>
-
-                                                {/* Verification or Completion Status Badge */}
-                                                <div>
-                                                    {isActionCancelled ? (
-                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full border border-slate-300">
-                                                            🚫 No longer required
-                                                        </span>
-                                                    ) : isActionVerified ? (
-                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/90 px-2 py-0.5 rounded-full border border-emerald-300">
-                                                            <CheckCircle2 className="w-3 h-3" />
-                                                            Verified
-                                                        </span>
-                                                    ) : isActionRejected ? (
-                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-100/90 px-2 py-0.5 rounded-full border border-rose-300">
-                                                            <X className="w-3 h-3" />
-                                                            Rejected
-                                                        </span>
-                                                    ) : act.status === 'Uploaded' ? (
-                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-200">
-                                                            <Clock className="w-3 h-3" />
-                                                            Uploaded
-                                                        </span>
-                                                    ) : act.isCompleted || act.status === 'Completed' ? (
-                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                                                            <Check className="w-3 h-3" />
-                                                            Done
-                                                        </span>
-                                                    ) : (
-                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                                                            <Clock className="w-3 h-3" />
-                                                            Pending
-                                                        </span>
+                                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-50/80 text-indigo-600 border border-indigo-100">
+                                                        {act.sourceType || 'Manual'}
+                                                    </span>
+                                                    {isDocAction && (
+                                                        <span className="text-[10px] font-medium text-slate-400">• Evidence Action</span>
                                                     )}
                                                 </div>
+
+                                                <div className="flex items-center gap-1.5 shrink-0">
+                                                    <div>
+                                                        {isActionCancelled ? (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full border border-slate-300">
+                                                                🚫 No longer required
+                                                            </span>
+                                                        ) : isActionVerified ? (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/90 px-2 py-0.5 rounded-full border border-emerald-300">
+                                                                <CheckCircle2 className="w-3 h-3" />
+                                                                Verified
+                                                            </span>
+                                                        ) : isActionRejected ? (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-100/90 px-2 py-0.5 rounded-full border border-rose-300">
+                                                                <X className="w-3 h-3" />
+                                                                Rejected
+                                                            </span>
+                                                        ) : act.status === 'Uploaded' ? (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-200">
+                                                                <Clock className="w-3 h-3" />
+                                                                Uploaded
+                                                            </span>
+                                                        ) : act.isCompleted || act.status === 'Completed' ? (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                                                <Check className="w-3 h-3" />
+                                                                Done
+                                                            </span>
+                                                        ) : (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                                                                <Clock className="w-3 h-3" />
+                                                                Pending
+                                                            </span>
+                                                        )}
+                                                    </div>
+
+                                                    {hasMenuActions && (
+                                                        <div className="relative" data-action-menu={act.actionId}>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setOpenActionMenuId(isMenuOpen ? null : act.actionId)}
+                                                                className="w-7 h-7 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 border border-slate-200/70 transition"
+                                                                title="Task actions"
+                                                                aria-label="Task actions"
+                                                                aria-expanded={isMenuOpen}
+                                                            >
+                                                                <MoreHorizontal className="w-4 h-4" />
+                                                            </button>
+                                                            {isMenuOpen && (
+                                                                <div className="absolute right-0 top-full mt-1 z-20 w-36 bg-white rounded-lg border border-slate-200 shadow-lg py-1 text-xs">
+                                                                    {canEditTask && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                setOpenActionMenuId(null);
+                                                                                setTaskToEdit(act);
+                                                                            }}
+                                                                            className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-slate-50 text-slate-700 hover:text-indigo-600 transition"
+                                                                        >
+                                                                            <Edit3 className="w-3.5 h-3.5" />
+                                                                            Edit
+                                                                        </button>
+                                                                    )}
+                                                                    {canEditQuestion && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                setOpenActionMenuId(null);
+                                                                                setTaskToEdit(act);
+                                                                            }}
+                                                                            className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-slate-50 text-slate-700 hover:text-indigo-600 transition"
+                                                                        >
+                                                                            <Edit3 className="w-3.5 h-3.5" />
+                                                                            Edit question
+                                                                        </button>
+                                                                    )}
+                                                                    {canCancelTask && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                setOpenActionMenuId(null);
+                                                                                setTaskToCancel(act);
+                                                                            }}
+                                                                            className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-rose-50 text-rose-600 transition"
+                                                                        >
+                                                                            <Ban className="w-3.5 h-3.5" />
+                                                                            Cancel Task
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Row 2: Title */}
+                                            <div className="mb-3">
+                                                <span className={`text-xs font-bold block leading-tight ${isActionCancelled ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
+                                                    {act.title}
+                                                </span>
                                             </div>
 
                                             {/* CSTD-16: the client's answer to a staff question, with review */}
@@ -1866,7 +1952,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                             <p className="text-[11px] text-rose-700">Returned to client: {req.rejectionReason}</p>
                                                         )}
                                                         {req.status === 'Submitted' && (
-                                                            <div className="flex items-center gap-2 pt-1">
+                                                            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-100">
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleReviewRequirement(req, true)}
@@ -1891,10 +1977,10 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
 
                                             {/* Linked Evidence Document Display */}
                                             {linkedDoc ? (
-                                                <div className="bg-white p-2.5 rounded-lg border border-slate-200/80 space-y-2 text-xs">
+                                                <div className="bg-slate-50/70 rounded-lg border border-slate-200/90 p-2.5 space-y-2 text-xs">
                                                     <div className="flex items-center justify-between gap-2">
-                                                        <div className="flex items-center gap-2 min-w-0">
-                                                            <FileText className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                                                        <div className="flex items-center gap-1.5 min-w-0">
+                                                            <FileText className="w-3.5 h-3.5 text-indigo-600 flex-shrink-0" />
                                                             <span className="font-semibold text-slate-800 truncate text-[11px]">
                                                                 {linkedDoc.type}
                                                             </span>
@@ -1916,7 +2002,8 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                                 ).catch((err: any) => alert('Download failed: ' + (err.message || 'Server error')))
                                                             }
                                                             title="Download Evidence PDF"
-                                                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50/70 hover:bg-indigo-100 px-2 py-0.5 rounded border border-indigo-100 transition flex-shrink-0"
+                                                            aria-label="Download Evidence PDF"
+                                                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 bg-white hover:bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200/70 shadow-2xs transition flex-shrink-0"
                                                         >
                                                             <Download className="w-3 h-3" />
                                                             PDF
@@ -1924,7 +2011,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                     </div>
 
                                                     {/* Compliance & Verification details */}
-                                                    <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100 text-[10px]">
+                                                    <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-slate-200/60 text-[10px]">
                                                         {linkedDoc.complianceStatus === 'Compliant' ? (
                                                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
                                                                 <ShieldCheck className="w-3 h-3 text-emerald-600" />
@@ -1957,7 +2044,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
 
                                                     {/* Staff Verification & Rejection Controls */}
                                                     {!isActionVerified && !isActionCancelled && (
-                                                        <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
+                                                        <div className="flex items-center gap-2 pt-1.5 border-t border-slate-200/60">
                                                             <button
                                                                 type="button"
                                                                 disabled={linkedDoc.complianceStatus !== 'Compliant'}
@@ -1970,7 +2057,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                                         ? 'Verify this evidence document'
                                                                         : 'Document must pass deterministic compliance check before staff verification'
                                                                 }
-                                                                className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 flex items-center justify-center gap-1 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                                                                className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-emerald-700 bg-white hover:bg-emerald-50 border border-emerald-200 flex items-center justify-center gap-1 transition shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed"
                                                             >
                                                                 <Check className="w-3 h-3" />
                                                                 Verify Evidence
@@ -1983,7 +2070,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                                     setRejectReason('');
                                                                 }}
                                                                 title="Reject evidence document"
-                                                                className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 flex items-center justify-center gap-1 transition"
+                                                                className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-rose-700 bg-white hover:bg-rose-50 border border-rose-200 flex items-center justify-center gap-1 transition shadow-2xs"
                                                             >
                                                                 <X className="w-3 h-3" />
                                                                 Reject
@@ -1998,59 +2085,24 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                 </div>
                                             ) : null}
 
-                                            {/* Staff-defined task management: edit while Pending, cancel while not finished */}
-                                            {isStaffManagedTask(act) && !isTerminalStatus && !isActionCancelled && act.status !== 'Completed' && !act.isCompleted && (
-                                                <div className="flex items-center gap-2">
-                                                    {act.status === 'Pending' && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setTaskToEdit(act)}
-                                                            className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 flex items-center justify-center gap-1 transition"
-                                                        >
-                                                            <Edit3 className="w-3 h-3" />
-                                                            Edit
-                                                        </button>
-                                                    )}
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setTaskToCancel(act)}
-                                                        className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-rose-700 bg-white hover:bg-rose-50 border border-rose-200 flex items-center justify-center gap-1 transition"
-                                                    >
-                                                        <Ban className="w-3 h-3" />
-                                                        Cancel Task
-                                                    </button>
-                                                </div>
-                                            )}
-
-                                            {/* Request Information: the question can be edited until the client answers */}
-                                            {act.linkedRequirementId && act.status === 'Pending' && !isTerminalStatus &&
-                                                requirements.find((r) => r.requirementId === act.linkedRequirementId)?.status === 'Requested' && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setTaskToEdit(act)}
-                                                    className="w-full py-1 px-2 rounded-lg text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 flex items-center justify-center gap-1 transition"
-                                                >
-                                                    <Edit3 className="w-3 h-3" />
-                                                    Edit question
-                                                </button>
-                                            )}
-
                                             {/* General Task: Mark Complete button (a question completes when the client answers and staff approve) */}
                                             {!act.isCompleted && act.status !== 'Completed' && !isActionCancelled && !linkedDoc && !act.linkedRequirementId && (
-                                                <button
-                                                    onClick={() => handleCompleteAction(act.actionId)}
-                                                    disabled={completingActionId === act.actionId}
-                                                    className="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition flex items-center justify-center gap-1"
-                                                >
-                                                    {completingActionId === act.actionId ? (
-                                                        <>
-                                                            <Loader2 className="w-3 h-3 animate-spin" />
-                                                            Completing...
-                                                        </>
-                                                    ) : (
-                                                        'Mark Complete'
-                                                    )}
-                                                </button>
+                                                <div className="mt-3 pt-3 border-t border-slate-100">
+                                                    <button
+                                                        onClick={() => handleCompleteAction(act.actionId)}
+                                                        disabled={completingActionId === act.actionId}
+                                                        className="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition flex items-center justify-center gap-1"
+                                                    >
+                                                        {completingActionId === act.actionId ? (
+                                                            <>
+                                                                <Loader2 className="w-3 h-3 animate-spin" />
+                                                                Completing...
+                                                            </>
+                                                        ) : (
+                                                            'Mark Complete'
+                                                        )}
+                                                    </button>
+                                                </div>
                                             )}
                                         </div>
                                     );
