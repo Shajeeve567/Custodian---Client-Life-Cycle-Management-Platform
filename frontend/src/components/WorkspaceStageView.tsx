@@ -931,9 +931,6 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                 </button>
                             )}
                         </div>
-                        <p className="text-xs text-slate-500 mt-1">
-                            Tenant Scoped Isolation: <code className="font-mono text-slate-700">{tenantId || 'Main Tenant'}</code> • Deterministic State Engine Active
-                        </p>
                     </div>
                 </div>
 
