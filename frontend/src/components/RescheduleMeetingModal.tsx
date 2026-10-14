@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { WorkflowApi, ApiError } from '../services/api';
 import { Meeting } from '../types';
 import { Calendar, X, AlertTriangle, Loader2 } from 'lucide-react';
+import { toDate } from '../utils/formatDate';
 
 export interface RescheduleMeetingModalProps {
     meeting: Meeting;              // the meeting being rescheduled
@@ -13,17 +14,15 @@ export interface RescheduleMeetingModalProps {
 }
 
 const getLocalDate = (utcString?: string | null): string => {
-    if (!utcString) return '';
-    const d = new Date(utcString);
-    if (isNaN(d.getTime())) return '';
+    const d = toDate(utcString);
+    if (!d) return '';
     const pad = (n: number) => n.toString().padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
 const getLocalTime = (utcString?: string | null): string => {
-    if (!utcString) return '';
-    const d = new Date(utcString);
-    if (isNaN(d.getTime())) return '';
+    const d = toDate(utcString);
+    if (!d) return '';
     const pad = (n: number) => n.toString().padStart(2, '0');
     return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };

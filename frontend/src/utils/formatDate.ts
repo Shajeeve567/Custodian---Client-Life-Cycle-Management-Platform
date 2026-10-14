@@ -8,6 +8,44 @@ const MONTH_NAMES = [
 ];
 
 /**
+ * Safely parse an ISO date string or Date instance into a Date object.
+ *
+ * NOTE: The backend serialises DateTime values read from MySQL datetime(6) columns
+ * without a 'Z' suffix (DateTimeKind.Unspecified). JavaScript's Date constructor
+ * treats date-time strings without timezone offsets (e.g. "2026-10-15T04:30:00") as
+ * local time rather than UTC, which results in dates being shifted by the client's
+ * timezone offset. As a frontend workaround, if a string contains a time component
+ * ('T' or space followed by time) without a trailing 'Z' or '+/-HH:MM' offset, we append 'Z'
+ * so it is correctly parsed as UTC.
+ * Proper fix is on the backend (mark DateTime as UTC on read), tracked as follow-up.
+ */
+export function toDate(iso: string | Date | null | undefined): Date | null {
+    if (!iso) return null;
+    if (iso instanceof Date) {
+        return isNaN(iso.getTime()) ? null : iso;
+    }
+    if (typeof iso !== 'string') return null;
+
+    let s = iso.trim();
+    if (!s) return null;
+
+    // Check if input has a time component (contains 'T' or space followed by HH:MM)
+    if (/T|\s\d{2}:\d{2}/.test(s)) {
+        if (s.includes(' ') && !s.includes('T')) {
+            s = s.replace(' ', 'T');
+        }
+        // If it lacks a timezone designator ('Z' or '+HH:MM' / '-HH:MM' / '+HH' / '-HH')
+        const hasTimezone = /[Zz]$|[+-]\d{2}(?::?\d{2})?$/.test(s);
+        if (!hasTimezone) {
+            s += 'Z';
+        }
+    }
+
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+}
+
+/**
  * Format a calendar date without time component:
  * - Today: "Today"
  * - Tomorrow: "Tomorrow"
@@ -15,9 +53,8 @@ const MONTH_NAMES = [
  * - Other year: "Oct 15, 2027"
  */
 export function formatDate(iso: string | Date | null | undefined): string {
-    if (!iso) return '';
-    const date = typeof iso === 'string' ? new Date(iso) : iso;
-    if (isNaN(date.getTime())) return '';
+    const date = toDate(iso);
+    if (!date) return '';
 
     const now = new Date();
     const isSameDay = (d1: Date, d2: Date) =>
@@ -57,9 +94,8 @@ export function formatDateTime(
     iso: string | Date | null | undefined,
     options?: FormatDateOptions
 ): string {
-    if (!iso) return '';
-    const date = typeof iso === 'string' ? new Date(iso) : iso;
-    if (isNaN(date.getTime())) return '';
+    const date = toDate(iso);
+    if (!date) return '';
 
     if (options?.withTime === false) {
         return formatDate(date);
