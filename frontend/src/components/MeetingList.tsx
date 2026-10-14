@@ -125,6 +125,9 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
         return <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border ${cls}`}>{status}</span>;
     };
 
+    const activeMeetings = meetings.filter(m => m.status !== 'Rescheduled');
+    const rescheduledMeetings = meetings.filter(m => m.status === 'Rescheduled');
+
     return (
         <div className="bg-white/85 backdrop-blur-md rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-4">
             <div className="flex items-center justify-between">
@@ -162,65 +165,70 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                     <p className="text-xs text-slate-500">No meetings scheduled yet.</p>
                 </div>
             ) : (
-                <div className="space-y-2">
-                    {meetings.map(m => (
-                        <div key={m.meetingId} className="p-4 rounded-xl border border-slate-200 bg-white space-y-2">
-                            {/* Row 1: Title (left, truncating) + Status badge (right) */}
-                            <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-2 min-w-0">
-                                    <span className="font-semibold text-slate-900 text-sm truncate" title={m.purpose}>
-                                        {m.purpose}
-                                    </span>
-                                    {m.rescheduledFromMeetingId && (
-                                        <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 shrink-0">
-                                            <Link2 className="w-3 h-3" /> rescheduled
-                                        </span>
+                <div className="space-y-3">
+                    {/* Main list: only meetings whose status !== 'Rescheduled' */}
+                    {activeMeetings.length === 0 ? (
+                        <div className="py-6 text-center border border-dashed border-slate-200 rounded-xl">
+                            <p className="text-xs text-slate-500">No active meetings scheduled.</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-2">
+                            {activeMeetings.map(m => (
+                                <div key={m.meetingId} className="p-4 rounded-xl border border-slate-200 bg-white space-y-2">
+                                    {/* Row 1: Title (left, truncating) + Status badge (right) */}
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <span className="font-semibold text-slate-900 text-sm truncate" title={m.purpose}>
+                                                {m.purpose}
+                                            </span>
+                                            {m.rescheduledFromMeetingId && (
+                                                <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 shrink-0">
+                                                    <Link2 className="w-3 h-3" /> rescheduled
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="shrink-0">{statusBadge(m.status)}</div>
+                                    </div>
+
+                                    {/* Row 2: Single line — calendar icon, formatted date, duration, importance */}
+                                    <div className="flex items-center gap-1.5 text-xs text-slate-600 truncate">
+                                        <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                        <span>{formatDateTime(m.scheduledAtUtc)}</span>
+                                        {m.durationMinutes ? (
+                                            <>
+                                                <span className="text-slate-300">·</span>
+                                                <span>{formatDuration(m.durationMinutes)}</span>
+                                            </>
+                                        ) : null}
+                                        {m.importance === 'Important' && (
+                                            <>
+                                                <span className="text-slate-300">·</span>
+                                                <span className="font-bold text-amber-700">Important</span>
+                                            </>
+                                        )}
+                                        {m.type === 'Intervention' && (
+                                            <>
+                                                <span className="text-slate-300">·</span>
+                                                <span className="text-indigo-600 font-medium">Intervention</span>
+                                            </>
+                                        )}
+                                    </div>
+
+                                    {m.participants.length > 0 && (
+                                        <div className="text-[11px] text-slate-500 truncate">
+                                            With: {m.participants.join(', ')}
+                                        </div>
                                     )}
-                                </div>
-                                <div className="shrink-0">{statusBadge(m.status)}</div>
-                            </div>
 
-                            {/* Row 2: Single line — calendar icon, formatted date, duration, importance */}
-                            <div className="flex items-center gap-1.5 text-xs text-slate-600 truncate">
-                                <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                                <span>{formatDateTime(m.scheduledAtUtc)}</span>
-                                {m.durationMinutes ? (
-                                    <>
-                                        <span className="text-slate-300">·</span>
-                                        <span>{formatDuration(m.durationMinutes)}</span>
-                                    </>
-                                ) : null}
-                                {m.importance === 'Important' && (
-                                    <>
-                                        <span className="text-slate-300">·</span>
-                                        <span className="font-bold text-amber-700">Important</span>
-                                    </>
-                                )}
-                                {m.type === 'Intervention' && (
-                                    <>
-                                        <span className="text-slate-300">·</span>
-                                        <span className="text-indigo-600 font-medium">Intervention</span>
-                                    </>
-                                )}
-                            </div>
+                                    {m.rescheduleReason && (
+                                        <div className="text-[11px] text-slate-500 italic truncate">
+                                            Reason: {m.rescheduleReason}
+                                        </div>
+                                    )}
 
-                            {m.participants.length > 0 && (
-                                <div className="text-[11px] text-slate-500 truncate">
-                                    With: {m.participants.join(', ')}
-                                </div>
-                            )}
-
-                            {m.rescheduleReason && (
-                                <div className="text-[11px] text-slate-500 italic truncate">
-                                    Reason: {m.rescheduleReason}
-                                </div>
-                            )}
-
-                            {/* Row 3: Action controls */}
-                            {(m.status === 'Scheduled' || m.status === 'Rescheduled') && (
-                                <div className="flex items-center gap-1.5 pt-2.5 mt-1 border-t border-slate-100">
+                                    {/* Row 3: Action controls */}
                                     {m.status === 'Scheduled' && (
-                                        <>
+                                        <div className="flex items-center gap-1.5 pt-2.5 mt-1 border-t border-slate-100">
                                             <button
                                                 type="button"
                                                 onClick={() => handleStatus(m.meetingId, 'Completed')}
@@ -242,19 +250,46 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                                             >
                                                 Reschedule
                                             </button>
-                                        </>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleStatus(m.meetingId, 'Cancelled')}
+                                                className="ml-auto px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold transition"
+                                            >
+                                                Cancel
+                                            </button>
+                                        </div>
                                     )}
-                                    <button
-                                        type="button"
-                                        onClick={() => handleStatus(m.meetingId, 'Cancelled')}
-                                        className="ml-auto px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold transition"
-                                    >
-                                        Cancel
-                                    </button>
                                 </div>
-                            )}
+                            ))}
                         </div>
-                    ))}
+                    )}
+
+                    {/* Rescheduled meetings in compact collapsible details */}
+                    {rescheduledMeetings.length > 0 && (
+                        <details className="pt-2 text-xs text-slate-600 group border-t border-slate-100">
+                            <summary className="cursor-pointer font-medium text-slate-500 hover:text-slate-800 select-none py-1 inline-flex items-center gap-1.5 focus:outline-none">
+                                <span>Show {rescheduledMeetings.length} rescheduled meeting{rescheduledMeetings.length === 1 ? '' : 's'}</span>
+                            </summary>
+                            <div className="mt-2 space-y-1.5 pl-2 border-l-2 border-slate-100">
+                                {rescheduledMeetings.map(m => (
+                                    <div
+                                        key={m.meetingId}
+                                        className="flex items-center gap-2 py-1.5 px-2.5 rounded-lg bg-slate-50 text-slate-600 text-xs"
+                                    >
+                                        <span className="font-medium text-slate-800 truncate" title={m.purpose}>
+                                            {m.purpose}
+                                        </span>
+                                        <span className="text-slate-300 shrink-0">·</span>
+                                        <span className="text-slate-500 shrink-0">
+                                            was {formatDateTime(m.scheduledAtUtc)}
+                                        </span>
+                                        <span className="text-slate-300 shrink-0">·</span>
+                                        <span className="shrink-0">{statusBadge(m.status)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </details>
+                    )}
                 </div>
             )}
 

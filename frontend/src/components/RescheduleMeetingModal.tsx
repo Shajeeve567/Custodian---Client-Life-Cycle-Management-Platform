@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { WorkflowApi, ApiError } from '../services/api';
 import { Meeting } from '../types';
 import { Calendar, X, AlertTriangle, Loader2 } from 'lucide-react';
@@ -102,7 +103,7 @@ export const RescheduleMeetingModal: React.FC<RescheduleMeetingModalProps> = ({
         }
     };
 
-    return (
+    return createPortal(
         <div
             className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
             onClick={(e) => {
@@ -241,7 +242,8 @@ export const RescheduleMeetingModal: React.FC<RescheduleMeetingModalProps> = ({
                     </div>
                 </form>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 
