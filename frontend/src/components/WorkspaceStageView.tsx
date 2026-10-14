@@ -49,6 +49,7 @@ import {
     MoreHorizontal,
 } from 'lucide-react';
 import { MeetingList } from './MeetingList';
+import { SatisfyPaymentModal } from './SatisfyPaymentModal';
 import { formatDate } from '../utils/formatDate';
 
 interface WorkspaceStageViewProps {
@@ -173,7 +174,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [deactivateConditionError, setDeactivateConditionError] = useState<string | null>(null);
 
     // CSTD-26: mark a pending Payment condition as satisfied (clears the gate).
-    const [satisfyingConditionId, setSatisfyingConditionId] = useState<string | null>(null);
+    const [conditionToSatisfy, setConditionToSatisfy] = useState<EngagementCondition | null>(null);
 
     // Stage Action Verification Modals State
     const [actionToVerify, setActionToVerify] = useState<{ action: ClientAction; doc?: DocumentMetadata } | null>(null);
@@ -720,28 +721,8 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     // CSTD-26: mark a pending Payment condition as satisfied — clears the gate
     // blocking the stage the condition was gated on. Publishes PaymentStatusChanged
     // server-side, which triggers a client-safe notification via Identity.
-    const handleSatisfyCondition = async (cond: EngagementCondition) => {
-        if (!tenantId || !engagementId) return;
-
-        const amountText = cond.amount != null
-            ? `${cond.amount.toLocaleString()} ${cond.currency ?? ''}`.trim()
-            : '';
-        const label = amountText ? `${cond.title} (${amountText})` : cond.title;
-
-        if (!window.confirm(
-            `Mark '${label}' as satisfied?\n\n` +
-            'This clears the gate blocking the next stage. The client will be notified.'
-        )) return;
-
-        setSatisfyingConditionId(cond.conditionId);
-        try {
-            await WorkflowApi.satisfyCondition(engagementId, cond.conditionId, tenantId);
-            await loadWorkspaceData();
-        } catch (err: any) {
-            alert(err?.message || 'Failed to mark the payment satisfied.');
-        } finally {
-            setSatisfyingConditionId(null);
-        }
+    const handleSatisfyCondition = (cond: EngagementCondition) => {
+        setConditionToSatisfy(cond);
     };
 
     // Opt-in standard checklist: reviewed in ApplyChecklistModal (preview + explicit confirmation) before
@@ -1593,16 +1574,11 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                             <button
                                                                 type="button"
                                                                 onClick={() => handleSatisfyCondition(cond)}
-                                                                disabled={satisfyingConditionId === cond.conditionId}
-                                                                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 border border-slate-200 transition disabled:opacity-50"
+                                                                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 border border-slate-200 transition"
                                                                 title="Mark payment satisfied"
                                                                 aria-label="Mark payment satisfied"
                                                             >
-                                                                {satisfyingConditionId === cond.conditionId ? (
-                                                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                                                ) : (
-                                                                    <CheckCircle2 className="w-3.5 h-3.5" />
-                                                                )}
+                                                                <CheckCircle2 className="w-3.5 h-3.5" />
                                                             </button>
                                                         )}
                                                         {isEditable && (
@@ -2943,6 +2919,20 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                         </form>
                     </div>
                 </div>
+            )}
+
+            {/* CSTD-26: Satisfy Payment Condition Modal */}
+            {conditionToSatisfy && tenantId && (
+                <SatisfyPaymentModal
+                    condition={conditionToSatisfy}
+                    engagementId={engagementId}
+                    tenantId={tenantId}
+                    onClose={() => setConditionToSatisfy(null)}
+                    onSatisfied={async () => {
+                        setConditionToSatisfy(null);
+                        await loadWorkspaceData();
+                    }}
+                />
             )}
 
             {/* CSTD-20: Handoff Modal */}
