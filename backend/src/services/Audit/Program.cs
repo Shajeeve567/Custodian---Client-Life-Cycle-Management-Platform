@@ -8,7 +8,6 @@ using Custodian.Shared.Http;
 using Custodian.Shared.Reporting;
 using Custodian.Shared.Tenancy;
 using Microsoft.EntityFrameworkCore;
-using Scalar.AspNetCore;
 using Custodian.Audit.Services.HashChain;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -24,7 +23,7 @@ builder.Services.AddTenantScopedAuthorization();
 builder.Services.Configure<AuditIngestionOptions>(builder.Configuration.GetSection(AuditIngestionOptions.SectionName));
 
 // Add OpenAPI / Swagger
-builder.Services.AddOpenApi();
+builder.Services.AddCustodianApiDocs();
 builder.Services.AddEndpointsApiExplorer();
 
 // Add EF Core DbContext
@@ -73,11 +72,8 @@ var app = builder.Build();
 app.UseCustodianMetrics();
 
 // Configure HTTP request pipeline
-if (app.Environment.IsDevelopment())
-{
-    app.MapScalarApiReference();
-    app.MapOpenApi();
-}
+// OpenAPI + Swagger UI + Scalar: always in Development, elsewhere only with ApiDocs:Enabled (see ApiDocsExtensions).
+app.UseCustodianApiDocs();
 
 using (var scope = app.Services.CreateScope())
 {

@@ -4,14 +4,18 @@
 
 Custodian uses Azure Event Hubs as its cloud message broker via the Azure Event Hubs Kafka-compatible endpoint. This enables standard Apache Kafka client protocols (`Confluent.Kafka`) to stream lifecycle and audit events in the cloud without requiring custom Azure SDKs or dedicated virtual machine broker infrastructure.
 
-* **Event Hubs Namespace:** `custodian-events`
+* **Event Hubs Namespace:** `ehns-custodian-prod-gr` (production, Standard tier, 1 throughput unit, auto-inflate off). Before Sprint 4 the services used the team namespace `custodian-events` (team subscription).
 * **Event Hub / Topic:** `custodian.events`
-* **Partition Count:** 1
+* **Partition Count:** 4 (production). Partitions cannot be changed after creation on the Standard tier.
+* **Retention:** 72 hours (production)
+* **Access policy:** `custodian-apps`, Send + Listen only (no Manage), shared by all producers and consumers
 * **Producers:** `Workflow` (lifecycle events) and `Documents` (document events) when `Audit__Transport=Kafka`.
 * **Consumers:**
   * `Audit` (group `custodian-audit`) persists every event to `audit_db` and links it into the engagement's SHA-256 hash chain (CSTD-40).
   * `Workflow` (group `custodian-workflow`) reacts to `document.verified` / `document.verification_rejected` by updating the linked client action.
-  * `Identity` (group `custodian-identity-notifications-group`) turns events into client notifications. It has no SASL settings, so it only works against a plain local broker (see below).
+  * `Identity` (group `custodian-identity-notifications-group`) turns events into client notifications. It supports the same SASL settings as the other services (CSTD-144).
+
+Each consumer group receives every event on the topic, so Audit, Workflow and Identity each process the full stream independently. Producers use `Acks=All` with idempotence enabled.
 
 ---
 
@@ -24,7 +28,7 @@ KafkaAuditPublisher
     ↓
 Confluent.Kafka (Producer)
     ↓ [TLS / SASL_SSL:9093]
-Azure Event Hubs Kafka Endpoint (custodian-events.servicebus.windows.net:9093)
+Azure Event Hubs Kafka Endpoint (<namespace>.servicebus.windows.net:9093)
     ↓
 custodian.events (Event Hub / Topic)
     ↓ [TLS / SASL_SSL:9093]
@@ -80,12 +84,12 @@ Azure Event Hubs exposes a Kafka 1.0+ compatible endpoint on port 9093. Standard
 
 | Setting | Value |
 | :--- | :--- |
-| `BootstrapServers` | `custodian-events.servicebus.windows.net:9093` |
+| `BootstrapServers` | `<namespace>.servicebus.windows.net:9093` (production namespace `ehns-custodian-prod-gr`) |
 | `Topic` | `custodian.events` |
 | `SecurityProtocol` | `SaslSsl` |
 | `SaslMechanism` | `Plain` |
 | `SaslUsername` | `$ConnectionString` |
-| `SaslPassword` | `<runtime Event Hubs connection string>` |
+| `SaslPassword` | `<runtime Event Hubs connection string>` (policy `custodian-apps`, **Event Hubs → Shared access policies**) |
 
 ---
 
@@ -99,7 +103,7 @@ Set the following runtime environment variables when running the Workflow servic
 
 ```bash
 Audit__Transport=Kafka
-Kafka__BootstrapServers=custodian-events.servicebus.windows.net:9093
+Kafka__BootstrapServers=<namespace>.servicebus.windows.net:9093
 Kafka__Topic=custodian.events
 Kafka__SecurityProtocol=SaslSsl
 Kafka__SaslMechanism=Plain
@@ -137,7 +141,7 @@ Set the following runtime environment variables when running the Audit service:
 
 ```bash
 Kafka__Enabled=true
-Kafka__BootstrapServers=custodian-events.servicebus.windows.net:9093
+Kafka__BootstrapServers=<namespace>.servicebus.windows.net:9093
 Kafka__Topic=custodian.events
 Kafka__GroupId=custodian-audit
 Kafka__SecurityProtocol=SaslSsl
@@ -152,7 +156,7 @@ Set the following runtime environment variables when running the Identity servic
 
 ```bash
 Kafka__Enabled=true
-Kafka__BootstrapServers=custodian-events.servicebus.windows.net:9093
+Kafka__BootstrapServers=<namespace>.servicebus.windows.net:9093
 Kafka__Topic=custodian.events
 Kafka__GroupId=custodian-identity-notifications-group
 Kafka__AutoOffsetReset=Earliest
@@ -178,7 +182,9 @@ Staging and production are separate App Services and read their Kafka settings f
 | `Kafka__GroupId` | Audit, Workflow, Identity | Staging consumer group names, so staging consumers never take production messages |
 | `Kafka__BootstrapServers`, `Kafka__SaslPassword` | all producers/consumers | Only if staging uses a different Event Hubs namespace or access policy |
 
-The Event Hub and its consumer groups must also exist in Azure (Event Hubs namespace → Event Hubs → *hub* → Consumer groups).
+Consumer groups used through the Kafka endpoint are created automatically on first use. They do **not** appear under **Event Hubs → *hub* → Consumer groups** in the portal, which only lists groups created through the Event Hubs (AMQP) API.
+
+The `SaslPassword` is the **Event Hubs** connection string (`Endpoint=sb://…;SharedAccessKeyName=…;SharedAccessKey=…`). Pasting any other connection string (for example the storage account's) fails at startup with *"connection string is not of the expected format"*.
 
 ## Local Kafka Compatibility
 
@@ -207,7 +213,7 @@ Follow this step-by-step procedure to perform an end-to-end verification through
    ```
 6. Confirm the HTTP response returns `201 Created`.
 7. Copy the returned `engagementId`.
-8. Open the **Azure Portal** → navigate to the `custodian-events` namespace → `custodian.events` Event Hub → select **Data Explorer**.
+8. Open the **Azure Portal** → navigate to the Event Hubs namespace → `custodian.events` Event Hub → select **Data Explorer**.
 9. Confirm the message appears with `EventType = Genesis` and the matching `EngagementId`.
 10. Connect to `audit_db` using your MySQL client and verify the event was consumed and persisted.
 
@@ -250,3 +256,17 @@ Test results confirmed:
 * **Audit DB row count:** Increased by exactly one row
 * **Event Type:** `Genesis`
 * **Idempotency & Isolation:** No secrets logged or committed to the repository
+
+### Sprint 4 production verification
+
+After the production cutover to `ehns-custodian-prod-gr`, a document upload through the deployed frontend was traced end to end:
+
+```text
+Upload (Vercel) → Documents → Blob Storage + document_db
+               → custodian.events → Audit (hash chain insert)
+                                   → Workflow (linked task updated)
+                                   → Identity (client notification)
+Download returned the same file.
+```
+
+The namespace metrics showed 3 incoming and 9 outgoing messages for the test: each event delivered once to each of the three consumer groups.
