@@ -27,11 +27,13 @@ Azure Backend APIs
 The frontend uses Vite environment variables to configure the backend API URLs:
 
 ```text
-VITE_IDENTITY_API_URL
-VITE_WORKFLOW_API_URL
-VITE_AUDIT_API_URL
-VITE_DOCUMENTS_API_URL
+VITE_IDENTITY_URL
+VITE_WORKFLOW_URL
+VITE_AUDIT_URL
+VITE_DOCUMENTS_URL
 ```
+
+The older names `VITE_<SERVICE>_API_URL` are still read as a fallback (`frontend/src/services/api.ts`); without either, the frontend uses the local ports (`5281`, `5225`, `5051`, `5171`). Copy `frontend/.env.example` to `frontend/.env` to start locally.
 
 For local development, these variables point to the local backend services.
 
@@ -47,7 +49,7 @@ Environment-specific configuration should not contain sensitive secrets in the f
 
 ## Deployment
 
-The Vercel project is connected to the GitHub repository.
+The Vercel project is connected to the GitHub repository and is served at https://custodian-blue.vercel.app. Its four `VITE_*_URL` variables point at the production App Services described in [azure-backend.md](azure-backend.md#production-environment), and that origin is set as `Cors__AllowedOrigins__0` on each of them.
 
 When the frontend is deployed, Vercel builds the application and serves the generated production files.
 

@@ -20,11 +20,22 @@ The frontend is built with React, TypeScript, and Vite.
 | Frontend             | React, TypeScript, Vite |
 | Backend              | .NET 9                  |
 | Database             | MySQL                   |
-| Messaging            | Apache Kafka            |
+| Messaging            | Apache Kafka (local), Azure Event Hubs Kafka endpoint (cloud) |
+| File Storage         | Azure Blob Storage      |
 | Local Infrastructure | Docker Compose          |
 | Backend Hosting      | Azure App Services      |
 | Frontend Hosting     | Vercel                  |
 | CI/CD                | GitHub Actions          |
+| API Documentation    | OpenAPI, Swagger UI, Scalar |
+| Monitoring           | Application Insights, Prometheus, Grafana |
+
+## Live Environment
+
+| Component | URL |
+| --------- | --- |
+| Frontend | https://custodian-blue.vercel.app |
+
+The backend API addresses are not listed here; see the production section of [Azure Backend Deployment](docs/deployment/azure-backend.md#production-environment) for the App Service names. Each API serves Swagger UI at `/swagger`, Scalar at `/scalar/v1` and the OpenAPI document at `/openapi/v1.json` when `ApiDocs__Enabled=true` is set on its App Service (always in local Development). Protected endpoints need a JWT from `POST /api/auth/login`; use **Authorize** in either UI.
 
 ## Repository Structure
 
@@ -64,7 +75,7 @@ Install:
 
 ```bash
 git clone https://github.com/Shajeeve567/Custodian---Client-Life-Cycle-Management-Platform.git
-cd Client-Life-Cycle-Management-Platform
+cd Custodian---Client-Life-Cycle-Management-Platform
 ```
 
 ### Backend
@@ -151,6 +162,8 @@ Each backend microservice has independent deployment workflows and two environme
 | `dev`  | Staging (`staging-*-service` App Services) | `staging-*.yml` |
 | `main` | Production | `deploy-*.yml` |
 
+Production runs in its own Azure subscription with two App Service plans (Workflow + Documents, Identity + Audit), Azure Blob Storage for document files, and Application Insights plus Prometheus/Grafana for monitoring. See [Azure Backend Deployment](docs/deployment/azure-backend.md#production-environment).
+
 Deployment secrets are GitHub Secrets (`AZURE_<SERVICE>_APP_NAME` / `_PUBLISH_PROFILE`, and `AZURE_<SERVICE>_STAGING_*` for staging). Application configuration lives in each App Service's settings. See [GitHub Actions CI/CD](docs/ci-cd/github-actions.md).
 
 The frontend is deployed through Vercel.
@@ -169,7 +182,8 @@ Asynchronous event streaming between microservices uses Azure Event Hubs via its
 * **Workflow** and **Documents** act as Kafka producers.
 * **Audit** consumes every event and adds it to a per-engagement SHA-256 hash chain; **Workflow** consumes document verification events.
 * **Shared Topic / Event Hub:** `custodian.events`.
-* **Broker Endpoint:** Azure Event Hubs at `custodian-events.servicebus.windows.net:9093` with `SASL_SSL` (`PLAIN`).
+* **Broker Endpoint:** Azure Event Hubs (production namespace `ehns-custodian-prod-gr`) on port `9093` with `SASL_SSL` (`PLAIN`).
+* **Consumer groups:** `custodian-audit`, `custodian-workflow`, `custodian-identity-notifications-group`; each receives every event.
 * Application code continues using standard `Confluent.Kafka` without SDK changes.
 * Secrets are supplied exclusively via runtime environment variables and are never committed.
 * The codebase remains compatible with local Kafka brokers for development when SASL configuration is omitted.
@@ -218,6 +232,7 @@ Detailed project documentation is available in the [`docs/`](docs/) directory.
 | [Azure Event Hubs Kafka Integration](docs/deployment/event-hubs-kafka.md) | Event Hubs Kafka messaging and runtime setup |
 | [Vercel Frontend Deployment](docs/deployment/vercel-frontend.md)        | Frontend deployment and configuration       |
 | [GitHub Actions CI/CD](docs/ci-cd/github-actions.md)                    | CI/CD workflows and deployment automation   |
+| [Monitoring](monitoring/README.md)                                      | Prometheus + Grafana setup and `/metrics` protection |
 | [Troubleshooting](docs/troubleshooting.md)                              | Common development and deployment issues    |
 
 ## Security
