@@ -1,7 +1,6 @@
 using Custodian.Shared.Observability;
 using Microsoft.EntityFrameworkCore;
 using Identity.Data;
-using Scalar.AspNetCore;
 using Custodian.Shared.Tenancy;
 using Custodian.Shared.Auth;
 using Custodian.Identity.Services.Notifications;
@@ -14,7 +13,7 @@ var connectionString = builder.Configuration.GetConnectionString("AzureMySqlConn
 
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+builder.Services.AddCustodianApiDocs();
 // builder.Services.AddDbContext<IdentityDbContext>(options =>
 //             options.UseInMemoryDatabase("InMem"));
 builder.Services.AddDbContext<IdentityDbContext>(options =>
@@ -66,11 +65,8 @@ var app = builder.Build();
 app.UseCustodianMetrics();
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.MapScalarApiReference();
-    app.MapOpenApi();
-}
+// OpenAPI + Swagger UI + Scalar: always in Development, elsewhere only with ApiDocs:Enabled (see ApiDocsExtensions).
+app.UseCustodianApiDocs();
 
 // app.UseHttpsRedirection();
 app.LogCustodianCors();
