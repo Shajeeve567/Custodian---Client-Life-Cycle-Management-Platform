@@ -42,11 +42,11 @@ The frontend is deployed by Vercel's Git integration, not by GitHub Actions (see
 
 ## Production deployment — `deploy-*.yml`
 
-- **Trigger:** push to `main` when any of these change:
-  - the service folder (`backend/src/services/<Service>/**`)
-  - the shared libraries (`backend/src/shared/**`)
-  - the workflow file itself
+- **Triggers:**
+  - push to `main` when the service folder (`backend/src/services/<Service>/**`), the shared libraries (`backend/src/shared/**`) or the workflow file itself changes
+  - manually, with **Run workflow** (`workflow_dispatch`), to redeploy without a code change
 - **Steps:** checkout → setup .NET 9 → restore → build (Release) → **test the service's test project** → publish → `azure/webapps-deploy@v3`.
+- **Target:** the Sprint 4 production App Services in the `custodian-prod` subscription (see [azure-backend.md](../deployment/azure-backend.md#production-environment)).
 
 | Workflow | Test project |
 |---|---|
@@ -59,16 +59,12 @@ A failing test stops the deployment.
 
 ## Staging deployment — `staging-*.yml`
 
-- **Trigger:** push to `dev` when either of these change:
-  - the service folder (`backend/src/services/<Service>/**`)
-  - the **production** workflow file `.github/workflows/deploy-<service>.yml`
-- **Steps:** checkout → setup .NET 9 → restore → build (Release) → test → publish → `azure/webapps-deploy@v3` to the staging App Service.
+- **Trigger:** push to `dev` when the service folder, the shared libraries (`backend/src/shared/**`) or the staging workflow file itself (`staging-<service>.yml`) changes.
+- **Steps:** the same as production (restore → build → **test the same test project** → publish), deployed to the staging App Service.
 
-Current behaviour to be aware of:
+Staging and production therefore run the same tests on the same path filters; they differ in the branch, the secrets, the target App Service, and the manual trigger (production only). A change to `backend/src/shared/**` redeploys all four services in that environment.
 
-1. **Staging runs no tests.** Its Test step is `dotnet test backend/src/services/<Service> --no-build`, which points at the service project (it has no tests), not the test project. Tests on `dev` only run through `ci.yml`, which does not block the deployment.
-2. **Shared-library changes do not redeploy staging.** `backend/src/shared/**` is not in the staging path filter, unlike production.
-3. **Editing a `staging-*.yml` file does not trigger it.** The staging path filter watches `deploy-<service>.yml` instead.
+> **Fixed in Sprint 4 (PR #65).** Before this fix the staging workflows triggered on the production workflow file instead of their own, ignored `backend/src/shared/**`, and ran `dotnet test` against the service project (which has no tests), so nothing was tested before a staging deploy.
 
 `ci.yml` is a separate workflow in both environments; deployments do not wait for it.
 

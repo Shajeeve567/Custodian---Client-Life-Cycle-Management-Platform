@@ -79,13 +79,30 @@ npm run dev
 The frontend uses Vite environment variables for backend API URLs:
 
 ```text
-VITE_IDENTITY_API_URL
-VITE_WORKFLOW_API_URL
-VITE_AUDIT_API_URL
-VITE_DOCUMENTS_API_URL
+VITE_IDENTITY_URL
+VITE_WORKFLOW_URL
+VITE_AUDIT_URL
+VITE_DOCUMENTS_URL
 ```
 
+The older names `VITE_<SERVICE>_API_URL` are still read as a fallback (`frontend/src/services/api.ts`); without either, the frontend uses the local ports (`5281`, `5225`, `5051`, `5171`). Copy `frontend/.env.example` to `frontend/.env` to start locally.
+
 These values should point to the appropriate local or deployed backend services.
+
+## Local Service URLs and API Documentation
+
+When run with `dotnet run`, each service listens on the port from its `Properties/launchSettings.json`. With `docker compose up`, the services are published on ports 5001–5004 instead.
+
+| Service | `dotnet run` | Docker Compose |
+|---|---|---|
+| Identity | http://localhost:5281 | http://localhost:5001 |
+| Workflow | http://localhost:5225 | http://localhost:5002 |
+| Documents | http://localhost:5171 | http://localhost:5003 |
+| Audit | http://localhost:5051 | http://localhost:5004 |
+
+In Development every service serves Swagger UI at `/swagger`, Scalar at `/scalar/v1` and the OpenAPI document at `/openapi/v1.json`. Use **Authorize** with a token from `POST /api/auth/login` (then `POST /api/auth/select-workspace/{tenantId}` for tenant APIs). Deployed environments serve them only with `ApiDocs__Enabled=true` (see `docs/deployment/azure-backend.md`).
+
+Uploaded documents are written to the local `uploads` folder unless `Storage__Provider=Blob` and `AzureBlob__ConnectionString` are set.
 
 ## Running Tests
 

@@ -10,7 +10,6 @@ using Custodian.Shared.Reporting;
 using Custodian.Shared.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -122,7 +121,7 @@ if (!string.IsNullOrWhiteSpace(connectionString))
         options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
 }
 
-builder.Services.AddOpenApi();
+builder.Services.AddCustodianApiDocs();
 
 var app = builder.Build();
 
@@ -131,11 +130,8 @@ app.UseCustodianMetrics();
 
 Custodian.Shared.Messaging.AuditTransport.LogSelection(app.Logger, builder.Configuration, auditTransport);
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapScalarApiReference();
-    app.MapOpenApi();
-}
+// OpenAPI + Swagger UI + Scalar: always in Development, elsewhere only with ApiDocs:Enabled (see ApiDocsExtensions).
+app.UseCustodianApiDocs();
 
 using (var scope = app.Services.CreateScope())
 {
