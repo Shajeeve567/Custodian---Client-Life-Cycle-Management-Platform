@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { WorkflowApi, ApiError } from '../services/api';
 import { Meeting } from '../types';
 import { AlertTriangle, RefreshCw, Calendar } from 'lucide-react';
+import { formatDateTime } from '../utils/formatDate';
 
 interface MissedMeetingsPanelProps {
     tenantId: string;
@@ -67,7 +68,7 @@ export const MissedMeetingsPanel: React.FC<MissedMeetingsPanelProps> = ({ tenant
                         <div className="min-w-0">
                             <div className="text-sm font-semibold text-slate-900 truncate">{m.purpose}</div>
                             <div className="text-[11px] text-slate-600 mt-0.5">
-                                Scheduled for {new Date(m.scheduledAtUtc).toLocaleString()}
+                                Scheduled for {formatDateTime(m.scheduledAtUtc)}
                                 {m.status === 'Missed' ? ' · marked missed' : ' · past due'}
                             </div>
                             <div className="text-[10px] font-mono text-slate-400 mt-0.5">
