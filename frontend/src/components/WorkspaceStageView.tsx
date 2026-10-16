@@ -48,6 +48,7 @@ import {
     Flag,
 } from 'lucide-react';
 import { MeetingList } from './MeetingList';
+import { ACTION_TYPE_TO_DOCUMENT_TYPE } from '../constants/documentTypes';
 import { documentTypeLabel, readableServerText, engagementOpenedLabel, engagementStatusLabel, formatDate, personLabel, taskSourceLabel, taskTypeLabel } from '../utils/displayLabels';
 
 interface WorkspaceStageViewProps {
@@ -860,8 +861,8 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
 
     return (
         <div className="space-y-6">
-            {/* Top Navigation & Breadcrumb */}
-            <div className="flex items-center justify-between">
+            {/* Top Navigation & Breadcrumb: wraps onto a second line on narrow screens instead of overflowing */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
                 <button
                     onClick={onBack ? onBack : () => navigate('/engagements')}
                     className="inline-flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-indigo-600 transition"
@@ -870,7 +871,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                     <span>Back to Engagements</span>
                 </button>
 
-                <div className="flex items-start gap-2.5">
+                <div className="flex flex-wrap items-start gap-2">
                     {/* CSTD-14: the client-safe engagement summary, as an Owner or the responsible Staff member sees it. */}
                     <ReportDownloadButton
                         url={ReportsApi.engagementSummaryStaffUrl(engagementId)}
@@ -947,7 +948,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex flex-wrap items-center gap-3">
                     {/* Engagement-wide template: kept away from "Add Task" and reviewed in a dialog before applying */}
                     {!isTerminalStatus && (
                         <button
@@ -1788,7 +1789,8 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             const isActionCancelled = act.status === 'Cancelled';
                             // Only client-owned, unfinished evidence tasks wait on the portal; staff tasks are done in the workspace.
                             const isStaffTask = (act.assignedToRole ?? act.assignedRole) === 'Staff';
-                            const isDocAction = act.type === 'DocumentUpload' || act.type === 'KycDocument' || act.type === 'SignAgreement' || act.title.toLowerCase().includes('document') || act.title.toLowerCase().includes('kyc') || act.title.toLowerCase().includes('agreement');
+                            // Any task whose type maps to a document type (incl. ProofOfAddress), plus generic uploads.
+                            const isDocAction = act.type === 'DocumentUpload' || act.type in ACTION_TYPE_TO_DOCUMENT_TYPE || act.title.toLowerCase().includes('document') || act.title.toLowerCase().includes('kyc') || act.title.toLowerCase().includes('agreement');
                             const isAwaitingClientUpload = isDocAction && !isStaffTask && !isActionCancelled && !act.isCompleted && act.status !== 'Completed';
 
                             return (
@@ -2053,8 +2055,10 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                         </button>
                                     )}
 
-                                    {/* General Task: Mark Complete button (a question completes when the client answers and staff approve) */}
-                                    {!act.isCompleted && act.status !== 'Completed' && !isActionCancelled && !linkedDoc && !act.linkedRequirementId && (
+                                    {/* General Task: Mark Complete button. Not shown for a question (completes when the client answers
+                                        and staff approve) or for a client upload task (completes through the upload and staff
+                                        verification), so neither can be closed without its evidence. */}
+                                    {!act.isCompleted && act.status !== 'Completed' && !isActionCancelled && !linkedDoc && !act.linkedRequirementId && !isAwaitingClientUpload && (
                                         <button
                                             onClick={() => handleCompleteAction(act.actionId)}
                                             disabled={completingActionId === act.actionId}

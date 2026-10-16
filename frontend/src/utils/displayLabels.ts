@@ -102,6 +102,20 @@ const ENGAGEMENT_STATUS_LABELS: Record<string, string> = {
     Cancelled: 'Cancelled',
 };
 
+/** Pill and dot colours per engagement status, so every screen colours a status the same way. */
+export function engagementStatusClasses(status: string | null | undefined): { pill: string; dot: string } {
+    switch (status) {
+        case 'Draft':
+            return { pill: 'bg-amber-50 text-amber-800 border-amber-200', dot: 'bg-amber-500' };
+        case 'Closed':
+            return { pill: 'bg-slate-100 text-slate-600 border-slate-200', dot: 'bg-slate-400' };
+        case 'Cancelled':
+            return { pill: 'bg-rose-50 text-rose-700 border-rose-200', dot: 'bg-rose-500' };
+        default:
+            return { pill: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500' };
+    }
+}
+
 export function engagementStatusLabel(status: string | null | undefined): string {
     if (!status) return '';
     return ENGAGEMENT_STATUS_LABELS[status] ?? humanize(status);

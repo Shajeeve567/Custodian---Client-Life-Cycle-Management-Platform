@@ -3,7 +3,7 @@ import { Engagement, ClientProfile, UserAccountResponse } from '../types';
 import { ENGAGEMENT_STAGES, getStageIndex } from '../constants/engagementStages';
 import { WorkflowApi, ApiError } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { engagementOpenedLabel, engagementStatusLabel } from '../utils/displayLabels';
+import { engagementOpenedLabel, engagementStatusClasses, engagementStatusLabel } from '../utils/displayLabels';
 import {
     X,
     Building2,
@@ -120,8 +120,8 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
                         <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                             Pipeline Status:
                         </span>
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${engagementStatusClasses(engagement.status).pill}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${engagementStatusClasses(engagement.status).dot}`} />
                             {engagementStatusLabel(engagement.status)}
                         </span>
                     </div>
@@ -209,7 +209,7 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
                         <div className="space-y-1 text-xs text-slate-600">
                             <div className="flex items-center gap-1.5">
                                 <Mail className="w-3.5 h-3.5 text-slate-400" />
-                                <span className="truncate">{client?.email || 'client@organization.com'}</span>
+                                <span className={`truncate ${client?.email ? '' : 'italic text-slate-400'}`}>{client?.email || 'No email on file'}</span>
                             </div>
                             {client?.phone && (
                                 <div className="flex items-center gap-1.5">

@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { IdentityApi, WorkflowApi, ApiError } from '../services/api';
 import { Engagement, ClientProfile, UserAccountResponse } from '../types';
 import { getStageDefinition } from '../constants/engagementStages';
-import { engagementStatusLabel } from '../utils/displayLabels';
+import { engagementStatusClasses, engagementStatusLabel } from '../utils/displayLabels';
 import { DashboardLayout } from '../components/DashboardLayout';
 import { TeamManagementModal } from '../components/TeamManagementModal';
 import { EngagementInspectionModal } from '../components/EngagementInspectionModal';
@@ -247,7 +247,8 @@ export const EngagementsPage: React.FC = () => {
         return {
             id: eng.engagementId,
             clientName: name,
-            title: 'Client Onboarding & Compliance Architecture',
+            // The client's contact email; empty when the client record has none.
+            title: client?.email || '',
             initials,
             status: eng.status,
             nextAction: eng.status === 'Closed' ? 'COMPLETED' : `STAGE: ${stageDef.name.toUpperCase()}`,
@@ -462,15 +463,17 @@ export const EngagementsPage: React.FC = () => {
                                             </div>
                                         </div>
 
-                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border shrink-0 ${engagementStatusClasses(ws.status).pill}`}>
+                                            <span className={`w-1.5 h-1.5 rounded-full ${engagementStatusClasses(ws.status).dot}`} />
                                             {engagementStatusLabel(ws.status)}
                                         </span>
                                     </div>
 
-                                    <p className="text-xs text-slate-500 line-clamp-2">
-                                        {ws.title}
-                                    </p>
+                                    {ws.title && (
+                                        <p className="text-xs text-slate-500 truncate" title={ws.title}>
+                                            {ws.title}
+                                        </p>
+                                    )}
                                 </div>
 
                                 {/* Card Body: Stage Progress */}
