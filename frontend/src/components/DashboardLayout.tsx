@@ -72,9 +72,9 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                             </div>
                             {/* Hidden on narrower screens so the workspace name always fits in full; the logo stays. */}
                             <span className="hidden lg:inline font-bold text-lg text-slate-900 tracking-tight leading-tight shrink-0">Custodian</span>
-                            {/* Workspace pill: purple-tinted so it reads as "where you are", not as another nav button */}
+                            {/* Workspace pill, in the same colours as the active nav button */}
                             <span
-                                className="inline-flex items-center gap-1.5 min-w-0 max-w-[200px] sm:max-w-[240px] px-2.5 py-1 rounded-lg border border-purple-200 bg-gradient-to-r from-indigo-50 to-purple-50 text-purple-700 text-xs font-semibold"
+                                className="inline-flex items-center gap-1.5 min-w-0 max-w-[200px] sm:max-w-[240px] px-2.5 py-1 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-700 text-xs font-semibold"
                                 title={workspaceLine}
                             >
                                 <Building2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
