@@ -45,6 +45,12 @@ Therefore, when an environment variable is changed in Vercel, the application mu
 
 Environment-specific configuration should not contain sensitive secrets in the frontend, since Vite variables are exposed to the client-side application.
 
+## Client-Side Routing (`frontend/vercel.json`)
+
+The app is a single-page application: the server only has `index.html` and the built assets, and React Router resolves paths such as `/engagements` or `/workspace/{id}` in the browser. Without a rewrite, refreshing or opening any such link directly makes Vercel return `404 NOT_FOUND`.
+
+`frontend/vercel.json` rewrites every path that is not a real file to `/index.html`. Vercel serves existing files (for example `/assets/*.js`) before applying rewrites, so assets are unaffected. This assumes the Vercel project's Root Directory is `frontend`.
+
 ## Deployment
 
 The Vercel project is connected to the GitHub repository.
