@@ -13,6 +13,7 @@ import {
     CheckCircle2,
 } from 'lucide-react';
 import MissedMeetingsPanel from '../components/MissedMeetingsPanel';
+import { engagementCode, stageLabel } from '../utils/displayLabels';
 
 function formatOverdue(hours: number): string {
     if (hours < 1) return '<1h';
@@ -44,7 +45,7 @@ function initials(name: string): string {
 }
 
 export const StallQueuePage: React.FC = () => {
-    const { tenantId, token } = useAuth();
+    const { tenantId, token, userId } = useAuth();
 
     const [items, setItems] = useState<StallQueueItem[]>([]);
     const [totalCount, setTotalCount] = useState(0);
@@ -96,12 +97,13 @@ export const StallQueuePage: React.FC = () => {
 
     const resolveClientName = (clientId: string): string => {
         const c = clients.find((x) => x.id === clientId);
-        return c?.name || `Client ${clientId.slice(0, 8)}`;
+        return c?.name || 'Unnamed client';
     };
 
     const resolveStaffName = (staffId: string): string => {
         const m = team.find((x) => x.id === staffId);
-        return m?.email ? m.email.split('@')[0] : `Staff ${staffId.slice(0, 8)}`;
+        if (m?.email) return m.email.split('@')[0];
+        return staffId === userId ? 'You' : 'Assigned staff';
     };
 
     const hasItems = items.length > 0;
@@ -207,7 +209,7 @@ export const StallQueuePage: React.FC = () => {
                     >
                         <option value="">All stages</option>
                         {STAGES.map((s) => (
-                            <option key={s} value={s}>{s.replace(/([a-z])([A-Z])/g, '$1 $2')}</option>
+                            <option key={s} value={s}>{stageLabel(s)}</option>
                         ))}
                     </select>
                     {totalCount > items.length && (
@@ -286,10 +288,10 @@ export const StallQueuePage: React.FC = () => {
                                                                 {clientName}
                                                             </div>
                                                             <div className="text-[11px] font-mono text-slate-400">
-                                                                ENG-{item.engagementId.slice(0, 6).toUpperCase()}
+                                                                {engagementCode(item.engagementId)}
                                                             </div>
                                                             <div className="text-[10px] font-semibold text-indigo-600 mt-0.5">
-                                                                {item.engagementStage}
+                                                                {stageLabel(item.engagementStage)}
                                                             </div>
                                                         </div>
                                                     </div>
@@ -360,7 +362,7 @@ export const StallQueuePage: React.FC = () => {
                     }}
                     tenantId={tenantId}
                     engagementId={interveningOn.engagementId}
-                    engagementLabel={`${resolveClientName(interveningOn.clientId)} — ENG-${interveningOn.engagementId.slice(0, 6).toUpperCase()}`}
+                    engagementLabel={`${resolveClientName(interveningOn.clientId)} — ${engagementCode(interveningOn.engagementId)}`}
                     blockerActionId={(interveningOn as any).blockerActionId ?? null}
                     blockerActionTitle={interveningOn.blockerActionTitle}
                 />

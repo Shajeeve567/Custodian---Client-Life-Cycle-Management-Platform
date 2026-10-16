@@ -48,6 +48,7 @@ import {
     Flag,
 } from 'lucide-react';
 import { MeetingList } from './MeetingList';
+import { documentTypeLabel, engagementCode as formatEngagementCode, engagementStatusLabel, formatDate, personLabel, taskSourceLabel, taskTypeLabel } from '../utils/displayLabels';
 
 interface WorkspaceStageViewProps {
     engagementId: string;
@@ -80,12 +81,14 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     onBack,
 }) => {
     const navigate = useNavigate();
-    const { token, tenantId, userId, role } = useAuth();
+    const { token, tenantId, tenantName, userId, email, role } = useAuth();
 
     // Data state
     const [engagement, setEngagement] = useState<Engagement | null>(null);
     const [client, setClient] = useState<ClientProfile | null>(null);
     const [staffLead, setStaffLead] = useState<UserAccountResponse | null>(null);
+    // Everyone the Owner can see, used to show names instead of user ids (Staff can't list users).
+    const [teamUsers, setTeamUsers] = useState<UserAccountResponse[]>([]);
     // Owner only: workspace owners and staff who can be made responsible for this engagement.
     const [assignableStaff, setAssignableStaff] = useState<UserAccountResponse[]>([]);
     const [isChangingStaff, setIsChangingStaff] = useState(false);
@@ -281,6 +284,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             const matchedStaff = users.find((u) => u.id === foundEng.staffId);
                             setStaffLead(matchedStaff ?? null);
                         }
+                        setTeamUsers(users);
                         setAssignableStaff(users.filter((u) => isTeamMemberOf(u, tenantId)));
                     } catch (uErr) {
                         console.warn(uErr);
@@ -820,7 +824,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     };
 
     // Client display info
-    const clientName = client?.name || `Client ${engagementId.slice(0, 8)}`;
+    const clientName = client?.name || 'Unnamed client';
     const initials = clientName
         .split(' ')
         .map((n) => n[0])
@@ -828,7 +832,8 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
         .join('')
         .slice(0, 2)
         .toUpperCase() || 'CL';
-    const engagementCode = `ENG-${engagementId.slice(0, 6).toUpperCase()}`;
+    const engagementCode = formatEngagementCode(engagementId);
+    const actorName = (actor?: string | null) => personLabel(actor, { users: teamUsers, currentUserId: userId });
 
     // The REAL, gate-checked stage — what PUT /stage actually operates on. Drives the
     // Advance Stage action and stage-detail panel below; must never be swapped for the
@@ -906,7 +911,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                         {initials}
                     </div>
                     <div>
-                        <div className="flex items-center gap-3">
+                        <div className="flex flex-wrap items-center gap-3">
                             <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
                                 {clientName}
                             </h1>
@@ -921,7 +926,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                     : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                             }`}>
                                 <span className={`w-1.5 h-1.5 rounded-full ${isTerminalStatus ? 'bg-slate-400' : isDraft ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-                                {isDraft ? 'Draft — not started' : engagement?.status || 'Active Pipeline'}
+                                {isDraft ? 'Draft — not started' : engagementStatusLabel(engagement?.status) || 'In progress'}
                             </span>
                             {isDraft && (
                                 <button
@@ -936,7 +941,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             )}
                         </div>
                         <p className="text-xs text-slate-500 mt-1">
-                            Tenant Scoped Isolation: <code className="font-mono text-slate-700">{tenantId || 'Main Tenant'}</code> • Deterministic State Engine Active
+                            Workspace: <span className="font-semibold text-slate-700">{tenantName || 'Main workspace'}</span>
                         </p>
                     </div>
                 </div>
@@ -968,7 +973,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                 className="mt-0.5 w-full bg-transparent font-semibold text-slate-800 truncate focus:outline-none cursor-pointer disabled:opacity-60"
                             >
                                 {!assignableStaff.some((u) => u.id === engagement.staffId) && (
-                                    <option value={engagement.staffId}>Unknown ({engagement.staffId.slice(0, 8)})</option>
+                                    <option value={engagement.staffId}>Former or unknown staff member</option>
                                 )}
                                 {assignableStaff.map((u) => (
                                     <option key={u.id} value={u.id}>
@@ -1095,7 +1100,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             </div>
                             {engagement.handoffSummary && <div>{engagement.handoffSummary}</div>}
                             <div className="text-[11px] text-slate-500">
-                                by {engagement.handedOffBy} · {new Date(engagement.handedOffAtUtc).toLocaleString()}
+                                by {actorName(engagement.handedOffBy)} · {new Date(engagement.handedOffAtUtc).toLocaleString()}
                             </div>
                         </div>
                     )}
@@ -1109,7 +1114,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             </div>
                             {engagement.closureSummary && <div>{engagement.closureSummary}</div>}
                             <div className="text-[11px] text-slate-500">
-                                by {engagement.closedBy} · {new Date(engagement.closedAt).toLocaleString()}
+                                by {actorName(engagement.closedBy)} · {new Date(engagement.closedAt).toLocaleString()}
                             </div>
                         </div>
                     )}
@@ -1387,7 +1392,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
 
                         {isViewingCurrentStage && isTerminalStatus && (
                             <div className="pt-4 border-t border-slate-100 text-xs text-slate-500">
-                                Engagement status is <span className="font-semibold">{engagement?.status}</span> — stage can no longer advance.
+                                Engagement status is <span className="font-semibold">{engagementStatusLabel(engagement?.status)}</span> — stage can no longer advance.
                             </div>
                         )}
 
@@ -1563,7 +1568,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                                 <strong className="font-semibold text-slate-700">Deactivation Reason: </strong>
                                                                 {cond.deactivationReason}
                                                                 {cond.deactivatedBy && (
-                                                                    <span className="text-slate-400"> (by {cond.deactivatedBy})</span>
+                                                                    <span className="text-slate-400"> (by {actorName(cond.deactivatedBy)})</span>
                                                                 )}
                                                             </div>
                                                         </div>
@@ -1783,16 +1788,13 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                             {/* Action Header */}
                                             <div className="flex items-start justify-between gap-2">
                                                 <div>
-                                                    <div className="flex items-center gap-1.5 mb-1">
-                                                        <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-white text-indigo-700 border border-indigo-100 shadow-xs">
-                                                            {act.type}
+                                                    <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                                                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white text-indigo-700 border border-indigo-100 shadow-xs">
+                                                            {taskTypeLabel(act.type)}
                                                         </span>
                                                         <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-50/80 text-indigo-600 border border-indigo-100">
-                                                            {act.sourceType || 'Manual'}
+                                                            {taskSourceLabel(act.sourceType)}
                                                         </span>
-                                                        {isDocAction && (
-                                                            <span className="text-[10px] font-medium text-slate-400">• Evidence Action</span>
-                                                        )}
                                                     </div>
                                                     <span className={`text-xs font-bold block leading-tight ${isActionCancelled ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
                                                         {act.title}
@@ -1895,11 +1897,8 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                     <div className="flex items-center justify-between gap-2">
                                                         <div className="flex items-center gap-2 min-w-0">
                                                             <FileText className="w-4 h-4 text-indigo-600 flex-shrink-0" />
-                                                            <span className="font-semibold text-slate-800 truncate text-[11px]">
-                                                                {linkedDoc.type}
-                                                            </span>
-                                                            <span className="text-[10px] font-mono text-slate-400 truncate">
-                                                                ({linkedDoc.documentId.slice(0, 8)}...)
+                                                            <span className="font-semibold text-slate-800 truncate text-[11px]" title={linkedDoc.fileName || undefined}>
+                                                                {documentTypeLabel(linkedDoc.type)}
                                                             </span>
                                                         </div>
 
@@ -1944,7 +1943,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
 
                                                         <span className="text-slate-300">•</span>
                                                         <span className="text-slate-500">
-                                                            Exp: <strong className={linkedDoc.expiryDate && new Date(linkedDoc.expiryDate) < new Date() ? 'text-rose-600 font-bold' : 'text-slate-700'}>{linkedDoc.expiryDate || 'N/A'}</strong>
+                                                            Exp: <strong className={linkedDoc.expiryDate && new Date(linkedDoc.expiryDate) < new Date() ? 'text-rose-600 font-bold' : 'text-slate-700'}>{linkedDoc.expiryDate ? formatDate(linkedDoc.expiryDate) : 'N/A'}</strong>
                                                         </span>
                                                     </div>
 
@@ -2138,9 +2137,9 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-1">
                             <div><span className="font-semibold text-slate-700">Action:</span> {actionToVerify.action.title}</div>
                             {actionToVerify.doc && (
-                                <div><span className="font-semibold text-slate-700">Document Type:</span> {actionToVerify.doc.type}</div>
+                                <div><span className="font-semibold text-slate-700">Document Type:</span> {documentTypeLabel(actionToVerify.doc.type)}</div>
                             )}
-                            <div><span className="font-semibold text-slate-700">Staff Verifier:</span> {userId || 'staff-lead'}</div>
+                            <div><span className="font-semibold text-slate-700">Staff Verifier:</span> {email || 'You'}</div>
                         </div>
 
                         <div>
@@ -2208,7 +2207,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-1">
                             <div><span className="font-semibold text-slate-700">Action:</span> {actionToReject.action.title}</div>
                             {actionToReject.doc && (
-                                <div><span className="font-semibold text-slate-700">Document Type:</span> {actionToReject.doc.type}</div>
+                                <div><span className="font-semibold text-slate-700">Document Type:</span> {documentTypeLabel(actionToReject.doc.type)}</div>
                             )}
                         </div>
 

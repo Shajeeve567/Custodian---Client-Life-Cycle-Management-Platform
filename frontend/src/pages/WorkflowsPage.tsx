@@ -2,13 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { DashboardLayout } from '../components/DashboardLayout';
 import { StaffActionHistoryView } from '../components/StaffActionHistoryView';
-import { WorkflowApi } from '../services/api';
-import { Engagement } from '../types';
+import { IdentityApi, WorkflowApi } from '../services/api';
+import { ClientProfile, Engagement } from '../types';
+import { engagementCode, engagementStatusLabel } from '../utils/displayLabels';
 
 export const WorkflowsPage: React.FC = () => {
-    const { tenantId } = useAuth();
+    const { tenantId, token } = useAuth();
     const [engagements, setEngagements] = useState<Engagement[]>([]);
     const [selectedEngagementId, setSelectedEngagementId] = useState<string>('');
+    const [clients, setClients] = useState<ClientProfile[]>([]);
+
+    useEffect(() => {
+        if (!token) return;
+        IdentityApi.getClients(token).then(setClients).catch(() => setClients([]));
+    }, [token]);
 
     useEffect(() => {
         if (!tenantId) return;
@@ -37,11 +44,11 @@ export const WorkflowsPage: React.FC = () => {
                             <select
                                 value={selectedEngagementId}
                                 onChange={(e) => setSelectedEngagementId(e.target.value)}
-                                className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white font-mono"
+                                className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white"
                             >
                                 {engagements.map((eng) => (
                                     <option key={eng.engagementId} value={eng.engagementId}>
-                                        {eng.engagementId.slice(0, 8)}... ({eng.status})
+                                        {clients.find((c) => c.id === eng.clientId)?.name || 'Unnamed client'} · {engagementCode(eng.engagementId)} ({engagementStatusLabel(eng.status)})
                                     </option>
                                 ))}
                             </select>

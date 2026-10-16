@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { personLabel, taskSourceLabel, taskTypeLabel } from '../utils/displayLabels';
 import { ClientActionResponse } from '../types/clientAction';
 import './StaffActionHistoryView.css';
 import { API_BASE } from '../services/api';
@@ -16,7 +17,8 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
     baseUrl = API_BASE.WORKFLOW,
     isClientViewInitial = false,
 }) => {
-    const [currentEngagementId, setCurrentEngagementId] = useState<string>(engagementId);
+    // The page's engagement picker owns the selection; using the prop keeps the two in sync.
+    const currentEngagementId = engagementId;
     const [actions, setActions] = useState<ClientActionResponse[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
@@ -140,19 +142,6 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
                 </div>
 
                 <div className="action-history-controls">
-                    {/* Engagement ID Picker */}
-                    <div className="control-group">
-                        <label htmlFor="engagement-id-input">Engagement ID:</label>
-                        <input
-                            id="engagement-id-input"
-                            type="text"
-                            value={currentEngagementId}
-                            onChange={(e) => setCurrentEngagementId(e.target.value)}
-                            className="filter-select font-mono"
-                            placeholder="e.g. GUID"
-                        />
-                    </div>
-
                     {/* Status Filter */}
                     <div className="control-group">
                         <label htmlFor="status-filter">Filter Status:</label>
@@ -216,8 +205,8 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
                         >
                             <div className="action-card-header">
                                 <div className="action-title-group">
-                                    <span className="action-type-tag">{action.type}</span>
-                                    <span className="action-source-tag">{action.sourceType || 'Manual'}</span>
+                                    <span className="action-type-tag">{taskTypeLabel(action.type)}</span>
+                                    <span className="action-source-tag">{taskSourceLabel(action.sourceType)}</span>
                                     <h3 className="action-item-title">{action.title}</h3>
                                     {action.isInternalOnly && (
                                         <span className="internal-only-badge">🔒 Staff Internal</span>
@@ -248,7 +237,7 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
                             <div className="action-meta-footer">
                                 <div className="meta-col">
                                     <span className="meta-label">Source:</span>
-                                    <span className="meta-value">{action.sourceType || 'Manual'} ({action.source})</span>
+                                    <span className="meta-value">{taskSourceLabel(action.sourceType)}</span>
                                 </div>
                                 <div className="meta-col">
                                     <span className="meta-label">Assigned Role:</span>
@@ -281,7 +270,7 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
                                     <>
                                         <div className="meta-col">
                                             <span className="meta-label">Completed By:</span>
-                                            <span className="meta-value">{action.completedByActor || 'System'}</span>
+                                            <span className="meta-value">{action.completedByActor ? personLabel(action.completedByActor) : 'System'}</span>
                                         </div>
                                         <div className="meta-col">
                                             <span className="meta-label">Completed Date:</span>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { WorkflowApi, ApiError } from '../services/api';
+import { engagementCode } from '../utils/displayLabels';
 import { Meeting } from '../types';
 import { AlertTriangle, RefreshCw, Calendar } from 'lucide-react';
 
@@ -71,7 +72,7 @@ export const MissedMeetingsPanel: React.FC<MissedMeetingsPanelProps> = ({ tenant
                                 {m.status === 'Missed' ? ' · marked missed' : ' · past due'}
                             </div>
                             <div className="text-[10px] font-mono text-slate-400 mt-0.5">
-                                ENG-{m.engagementId.slice(0, 6).toUpperCase()}
+                                {engagementCode(m.engagementId)}
                             </div>
                         </div>
                     </div>

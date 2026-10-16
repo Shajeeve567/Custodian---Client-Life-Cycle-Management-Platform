@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { IdentityApi, WorkflowApi, ApiError } from '../services/api';
 import { Engagement, ClientProfile, UserAccountResponse } from '../types';
 import { getStageDefinition } from '../constants/engagementStages';
+import { engagementCode, engagementStatusLabel } from '../utils/displayLabels';
 import { DashboardLayout } from '../components/DashboardLayout';
 import { TeamManagementModal } from '../components/TeamManagementModal';
 import { EngagementInspectionModal } from '../components/EngagementInspectionModal';
@@ -223,7 +224,7 @@ export const EngagementsPage: React.FC = () => {
     // Transform real backend engagements into display format
     const allWorkspaces: DisplayWorkspaceItem[] = engagements.map((eng) => {
         const client = clients.find((c) => c.id === eng.clientId);
-        const name = client?.name || `Client ${eng.clientId.slice(0, 8)}`;
+        const name = client?.name || 'Unnamed client';
         const initials = name
             .split(' ')
             .map((n) => n[0])
@@ -231,10 +232,10 @@ export const EngagementsPage: React.FC = () => {
             .join('')
             .slice(0, 2)
             .toUpperCase() || 'CL';
-        const code = `ENG-${eng.engagementId.slice(0, 6).toUpperCase()}`;
+        const code = engagementCode(eng.engagementId);
 
         const staffHandler = teamMembers.find((m) => m.id === eng.staffId);
-        const custodianLabel = staffHandler?.email ? staffHandler.email.split('@')[0] : (eng.staffId ? `${eng.staffId.slice(0, 10)}...` : 'Unassigned');
+        const custodianLabel = staffHandler?.email ? staffHandler.email.split('@')[0] : (eng.staffId ? (eng.staffId === userId ? 'You' : 'Assigned staff') : 'Unassigned');
         const stageDef = getStageDefinition(eng.stage);
 
         return {
@@ -388,7 +389,7 @@ export const EngagementsPage: React.FC = () => {
                                         : 'text-slate-600 hover:bg-slate-50 border border-transparent'
                                 }`}
                             >
-                                {tab === 'All' ? 'All Engagements' : tab}
+                                {tab === 'All' ? 'All Engagements' : engagementStatusLabel(tab)}
                             </button>
                         ))}
                     </div>
@@ -447,7 +448,7 @@ export const EngagementsPage: React.FC = () => {
 
                                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
                                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                            {ws.status}
+                                            {engagementStatusLabel(ws.status)}
                                         </span>
                                     </div>
 

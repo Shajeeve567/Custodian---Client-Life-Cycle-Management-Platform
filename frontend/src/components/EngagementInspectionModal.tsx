@@ -3,6 +3,7 @@ import { Engagement, ClientProfile, UserAccountResponse } from '../types';
 import { ENGAGEMENT_STAGES, getStageIndex } from '../constants/engagementStages';
 import { WorkflowApi, ApiError } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { engagementCode as formatEngagementCode, engagementStatusLabel } from '../utils/displayLabels';
 import {
     X,
     Building2,
@@ -51,7 +52,7 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
 
     const handleDelete = async () => {
         if (!tenantId) return;
-        if (!window.confirm(`Delete engagement ${engagement.engagementId.slice(0, 8)}? This cannot be undone.`)) {
+        if (!window.confirm(`Delete the draft engagement for ${clientName} (${formatEngagementCode(engagement.engagementId)})? This cannot be undone.`)) {
             return;
         }
 
@@ -68,7 +69,7 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
         }
     };
 
-    const clientName = client?.name || `Client ${engagement.clientId.slice(0, 8)}`;
+    const clientName = client?.name || 'Unnamed client';
     const initials = clientName
         .split(' ')
         .map((n) => n[0])
@@ -76,7 +77,7 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
         .slice(0, 2)
         .toUpperCase();
 
-    const engagementCode = `ENG-${engagement.engagementId.slice(0, 6).toUpperCase()}`;
+    const engagementCode = formatEngagementCode(engagement.engagementId);
 
     // Derived from the engagement's real, persisted stage (CSTD-17) — not a guess
     // based on status. -1 falls back to 0 (first stage) if stage is ever missing.
@@ -122,7 +123,7 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
                         </span>
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                            {engagement.status}
+                            {engagementStatusLabel(engagement.status)}
                         </span>
                     </div>
 
@@ -197,9 +198,6 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
                                 <p className="text-xs font-bold text-slate-800 truncate">
                                     {staffMember?.email || 'Assigned Staff Custodian'}
                                 </p>
-                                <p className="text-[11px] text-slate-500 font-mono truncate">
-                                    Staff ID: {engagement.staffId.slice(0, 12)}...
-                                </p>
                             </div>
                         </div>
                     </div>
@@ -237,7 +235,7 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
                         type="button"
                         onClick={handleDelete}
                         disabled={!canDelete || isDeleting}
-                        title={canDelete ? 'Permanently delete this draft engagement' : `Engagements in '${engagement.status}' status cannot be deleted — only Draft engagements can be removed`}
+                        title={canDelete ? 'Permanently delete this draft engagement' : `${engagementStatusLabel(engagement.status)} engagements cannot be deleted — only Draft engagements can be removed`}
                         className="px-4 py-2.5 rounded-xl border text-xs font-semibold flex items-center gap-2 transition border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                     >
                         {isDeleting ? (

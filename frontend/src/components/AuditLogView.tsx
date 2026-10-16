@@ -115,7 +115,7 @@ export const AuditLogView: React.FC = () => {
         (engagementId: string) => {
             const eng = engagements.find((e) => e.engagementId === engagementId);
             const client = eng ? clients.find((c) => c.id === eng.clientId) : undefined;
-            return client?.name ?? (eng ? `Client ${shortId(eng.clientId)}` : 'Unknown engagement');
+            return client?.name ?? (eng ? 'Unnamed client' : 'Unknown engagement');
         },
         [engagements, clients]
     );
@@ -127,7 +127,7 @@ export const AuditLogView: React.FC = () => {
             if (user) return user.email;
             const client = clients.find((c) => c.id === actor);
             if (client) return `${client.name} (client)`;
-            if (/^[0-9a-f-]{36}$/i.test(actor)) return `User ${shortId(actor)}`;
+            if (/^[0-9a-f-]{36}$/i.test(actor)) return 'A team member';
             return actor === 'documents-service' ? 'Documents service' : actor;
         },
         [team, clients]
@@ -470,7 +470,7 @@ export const AuditLogView: React.FC = () => {
                                                         <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 space-y-1">
                                                             <div className="font-semibold flex items-center gap-1.5">
                                                                 <Flag className="w-3.5 h-3.5 text-amber-600" />
-                                                                Flagged by {evt.flaggedBy || 'Staff'} {evt.flaggedAt ? `on ${new Date(evt.flaggedAt).toLocaleString()}` : ''}
+                                                                Flagged by {evt.flaggedBy ? actorName(evt.flaggedBy) : 'Staff'} {evt.flaggedAt ? `on ${new Date(evt.flaggedAt).toLocaleString()}` : ''}
                                                             </div>
                                                             <div className="text-amber-800">Reason: {evt.flagReason || 'None specified'}</div>
                                                             {evt.flagReferenceEventId && (
@@ -483,7 +483,7 @@ export const AuditLogView: React.FC = () => {
                                                         <div className="p-2.5 rounded-lg bg-slate-100 border border-slate-300 text-slate-800 space-y-1">
                                                             <div className="font-semibold flex items-center gap-1.5">
                                                                 <Archive className="w-3.5 h-3.5 text-slate-600" />
-                                                                Archived by {evt.archivedBy || 'Staff'} {evt.archivedAt ? `on ${new Date(evt.archivedAt).toLocaleString()}` : ''}
+                                                                Archived by {evt.archivedBy ? actorName(evt.archivedBy) : 'Staff'} {evt.archivedAt ? `on ${new Date(evt.archivedAt).toLocaleString()}` : ''}
                                                             </div>
                                                             {evt.archiveReason && <div className="text-slate-700">Reason: {evt.archiveReason}</div>}
                                                         </div>

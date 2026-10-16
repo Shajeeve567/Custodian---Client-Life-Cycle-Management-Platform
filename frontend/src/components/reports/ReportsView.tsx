@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { ClientProfile, Engagement, UserAccountResponse } from '../../types';
 import { IdentityApi, ReportsApi, WorkflowApi } from '../../services/api';
 import { ReportDownloadButton } from './ReportDownloadButton';
+import { engagementCode } from '../../utils/displayLabels';
 import { ValidationVerificationReportSection } from './ValidationVerificationReportSection';
 import { ProofOfDeliveryReportSection } from './ProofOfDeliveryReportSection';
 
@@ -38,7 +39,6 @@ const utcDate = (date: Date) => date.toISOString().slice(0, 10);
 const daysBetween = (from: string, to: string) =>
     Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
 
-const shortId = (id: string) => id.replace(/-/g, '').slice(0, 6).toUpperCase();
 
 const defaultRange = () => {
     const today = new Date();
@@ -79,7 +79,7 @@ export const ReportsView: React.FC = () => {
                     const client = clients.find((c) => c.id === e.clientId);
                     return {
                         value: e.engagementId,
-                        label: `${client?.name ?? `Client ${shortId(e.clientId)}`} · ENG-${shortId(e.engagementId)}`,
+                        label: `${client?.name ?? 'Unnamed client'} · ${engagementCode(e.engagementId)}`,
                     };
                 })
                 .sort((a, b) => a.label.localeCompare(b.label)),
@@ -90,7 +90,7 @@ export const ReportsView: React.FC = () => {
     const staffOptions = useMemo(() => {
         const ids = Array.from(new Set(engagements.map((e) => e.staffId).filter(Boolean)));
         return ids
-            .map((id) => ({ value: id, label: team.find((u) => u.id === id)?.email ?? `User ${shortId(id)}` }))
+            .map((id) => ({ value: id, label: team.find((u) => u.id === id)?.email ?? 'Former team member' }))
             .sort((a, b) => a.label.localeCompare(b.label));
     }, [engagements, team]);
 

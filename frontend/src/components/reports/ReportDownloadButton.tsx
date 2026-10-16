@@ -80,7 +80,7 @@ export const ReportDownloadButton: React.FC<ReportDownloadButtonProps> = ({
                         <p className="font-semibold">{problem.title}</p>
                         {problem.detail && <p>{problem.detail}</p>}
                         {problem.correlationId && problem.status >= 500 && (
-                            <p className="text-rose-600/80">Reference: {problem.correlationId}</p>
+                            <p className="text-rose-600/80">Support reference: {problem.correlationId}</p>
                         )}
                     </div>
                 </div>
