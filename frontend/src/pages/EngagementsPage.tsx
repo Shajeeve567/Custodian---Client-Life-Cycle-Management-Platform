@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { IdentityApi, WorkflowApi, ApiError } from '../services/api';
 import { Engagement, ClientProfile, UserAccountResponse } from '../types';
@@ -30,7 +30,8 @@ import {
     Eye,
     EyeOff,
     Copy,
-    Sparkles
+    Sparkles,
+    AlertTriangle
 } from 'lucide-react';
 
 interface DisplayWorkspaceItem {
@@ -41,7 +42,6 @@ interface DisplayWorkspaceItem {
     status: string;
     nextAction: string;
     custodians: string;
-    slaScore: string;
     stageOrder: number;
     stageName: string;
     stageProgressPercentage: number;
@@ -102,6 +102,8 @@ export const EngagementsPage: React.FC = () => {
     };
 
     // Load API Data
+    const [stalledCount, setStalledCount] = useState<number | null>(null);
+
     const loadAllData = useCallback(async () => {
         if (!tenantId) return;
         setIsLoadingData(true);
@@ -110,16 +112,22 @@ export const EngagementsPage: React.FC = () => {
             const clientsPromise = IdentityApi.getClients(token || undefined).catch(() => [] as ClientProfile[]);
             const engagementsPromise = WorkflowApi.getEngagements(tenantId).catch(() => [] as Engagement[]);
             const teamPromise = token ? IdentityApi.getUsers(token).catch(() => [] as UserAccountResponse[]) : Promise.resolve([]);
+            // Same source as the Stall Queue page, so the two numbers always agree. null = couldn't load.
+            const stalledPromise = WorkflowApi.getStallQueue(tenantId, { pageSize: 1 })
+                .then((r) => r.totalCount)
+                .catch(() => null);
 
-            const [fetchedClients, fetchedEngagements, fetchedTeam] = await Promise.all([
+            const [fetchedClients, fetchedEngagements, fetchedTeam, fetchedStalled] = await Promise.all([
                 clientsPromise,
                 engagementsPromise,
-                teamPromise
+                teamPromise,
+                stalledPromise
             ]);
 
             setClients(fetchedClients);
             setEngagements(fetchedEngagements);
             setTeamMembers(fetchedTeam);
+            setStalledCount(fetchedStalled);
         } catch (err) {
             console.error('Data load error:', err);
         } finally {
@@ -244,7 +252,6 @@ export const EngagementsPage: React.FC = () => {
             status: eng.status,
             nextAction: eng.status === 'Closed' ? 'COMPLETED' : `STAGE: ${stageDef.name.toUpperCase()}`,
             custodians: custodianLabel,
-            slaScore: '98.5%',
             stageOrder: stageDef.order,
             stageName: stageDef.name,
             stageProgressPercentage: eng.stageProgressPercentage,
@@ -349,16 +356,29 @@ export const EngagementsPage: React.FC = () => {
                         <p className="text-xs text-slate-500">Active assigned handlers</p>
                     </div>
 
-                    <div className="bg-white/85 backdrop-blur-md p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+                    {/* Live from the Stall Queue (overdue client-facing actions), replacing a hard-coded SLA figure */}
+                    <Link
+                        to="/stall-queue"
+                        className="group bg-white/85 backdrop-blur-md p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2 hover:border-indigo-300 transition"
+                    >
                         <div className="flex items-center justify-between text-slate-500">
-                            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">SLA Assurance</span>
-                            <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
-                                <CheckCircle2 className="w-4 h-4" />
+                            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Stalled Engagements</span>
+                            <div className={`p-2 rounded-xl ${stalledCount ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                                {stalledCount ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
                             </div>
                         </div>
-                        <div className="text-2xl font-bold text-emerald-600">98.8%</div>
-                        <p className="text-xs text-slate-500">Optimal turnaround index</p>
-                    </div>
+                        <div className={`text-2xl font-bold ${stalledCount ? 'text-rose-600' : stalledCount === 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
+                            {isLoadingData ? '—' : stalledCount ?? '—'}
+                        </div>
+                        <p className="text-xs text-slate-500 flex items-center gap-1">
+                            {stalledCount === null
+                                ? 'Stall queue unavailable'
+                                : stalledCount > 0
+                                ? 'Need intervention'
+                                : 'All engagements on track'}
+                            <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition" />
+                        </p>
+                    </Link>
                 </div>
 
                 {/* 3. Search & Filter Bar */}
