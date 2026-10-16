@@ -51,6 +51,17 @@ public sealed class KafkaAuditEventConsumer : BackgroundService
         // CSTD-35 (Intervention & Recovery). Dot-case as Workflow publishes it; Identity reads the same
         // event for the client-safe "back on track" notification.
         "intervention.recovered",
+        // CSTD-32 (Meetings). Dot-case as Workflow's MeetingService publishes them; meeting.updated is
+        // its fallback for any other status change.
+        "meeting.scheduled",
+        "meeting.completed",
+        "meeting.missed",
+        "meeting.cancelled",
+        "meeting.rescheduled",
+        "meeting.updated",
+        // CSTD-20 (Lifecycle): handoff recorded and engagement sealed/closed.
+        "EngagementReady",
+        "EngagementClosed",
         // CSTD-27/28 (Documents), published by the Documents service since it moved to Kafka
         EventTypes.DocumentUploaded,
         EventTypes.DocumentVerified,

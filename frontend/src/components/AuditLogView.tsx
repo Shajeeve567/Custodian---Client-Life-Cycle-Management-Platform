@@ -6,6 +6,7 @@ import { AuditCategory, AuditTone, describeAuditEvent, parsePayload, referencedA
 import { engagementOptionLabel } from '../utils/displayLabels';
 import {
     AlertTriangle,
+    Calendar,
     CheckCircle2,
     ChevronDown,
     ChevronRight,
@@ -23,7 +24,7 @@ import {
     LifeBuoy,
 } from 'lucide-react';
 
-const CATEGORIES: AuditCategory[] = ['Engagement', 'Tasks', 'Questions', 'Documents', 'Conditions', 'Interventions'];
+const CATEGORIES: AuditCategory[] = ['Engagement', 'Tasks', 'Questions', 'Documents', 'Conditions', 'Meetings', 'Interventions'];
 
 const CATEGORY_ICONS: Record<AuditCategory, React.ReactNode> = {
     Engagement: <Flag className="w-4 h-4" />,
@@ -31,6 +32,7 @@ const CATEGORY_ICONS: Record<AuditCategory, React.ReactNode> = {
     Questions: <MessageSquare className="w-4 h-4" />,
     Documents: <FileText className="w-4 h-4" />,
     Conditions: <Layers className="w-4 h-4" />,
+    Meetings: <Calendar className="w-4 h-4" />,
     Interventions: <LifeBuoy className="w-4 h-4" />,
 };
 

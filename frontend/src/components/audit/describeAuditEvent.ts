@@ -7,7 +7,7 @@ import { engagementStatusLabel } from '../../utils/displayLabels';
  * detail lines that say exactly what changed. Pure; names and task titles are supplied by the caller.
  */
 
-export type AuditCategory = 'Engagement' | 'Tasks' | 'Questions' | 'Documents' | 'Conditions' | 'Interventions';
+export type AuditCategory = 'Engagement' | 'Tasks' | 'Questions' | 'Documents' | 'Conditions' | 'Meetings' | 'Interventions';
 
 export type AuditTone = 'neutral' | 'positive' | 'negative' | 'warning' | 'info';
 
@@ -59,6 +59,15 @@ const formatDate = (value?: string | null) => {
     if (!value) return 'none';
     const d = new Date(value);
     return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString();
+};
+
+/** Date and time in the viewer's local time, e.g. for a meeting slot. */
+const formatDateTime = (value?: string | null) => {
+    if (!value) return undefined;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime())
+        ? value
+        : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 };
 
 const FIELD_LABELS: Record<string, string> = {
@@ -269,6 +278,67 @@ export function describeAuditEvent(evt: AuditEvent, lookups: AuditLookups): Audi
         }
         case 'ConditionDeactivated':
             return { category: 'Conditions', label: 'Condition removed', details: compact([p.deactivationReason && `Reason: ${p.deactivationReason}`]), tone: 'negative' };
+
+        // ---------------- Engagement lifecycle (CSTD-20) ----------------
+        case 'EngagementReady':
+            return {
+                category: 'Engagement',
+                label: 'Engagement handed off',
+                details: compact([p.handoffSummary && `Summary: ${p.handoffSummary}`]),
+                tone: 'positive',
+            };
+        case 'EngagementClosed':
+            return {
+                category: 'Engagement',
+                label: 'Engagement sealed and closed',
+                details: compact([p.closureSummary && `Summary: ${p.closureSummary}`]),
+                tone: 'positive',
+            };
+
+        // ---------------- Meetings (CSTD-32) ----------------
+        case 'meeting.scheduled':
+            return {
+                category: 'Meetings',
+                label: p.type === 'Intervention' ? 'Intervention meeting scheduled' : 'Meeting scheduled',
+                details: compact([
+                    quoted(p.purpose),
+                    formatDateTime(p.scheduledAtUtc) && `When: ${formatDateTime(p.scheduledAtUtc)}`,
+                    p.importance === 'Important' && 'Marked important',
+                ]),
+                tone: 'info',
+            };
+        case 'meeting.rescheduled':
+            return {
+                category: 'Meetings',
+                label: 'Meeting rescheduled',
+                details: compact([
+                    formatDateTime(p.newScheduledAtUtc) && `New time: ${formatDateTime(p.newScheduledAtUtc)}`,
+                    p.reason && `Reason: ${p.reason}`,
+                ]),
+                tone: 'warning',
+            };
+        case 'meeting.completed':
+        case 'meeting.missed':
+        case 'meeting.cancelled':
+        case 'meeting.updated': {
+            const outcome = evt.type.split('.')[1];
+            const labels: Record<string, string> = {
+                completed: 'Meeting completed',
+                missed: 'Meeting marked as missed',
+                cancelled: 'Meeting cancelled',
+                updated: 'Meeting updated',
+            };
+            const tones: Record<string, AuditTone> = { completed: 'positive', missed: 'negative', cancelled: 'neutral', updated: 'neutral' };
+            return {
+                category: 'Meetings',
+                label: labels[outcome],
+                details: compact([
+                    formatDateTime(p.scheduledAtUtc) && `Scheduled for: ${formatDateTime(p.scheduledAtUtc)}`,
+                    p.importance === 'Important' && 'Important meeting',
+                ]),
+                tone: tones[outcome],
+            };
+        }
 
         // ---------------- Interventions (CSTD-35) ----------------
         case 'intervention.recovered': {

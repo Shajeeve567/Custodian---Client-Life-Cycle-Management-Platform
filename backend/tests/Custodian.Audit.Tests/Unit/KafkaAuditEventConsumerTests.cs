@@ -168,6 +168,42 @@ public class KafkaAuditEventConsumerTests
     }
 
     [Theory]
+    [InlineData("meeting.scheduled")]
+    [InlineData("meeting.completed")]
+    [InlineData("meeting.missed")]
+    [InlineData("meeting.cancelled")]
+    [InlineData("meeting.rescheduled")]
+    [InlineData("meeting.updated")]
+    [InlineData("EngagementReady")]   // handoff recorded
+    [InlineData("EngagementClosed")]  // engagement sealed
+    public async Task ProcessMessageAsync_MeetingAndLifecycleEvent_RecordsAuditEvent(string eventType)
+    {
+        // Arrange: these were published by Workflow but missing from the allow-list, so they were dropped
+        using var provider = BuildServices(Guid.NewGuid().ToString());
+        var consumer = CreateConsumer(provider);
+        var engagementId = Guid.NewGuid();
+
+        var json = BuildEnvelopeJson(eventType, engagementId, "staff-actor", new
+        {
+            meetingId = Guid.NewGuid(),
+            purpose = "Kickoff call",
+            scheduledAtUtc = DateTime.UtcNow.AddDays(1)
+        });
+
+        // Act
+        await consumer.ProcessMessageAsync(json);
+
+        // Assert
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AuditDbContext>();
+        var stored = await db.Events.SingleOrDefaultAsync(e => e.EngagementId == engagementId);
+
+        Assert.NotNull(stored);
+        Assert.Equal(eventType, stored!.Type);
+        Assert.Equal("staff-actor", stored.Actor);
+    }
+
+    [Theory]
     [InlineData("ConditionAttached")]
     [InlineData("ConditionUpdated")]
     [InlineData("ConditionDeactivated")]
