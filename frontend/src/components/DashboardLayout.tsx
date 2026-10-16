@@ -1,8 +1,19 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Shield, Building2, LogOut, Users, ExternalLink } from 'lucide-react';
+import { Building2, ChevronDown, LogOut, Shield } from 'lucide-react';
 import { TeamManagementModal } from './TeamManagementModal';
+
+const NAV_LINKS = [
+    // An engagement's workspace (/workspace/...) belongs to the Engagements section.
+    { to: '/engagements', label: 'Engagements', alsoActiveFor: '/workspace/' },
+    { to: '/stall-queue', label: 'Stall Queue' },
+    { to: '/actions', label: 'Action History' },
+    { to: '/reports', label: 'Reports' },
+];
+
+const isActiveLink = (link: { to: string; alsoActiveFor?: string }, pathname: string) =>
+    pathname === link.to || (link.alsoActiveFor !== undefined && pathname.startsWith(link.alsoActiveFor));
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
@@ -13,7 +24,31 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
     const location = useLocation();
     const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
 
-    const agencyWorkspaceTitle = tenantName ? `${tenantName}'s Workspace` : 'Agency Workspace';
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const menuRef = useRef<HTMLDivElement>(null);
+
+    const workspaceLine = role === 'Client'
+        ? (tenantName ? `${tenantName} · Client Portal` : 'Client Portal')
+        : (tenantName || 'Agency workspace');
+    const displayName = email?.split('@')[0] || (role === 'Client' ? 'Client' : 'Staff');
+
+    // Close the account menu on navigation, outside clicks and Escape.
+    useEffect(() => setIsMenuOpen(false), [location.pathname]);
+    useEffect(() => {
+        if (!isMenuOpen) return;
+        const onPointerDown = (e: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) setIsMenuOpen(false);
+        };
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setIsMenuOpen(false);
+        };
+        document.addEventListener('mousedown', onPointerDown);
+        document.addEventListener('keydown', onKeyDown);
+        return () => {
+            document.removeEventListener('mousedown', onPointerDown);
+            document.removeEventListener('keydown', onKeyDown);
+        };
+    }, [isMenuOpen]);
 
     return (
         <div className="min-h-screen bg-[#f8fafc] flex flex-col font-sans text-slate-900 relative overflow-x-hidden">
@@ -26,120 +61,107 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
             {/* Top Navigation Bar */}
             <header className="sticky top-0 z-40 bg-white/85 backdrop-blur-md border-b border-slate-200/80 shadow-xs">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="flex items-center justify-between h-16">
-                        {/* Brand & Workspace Title */}
-                        <div className="flex items-center gap-4">
-                            <Link
-                                to={role === 'Client' ? '/portal' : '/engagements'}
-                                className="flex items-center gap-3 text-decoration-none group"
+                    <div className="flex items-center justify-between gap-4 h-16">
+                        {/* Brand: workspace name */}
+                        <Link
+                            to={role === 'Client' ? '/portal' : '/engagements'}
+                            className="flex items-center gap-3 min-w-0 text-decoration-none group"
+                        >
+                            <div className="w-9 h-9 shrink-0 rounded-xl bg-gradient-to-br from-[#635bff] to-[#712ae2] flex items-center justify-center text-white shadow-md shadow-indigo-500/20 group-hover:scale-105 transition-transform">
+                                <Shield className="w-5 h-5 text-white" />
+                            </div>
+                            {/* Hidden on narrower screens so the workspace name always fits in full; the logo stays. */}
+                            <span className="hidden lg:inline font-bold text-lg text-slate-900 tracking-tight leading-tight shrink-0">Custodian</span>
+                            {/* Workspace pill: purple-tinted so it reads as "where you are", not as another nav button */}
+                            <span
+                                className="inline-flex items-center gap-1.5 min-w-0 max-w-[200px] sm:max-w-[240px] px-2.5 py-1 rounded-lg border border-purple-200 bg-gradient-to-r from-indigo-50 to-purple-50 text-purple-700 text-xs font-semibold"
+                                title={workspaceLine}
                             >
-                                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#635bff] to-[#712ae2] flex items-center justify-center text-white shadow-md shadow-indigo-500/20 group-hover:scale-105 transition-transform">
-                                    <Shield className="w-5 h-5 text-white" />
-                                </div>
-                                <div className="flex flex-col">
-                                    <div className="flex items-center gap-2">
-                                        <span className="font-bold text-lg text-slate-900 tracking-tight leading-tight">
-                                            {role === 'Client'
-                                                ? (tenantName ? `${tenantName} • Client Portal` : 'Client Portal')
-                                                : agencyWorkspaceTitle}
-                                        </span>
-                                        <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
-                                            {role === 'Client' ? 'Client Access' : 'Custodian OS'}
-                                        </span>
-                                    </div>
-                                    <span className="text-[11px] text-slate-400 font-medium">
-                                        {role === 'Client'
-                                            ? 'Deterministic Lifecycle & Progress Tracking'
-                                            : 'Deterministic Client Isolation & Orchestration'}
-                                    </span>
-                                </div>
-                            </Link>
-                        </div>
+                                <Building2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                                <span className="truncate">{workspaceLine}</span>
+                            </span>
+                        </Link>
 
-                        {/* Right Area: Workspace Badge & User Profile */}
-                        <div className="flex items-center gap-3">
-                            {/* For staff/admin, provide quick toggle between Engagements and Portal */}
-                            {/* For staff/admin, provide quick nav between primary operational views */}
+                        <div className="flex items-center gap-3 shrink-0">
+                            {/* Main pages (staff); on small screens they move into the account menu */}
                             {role !== 'Client' && (
-                                <div className="hidden md:flex items-center gap-2 mr-1">
-                                    <Link
-                                        to="/stall-queue"
-                                        className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition ${
-                                            location.pathname === '/stall-queue'
-                                                ? 'border-amber-300 bg-amber-50 text-amber-800'
-                                                : 'border-slate-200 hover:bg-slate-50 text-slate-600'
-                                        }`}
-                                    >
-                                        Stall Queue
-                                    </Link>
-                                    <Link
-                                        to="/actions"
-                                        className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition ${
-                                            location.pathname === '/actions'
-                                                ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                                                : 'border-slate-200 hover:bg-slate-50 text-slate-600'
-                                        }`}
-                                    >
-                                        Action History
-                                    </Link>
-                                    <Link
-                                        to="/reports"
-                                        className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition ${
-                                            location.pathname === '/reports'
-                                                ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                                                : 'border-slate-200 hover:bg-slate-50 text-slate-600'
-                                        }`}
-                                    >
-                                        Reports
-                                    </Link>
-
-                                    {location.pathname === '/portal' ? (
+                                <nav className="hidden md:flex items-center gap-2" aria-label="Main">
+                                    {NAV_LINKS.map((link) => (
                                         <Link
-                                            to="/engagements"
-                                            className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold transition"
+                                            key={link.to}
+                                            to={link.to}
+                                            aria-current={isActiveLink(link, location.pathname) ? 'page' : undefined}
+                                            className={`px-3 py-1.5 rounded-lg border text-xs font-semibold whitespace-nowrap transition ${
+                                                isActiveLink(link, location.pathname)
+                                                    ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                                                    : 'border-slate-200 hover:bg-slate-50 text-slate-600'
+                                            }`}
                                         >
-                                            ← Agency Engagements
+                                            {link.label}
                                         </Link>
-                                    ) : (
-                                        <Link
-                                            to="/portal"
-                                            className="px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50/50 hover:bg-indigo-50 text-indigo-700 text-xs font-semibold transition"
-                                        >
-                                            Client Portal Preview
-                                        </Link>
-                                    )}
-                                </div>
+                                    ))}
+                                </nav>
                             )}
 
-                            {/* Current Workspace badge */}
-                            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/80 backdrop-blur-xs text-xs text-slate-700 border border-slate-200/80 shadow-xs">
-                                <Building2 className="w-3.5 h-3.5 text-indigo-600" />
-                                <span className="font-semibold truncate max-w-[170px]">
-                                    {tenantName || 'Main Workspace'}
-                                </span>
-                            </div>
-
-                            {/* User Avatar & Role */}
-                            <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
-                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#635bff] to-[#712ae2] text-white text-xs font-bold flex items-center justify-center shadow-xs">
-                                    {(email?.[0] || userId?.[0] || 'U').toUpperCase()}
-                                </div>
-                                <div className="hidden lg:flex flex-col text-left">
-                                    <span className="text-xs font-semibold text-slate-800 truncate max-w-[140px]">
-                                        {email?.split('@')[0] || (role === 'Client' ? 'Client' : 'Staff')}
-                                    </span>
-                                    <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">
-                                        {role}
-                                    </span>
-                                </div>
-
+                            {/* Account menu: who is signed in, and sign out */}
+                            <div className="relative pl-3 border-l border-slate-200" ref={menuRef}>
                                 <button
-                                    onClick={logout}
-                                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition ml-1 cursor-pointer"
-                                    title="Sign out"
+                                    type="button"
+                                    onClick={() => setIsMenuOpen((open) => !open)}
+                                    aria-haspopup="menu"
+                                    aria-expanded={isMenuOpen}
+                                    aria-label="Account menu"
+                                    className="flex items-center gap-2 p-1 rounded-xl hover:bg-slate-50 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40"
                                 >
-                                    <LogOut className="w-4 h-4" />
+                                    <span className="w-8 h-8 rounded-full bg-gradient-to-br from-[#635bff] to-[#712ae2] text-white text-xs font-bold flex items-center justify-center shadow-xs">
+                                        {(email?.[0] || userId?.[0] || 'U').toUpperCase()}
+                                    </span>
+                                    <span className="hidden lg:flex flex-col text-left">
+                                        <span className="text-xs font-semibold text-slate-800 truncate max-w-[140px]">{displayName}</span>
+                                        <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">{role}</span>
+                                    </span>
+                                    <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isMenuOpen ? 'rotate-180' : ''}`} />
                                 </button>
+
+                                {isMenuOpen && (
+                                    <div
+                                        role="menu"
+                                        className="absolute right-0 mt-2 w-60 bg-white rounded-xl border border-slate-200 shadow-lg py-1.5 z-50"
+                                    >
+                                        <div className="px-3.5 py-2 border-b border-slate-100">
+                                            <div className="text-xs font-semibold text-slate-800 truncate">{email || displayName}</div>
+                                            <div className="text-[11px] text-slate-500 truncate">
+                                                {role}{tenantName ? ` · ${tenantName}` : ''}
+                                            </div>
+                                        </div>
+                                        {role !== 'Client' && (
+                                            <div className="md:hidden py-1 border-b border-slate-100">
+                                                {NAV_LINKS.map((link) => (
+                                                    <Link
+                                                        key={link.to}
+                                                        to={link.to}
+                                                        role="menuitem"
+                                                        onClick={() => setIsMenuOpen(false)}
+                                                        className={`block px-3.5 py-2 text-sm transition ${
+                                                            isActiveLink(link, location.pathname) ? 'text-indigo-700 font-semibold bg-indigo-50/60' : 'text-slate-700 hover:bg-slate-50'
+                                                        }`}
+                                                    >
+                                                        {link.label}
+                                                    </Link>
+                                                ))}
+                                            </div>
+                                        )}
+                                        <button
+                                            type="button"
+                                            role="menuitem"
+                                            onClick={logout}
+                                            className="w-full flex items-center gap-2 px-3.5 py-2 text-sm text-slate-700 hover:bg-rose-50 hover:text-rose-700 transition"
+                                        >
+                                            <LogOut className="w-4 h-4" />
+                                            Sign out
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
