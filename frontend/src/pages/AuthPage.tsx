@@ -126,11 +126,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
             await proceedToWorkspaceHub(gToken);
         } catch (err: any) {
             console.error('Registration failed:', err);
-            if (err instanceof ApiError) {
-                setErrorMessage(err.message);
-            } else {
-                setErrorMessage(err?.message || 'Registration failed. Please try again.');
-            }
+            setErrorMessage(err instanceof ApiError ? err.message : 'Registration failed. Please try again.');
         } finally {
             setIsSubmitting(false);
             setStatusMessage(null);
@@ -177,11 +173,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
             }
         } catch (err: any) {
             console.error('Login failed:', err);
-            if (err instanceof ApiError) {
-                setErrorMessage(err.message);
-            } else {
-                setErrorMessage(err?.message || 'Authentication failed. Please verify your credentials.');
-            }
+            setErrorMessage(err instanceof ApiError ? err.message : 'Sign-in failed. Please try again.');
         } finally {
             setIsSubmitting(false);
             setStatusMessage(null);
@@ -202,7 +194,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
             navigate(getTargetRouteForToken(wsRes.token));
         } catch (err: any) {
             console.error('Workspace selection failed:', err);
-            setErrorMessage(err?.message || 'Failed to enter workspace.');
+            setErrorMessage(err instanceof ApiError ? err.message : 'Failed to enter workspace. Please try again.');
         } finally {
             setIsSubmitting(false);
             setStatusMessage(null);
@@ -232,7 +224,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
             navigate('/engagements');
         } catch (err: any) {
             console.error('Creating workspace failed:', err);
-            setErrorMessage(err?.message || 'Failed to initialize agency workspace.');
+            setErrorMessage(err instanceof ApiError ? err.message : 'Failed to create the workspace. Please try again.');
         } finally {
             setIsSubmitting(false);
             setStatusMessage(null);

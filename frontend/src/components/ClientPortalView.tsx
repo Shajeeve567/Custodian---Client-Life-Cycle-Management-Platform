@@ -7,6 +7,7 @@ import { ReportDownloadButton } from './reports/ReportDownloadButton';
 import { UploadEvidenceModal } from './UploadEvidenceModal';
 import { SubmitRequirementModal } from './SubmitRequirementModal';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import { complianceStatusLabel, documentTypeLabel, readableServerText, engagementOpenedLabel, engagementStatusLabel, taskTypeLabel, verificationStatusLabel } from '../utils/displayLabels';
 import {
     Shield,
     CheckCircle2,
@@ -414,6 +415,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
     const {
         engagementId,
         status,
+        createdAt,
         currentStageNumber,
         currentStageName,
         currentStageTagline,
@@ -438,7 +440,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                             Staff Preview Mode
                         </span>
                         <span>
-                            You are previewing how client stakeholders see this onboarding portal for <strong>ENG-{engagementId.slice(0, 6).toUpperCase()}</strong>.
+                            You are previewing how client stakeholders see this onboarding portal for this engagement ({engagementOpenedLabel(createdAt).toLowerCase()}).
                         </span>
                     </div>
                     <Link
@@ -458,15 +460,15 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                             <Shield className="w-6 h-6 text-white" />
                         </div>
                         <div>
-                            <div className="flex items-center gap-3">
+                            <div className="flex flex-wrap items-center gap-3">
                                 <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
                                     Client Onboarding Portal
                                 </h1>
-                                <span className="px-2.5 py-0.5 rounded text-xs font-mono font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                                    ENG-{engagementId.slice(0, 6).toUpperCase()}
+                                <span className="px-2.5 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                    {engagementOpenedLabel(createdAt)}
                                 </span>
                                 <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                                    Status: {status}
+                                    Status: {engagementStatusLabel(status)}
                                 </span>
                             </div>
                             <p className="text-xs text-slate-500 mt-1">
@@ -504,7 +506,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                         <Clock className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
                         <span className="leading-relaxed">
                             <strong className="text-slate-900 font-semibold">Active Condition: </strong>
-                            {conditionDescription}
+                            {readableServerText(conditionDescription)}
                         </span>
                     </div>
                 )}
@@ -843,13 +845,8 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                 Primary Next Action • Stage {primaryNextAction.stageNumber}
                             </span>
                             <span className="text-xs font-semibold px-2 py-0.5 rounded bg-white text-slate-700 border border-slate-200">
-                                {primaryNextAction.type}
+                                {taskTypeLabel(primaryNextAction.type)}
                             </span>
-                            {primaryNextAction.sourceType && (
-                                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
-                                    {primaryNextAction.sourceType}
-                                </span>
-                            )}
                             {primaryNextAction.verificationStatus && (
                                 <span
                                     className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${
@@ -860,7 +857,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                             : 'bg-sky-50 text-sky-700 border-sky-200'
                                     }`}
                                 >
-                                    {primaryNextAction.verificationStatus}
+                                    {verificationStatusLabel(primaryNextAction.verificationStatus)}
                                 </span>
                             )}
                         </div>
@@ -1053,16 +1050,11 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                 className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                             >
                                 <div className="space-y-1">
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex flex-wrap items-center gap-2">
                                         <span className="text-xs font-bold text-slate-900">{action.title}</span>
                                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white text-slate-600 border border-slate-200">
                                              Stage {action.stageNumber}
                                         </span>
-                                        {action.sourceType && (
-                                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
-                                                {action.sourceType}
-                                            </span>
-                                        )}
                                         {action.verificationStatus && (
                                             <span
                                                 className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
@@ -1073,7 +1065,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                                         : 'bg-sky-50 text-sky-700 border-sky-200'
                                                 }`}
                                             >
-                                                {action.verificationStatus}
+                                                {verificationStatusLabel(action.verificationStatus)}
                                             </span>
                                         )}
                                     </div>
@@ -1217,10 +1209,10 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                         </div>
                                         <div className="min-w-0">
                                             <div className="text-xs font-bold text-slate-900 truncate">
-                                                {doc.fileName || doc.type}
+                                                {doc.fileName || documentTypeLabel(doc.type)}
                                             </div>
                                             <div className="text-[10px] text-slate-400">
-                                                Type: <span className="font-semibold text-slate-600">{doc.type}</span>
+                                                Type: <span className="font-semibold text-slate-600">{documentTypeLabel(doc.type)}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -1235,7 +1227,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                                         : 'bg-amber-50 text-amber-700 border-amber-200'
                                                 }`}
                                             >
-                                                {doc.complianceStatus}
+                                                {complianceStatusLabel(doc.complianceStatus)}
                                             </span>
                                         )}
                                         {doc.verificationStatus && (
@@ -1248,7 +1240,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                                         : 'bg-sky-50 text-sky-700 border-sky-200'
                                                 }`}
                                             >
-                                                {doc.verificationStatus}
+                                                {verificationStatusLabel(doc.verificationStatus)}
                                             </span>
                                         )}
                                     </div>

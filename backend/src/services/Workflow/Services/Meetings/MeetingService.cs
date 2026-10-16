@@ -97,14 +97,49 @@ public sealed class MeetingService : IMeetingService
         var row = await LoadEditable(engagementId, meetingId, tenantId, ct);
         if (row is null) return null;
 
-        row.Purpose = req.Purpose.Trim();
-        row.ScheduledAtUtc = req.ScheduledAtUtc;
+        if (row.Status != MeetingStatus.Scheduled)
+            throw new ArgumentException("Only scheduled meetings can be edited.");
+
+        // A new time must go through RescheduleAsync, which keeps the original meeting, links the
+        // replacement and records a reason; editing it in place would erase that history unaudited.
+        // Sub-second differences are serialisation noise, not a change.
+        if (Math.Abs((req.ScheduledAtUtc - row.ScheduledAtUtc).TotalSeconds) >= 1)
+            throw new ArgumentException("To change the meeting time, reschedule the meeting instead.");
+
+        var purpose = req.Purpose.Trim();
+        var participants = req.Participants?.Select(p => p.Trim()).Where(p => p.Length > 0).ToList() ?? new List<string>();
+        var oldParticipants = DeserializeParticipants(row.ParticipantsJson);
+
+        var changes = new List<object>();
+        if (purpose != row.Purpose)
+            changes.Add(new { field = "purpose", from = (object?)row.Purpose, to = (object?)purpose });
+        if (req.DurationMinutes != row.DurationMinutes)
+            changes.Add(new { field = "durationMinutes", from = (object?)row.DurationMinutes, to = (object?)req.DurationMinutes });
+        if (!participants.SequenceEqual(oldParticipants, StringComparer.OrdinalIgnoreCase))
+            changes.Add(new { field = "participants", from = (object?)oldParticipants, to = (object?)participants });
+        if (!string.Equals(req.Importance, row.Importance, StringComparison.Ordinal))
+            changes.Add(new { field = "importance", from = (object?)row.Importance, to = (object?)req.Importance });
+
+        // Nothing changed: no write and no audit event.
+        if (changes.Count == 0) return Map(row);
+
+        row.Purpose = purpose;
         row.DurationMinutes = req.DurationMinutes;
-        row.ParticipantsJson = SerializeParticipants(req.Participants);
+        row.ParticipantsJson = SerializeParticipants(participants);
         row.Importance = req.Importance;
         row.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(ct);
+
+        await _audit.PublishEventAsync(engagementId, tenantId, actor, "meeting.updated", new
+        {
+            meetingId = row.MeetingId,
+            purpose = row.Purpose,
+            scheduledAtUtc = row.ScheduledAtUtc,
+            importance = row.Importance,
+            changes,
+        });
+
         return Map(row);
     }
 

@@ -151,6 +151,77 @@ public class MeetingServiceTests : IDisposable
             Times.Once);
     }
 
+    private static UpdateMeetingRequest EditOf(MeetingResponse m) => new()
+    {
+        Purpose = m.Purpose,
+        ScheduledAtUtc = m.ScheduledAtUtc,
+        DurationMinutes = m.DurationMinutes,
+        Participants = m.Participants.ToList(),
+        Importance = m.Importance,
+    };
+
+    [Fact]
+    public async Task UpdateAsync_ChangedDetails_SavesAndPublishesMeetingUpdatedWithChanges()
+    {
+        var created = await _svc.CreateAsync(_engagementId, Tenant, Actor, ValidRequest());
+        object? payload = null;
+        _audit.Setup(a => a.PublishEventAsync(_engagementId, Tenant, Actor, "meeting.updated", It.IsAny<object>()))
+              .Callback<Guid, string, string, string, object>((_, _, _, _, p) => payload = p)
+              .Returns(Task.CompletedTask);
+
+        var req = EditOf(created);
+        req.Purpose = "Kickoff call (agenda attached)";
+        req.Participants = new List<string> { "a@x.test", "c@x.test" };
+
+        var result = await _svc.UpdateAsync(_engagementId, created.MeetingId, Tenant, Actor, req);
+
+        Assert.Equal("Kickoff call (agenda attached)", result!.Purpose);
+        Assert.Equal(new[] { "a@x.test", "c@x.test" }, result.Participants);
+        Assert.NotNull(payload);
+        var json = System.Text.Json.JsonSerializer.Serialize(payload);
+        Assert.Contains("\"field\":\"purpose\"", json);
+        Assert.Contains("\"field\":\"participants\"", json);
+        Assert.DoesNotContain("\"field\":\"importance\"", json); // unchanged fields are not listed
+    }
+
+    [Fact]
+    public async Task UpdateAsync_DifferentTime_ThrowsAndPointsToReschedule()
+    {
+        var created = await _svc.CreateAsync(_engagementId, Tenant, Actor, ValidRequest());
+        var req = EditOf(created);
+        req.ScheduledAtUtc = created.ScheduledAtUtc.AddHours(3);
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(
+            () => _svc.UpdateAsync(_engagementId, created.MeetingId, Tenant, Actor, req));
+
+        Assert.Contains("reschedule", ex.Message);
+        Assert.Equal(created.ScheduledAtUtc, _db.Meetings.Single().ScheduledAtUtc);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_NoChanges_DoesNotPublish()
+    {
+        var created = await _svc.CreateAsync(_engagementId, Tenant, Actor, ValidRequest());
+
+        await _svc.UpdateAsync(_engagementId, created.MeetingId, Tenant, Actor, EditOf(created));
+
+        _audit.Verify(a => a.PublishEventAsync(
+            It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), "meeting.updated", It.IsAny<object>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_MeetingNotScheduled_Throws()
+    {
+        var created = await _svc.CreateAsync(_engagementId, Tenant, Actor, ValidRequest());
+        await _svc.UpdateStatusAsync(_engagementId, created.MeetingId, Tenant, Actor, MeetingStatus.Completed);
+        var req = EditOf(created);
+        req.Purpose = "Too late to edit";
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => _svc.UpdateAsync(_engagementId, created.MeetingId, Tenant, Actor, req));
+    }
+
     [Fact]
     public async Task RescheduleAsync_CreatesLinkedNewRecord_MarksOriginalRescheduled()
     {

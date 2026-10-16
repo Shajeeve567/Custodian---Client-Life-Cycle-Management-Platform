@@ -1,5 +1,6 @@
 import React from 'react';
 import { NextActionItem, NextActionResult } from '../types';
+import { readableServerText, stageLabel } from '../utils/displayLabels';
 import {
     AlertTriangle,
     ArrowRight,
@@ -92,11 +93,11 @@ const ItemRow: React.FC<{ item: NextActionItem; index: number }> = ({ item, inde
         </span>
         <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold text-slate-800">{item.title}</span>
+                <span className="text-xs font-semibold text-slate-800">{readableServerText(item.title)}</span>
                 <PartyChip party={item.responsibleParty} />
                 <DueLabel item={item} />
             </div>
-            <p className="text-[11px] text-slate-500 mt-0.5 break-words">{item.reason}</p>
+            <p className="text-[11px] text-slate-500 mt-0.5 break-words">{readableServerText(item.reason)}</p>
         </div>
     </li>
 );
@@ -179,8 +180,8 @@ export const NextActionPanel: React.FC<NextActionPanelProps> = ({
                                     <span className="text-[10px] text-slate-400 font-semibold">Rule {primary.priorityRank}</span>
                                 )}
                             </div>
-                            <div className="text-sm font-bold text-slate-900">{primary.title}</div>
-                            <p className="text-xs text-slate-600 mt-1">{primary.reason}</p>
+                            <div className="text-sm font-bold text-slate-900">{readableServerText(primary.title)}</div>
+                            <p className="text-xs text-slate-600 mt-1">{readableServerText(primary.reason)}</p>
                             {canStart && (
                                 <button
                                     type="button"
@@ -242,13 +243,13 @@ export const NextActionPanel: React.FC<NextActionPanelProps> = ({
                     {gateReasons.length > 0 && (
                         <div>
                             <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                                <ArrowRight className="w-3.5 h-3.5" /> Gate to {result.nextStageGate?.targetStage}
+                                <ArrowRight className="w-3.5 h-3.5" /> Gate to {stageLabel(result.nextStageGate?.targetStage)}
                             </h4>
                             <ul className="mt-1.5 space-y-1">
                                 {gateReasons.map((reason, i) => (
                                     <li key={i} className="text-[11px] text-slate-600 flex items-start gap-1.5">
                                         <span className="mt-1.5 w-1 h-1 rounded-full bg-slate-400 shrink-0" />
-                                        {reason}
+                                        {readableServerText(reason)}
                                     </li>
                                 ))}
                             </ul>

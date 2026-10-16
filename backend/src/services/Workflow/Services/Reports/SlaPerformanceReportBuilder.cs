@@ -183,7 +183,7 @@ public static class SlaPerformanceReportBuilder
         "On time: completed at or before the due time. Late: completed after it. Overdue: still open (pending, awaiting review or sent back) after the due time; on track: still open before it.",
         "On-time rate: completed on time ÷ all completed actions; n/a when nothing was completed. Completion time: completed − became actionable. Lateness: completed − due, for late completions only.",
         "Stalls: an open action past its due time. Opened/resolved counts use the period; 'open now' is the current state. The stall queue lists client tasks only, so compare it with the Client row of 'By responsible party'.",
-        "All times are UTC; hours are rounded to one decimal."
+        $"All times are {ReportTimeZone.Description}; hours are rounded to one decimal."
     ]);
 
     private static TableSection Detail(SlaPerformanceData data) => new(
@@ -191,7 +191,7 @@ public static class SlaPerformanceReportBuilder
         [
             new ReportColumn("Engagement"), new ReportColumn("Engagement id"), new ReportColumn("Action id"), new ReportColumn("Action"),
             new ReportColumn("Action type"), Number("Stage"), new ReportColumn("Responsible party"), new ReportColumn("Status"),
-            new ReportColumn("Activated (UTC)"), new ReportColumn("Due (UTC)"), new ReportColumn("Completed (UTC)"),
+            new ReportColumn($"Activated {ReportTimeZone.ColumnSuffix}"), new ReportColumn($"Due {ReportTimeZone.ColumnSuffix}"), new ReportColumn($"Completed {ReportTimeZone.ColumnSuffix}"),
             new ReportColumn("SLA outcome"), Number("Completion hours"), Number("Lateness hours"), Number("Overdue hours")
         ],
         data.Actions.Select(r => new object?[]

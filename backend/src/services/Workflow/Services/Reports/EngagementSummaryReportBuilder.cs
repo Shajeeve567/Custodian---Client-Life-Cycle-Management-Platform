@@ -80,13 +80,13 @@ public static class EngagementSummaryReportBuilder
             new("Progress", string.Create(CultureInfo.InvariantCulture,
                 $"{o.ProgressPercentage}% ({o.CompletedTasks} of {o.TotalTasks} tasks complete)")),
             new("Current position", string.IsNullOrWhiteSpace(o.StatusDescription) ? None : o.StatusDescription),
-            new("Created (UTC)", o.CreatedAtUtc)
+            new($"Created {ReportTimeZone.ColumnSuffix}", o.CreatedAtUtc)
         };
 
         if (o.IsFinal)
         {
             pairs.Add(new ReportKeyValue("Final state", o.Status));
-            pairs.Add(new ReportKeyValue("Closed (UTC)", (object?)o.ClosedAtUtc ?? None));
+            pairs.Add(new ReportKeyValue($"Closed {ReportTimeZone.ColumnSuffix}", (object?)o.ClosedAtUtc ?? None));
         }
 
         return new KeyValueSection("Engagement summary", pairs);
@@ -108,7 +108,7 @@ public static class EngagementSummaryReportBuilder
         [
             new ReportKeyValue("Action", step.Title),
             new ReportKeyValue("Details", step.Detail ?? None),
-            new ReportKeyValue("Due (UTC)", (object?)step.DueAtUtc ?? None),
+            new ReportKeyValue($"Due {ReportTimeZone.ColumnSuffix}", (object?)step.DueAtUtc ?? None),
             new ReportKeyValue("Overdue", step.IsOverdue)
         ]);
     }
@@ -119,7 +119,7 @@ public static class EngagementSummaryReportBuilder
         if (data.OutstandingActions.Count == 0) return new EmptySection(title, None);
 
         return new TableSection(title,
-            [Text("Action", 3), Text("Type", 1.6f), Number("Stage", 0.8f), Text("Due (UTC)", 2.7f), Text("Status", 1.8f), Text("Reason", 2.1f)],
+            [Text("Action", 3), Text("Type", 1.6f), Number("Stage", 0.8f), Text($"Due {ReportTimeZone.ColumnSuffix}", 2.7f), Text("Status", 1.8f), Text("Reason", 2.1f)],
             data.OutstandingActions.Select(a => Row(
                 a.Title,
                 SlaPerformanceReportBuilder.TypeLabel(a.Type),
@@ -136,7 +136,7 @@ public static class EngagementSummaryReportBuilder
         if (data.RecentlyCompletedActions.Count == 0) return new EmptySection(title, None);
 
         return new TableSection(title,
-            [Text("Action", 3), Text("Type", 1.6f), Number("Stage", 0.8f), Text("Completed (UTC)", 2.7f)],
+            [Text("Action", 3), Text("Type", 1.6f), Number("Stage", 0.8f), Text($"Completed {ReportTimeZone.ColumnSuffix}", 2.7f)],
             data.RecentlyCompletedActions.Select(a => Row(a.Title, SlaPerformanceReportBuilder.TypeLabel(a.Type), a.StageNumber, a.CompletedAtUtc)),
             footnote: string.Create(CultureInfo.InvariantCulture,
                 $"Newest first; up to {EngagementSummaryAggregator.RecentlyCompletedLimit} actions."));
@@ -148,7 +148,7 @@ public static class EngagementSummaryReportBuilder
         if (data.Approvals.Count == 0) return new EmptySection(title, None);
 
         return new TableSection(title,
-            [Text("Approval", 2.3f), Text("Status", 1.8f), Text("Needed before", 1.4f), Text("Due (UTC)", 2.7f), Text("Completed (UTC)", 2.7f), Text("Reason", 1.8f)],
+            [Text("Approval", 2.3f), Text("Status", 1.8f), Text("Needed before", 1.4f), Text($"Due {ReportTimeZone.ColumnSuffix}", 2.7f), Text($"Completed {ReportTimeZone.ColumnSuffix}", 2.7f), Text("Reason", 1.8f)],
             data.Approvals.Select(c => Row(
                 c.Title, WithOverdue(c.Status, c.IsOverdue), Humanize(c.RequiredBeforeStage), c.DueDateUtc, c.CompletedAtUtc, c.RejectionReason)));
     }
@@ -159,7 +159,7 @@ public static class EngagementSummaryReportBuilder
         if (data.Payments.Count == 0) return new EmptySection(title, None);
 
         return new TableSection(title,
-            [Text("Payment", 1.9f), Text("Kind", 1.1f), Number("Amount", 1.1f), Text("Currency", 1.3f), Text("Status", 1.8f), Text("Due (UTC)", 2.7f), Text("Completed (UTC)", 2.7f)],
+            [Text("Payment", 1.9f), Text("Kind", 1.1f), Number("Amount", 1.1f), Text("Currency", 1.3f), Text("Status", 1.8f), Text($"Due {ReportTimeZone.ColumnSuffix}", 2.7f), Text($"Completed {ReportTimeZone.ColumnSuffix}", 2.7f)],
             data.Payments.Select(c => Row(
                 c.Title, c.PaymentType, c.Amount, c.Currency, WithOverdue(c.Status, c.IsOverdue), c.DueDateUtc, c.CompletedAtUtc)));
     }
@@ -182,7 +182,7 @@ public static class EngagementSummaryReportBuilder
         if (data.Documents.Count == 0) return new EmptySection(title, None);
 
         return new TableSection(title,
-            [Text("Document type", 2), Text("File name", 2.4f), Text("Uploaded (UTC)", 2.5f), Text("Status", 1.3f), Text("Reason", 2.4f)],
+            [Text("Document type", 2), Text("File name", 2.4f), Text($"Uploaded {ReportTimeZone.ColumnSuffix}", 2.5f), Text("Status", 1.3f), Text("Reason", 2.4f)],
             data.Documents.Select(d => Row(Humanize(d.Type), d.FileName, d.UploadedAtUtc, d.Status, d.RejectionReason)));
     }
 

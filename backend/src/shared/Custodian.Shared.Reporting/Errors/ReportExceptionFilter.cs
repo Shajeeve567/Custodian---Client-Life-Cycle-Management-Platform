@@ -20,7 +20,7 @@ public sealed class ReportErrorsAttribute : TypeFilterAttribute
     }
 }
 
-public sealed class ReportExceptionFilter : IExceptionFilter
+public sealed class ReportExceptionFilter : IExceptionFilter, IAsyncActionFilter
 {
     private readonly string _reportCode;
     private readonly ILogger<ReportExceptionFilter> _logger;
@@ -29,6 +29,18 @@ public sealed class ReportExceptionFilter : IExceptionFilter
     {
         _reportCode = reportCode;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Applies the viewer's time zone (<c>?tz=</c>, an IANA id the browser sends) while the report is
+    /// built, so every time in the PDF/CSV is local to the person downloading it.
+    /// </summary>
+    public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
+    {
+        using (Models.ReportTimeZone.Use(context.HttpContext.Request.Query["tz"].ToString()))
+        {
+            await next();
+        }
     }
 
     public void OnException(ExceptionContext context)

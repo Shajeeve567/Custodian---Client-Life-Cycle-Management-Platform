@@ -100,42 +100,108 @@ async function authorizedFetch(
         }
     }
 
-    const response = await fetch(url, {
-        ...rest,
-        headers,
-    });
+    let response: Response;
+    try {
+        response = await fetch(url, {
+            ...rest,
+            headers,
+        });
+    } catch (networkError) {
+        // fetch only rejects when the server could not be reached (offline, DNS, CORS, service down).
+        console.error(`Network error calling ${url}:`, networkError);
+        throw new ApiError(0, NETWORK_ERROR_MESSAGE);
+    }
 
     // Check status
     if (!response.ok) {
-        let errorMessage = response.statusText || 'Request failed';
+        const rawBody = await response.text().catch(() => '');
         let errorData: any = null;
+        let serverMessage: string | null = null;
 
         const contentType = response.headers.get('content-type') || '';
         // ASP.NET error bodies (ProblemDetails) are application/problem+json.
         if (contentType.includes('application/json') || contentType.includes('+json')) {
             try {
-                errorData = await response.json();
+                errorData = JSON.parse(rawBody);
                 if (errorData?.errors && typeof errorData.errors === 'object') {
-                    const messages = Object.values(errorData.errors).flat();
-                    errorMessage = messages.join(' ') || errorData.title || errorMessage;
+                    serverMessage = Object.values(errorData.errors).flat().join(' ') || errorData.title || null;
                 } else {
-                    errorMessage = errorData?.message || errorData?.title || JSON.stringify(errorData);
+                    serverMessage = errorData?.message || errorData?.title || null;
                 }
             } catch {
-                errorMessage = await response.text();
+                serverMessage = null;
             }
         } else {
-            errorMessage = await response.text();
+            serverMessage = rawBody;
         }
+
+        // Keep the full server response for debugging; users only ever see a readable message.
+        console.error(`Request to ${url} failed with HTTP ${response.status}:`, errorData ?? rawBody);
 
         if (response.status === 401 && unauthorizedHandler) {
             unauthorizedHandler();
         }
 
-        throw new ApiError(response.status, errorMessage || `HTTP Error ${response.status}`, errorData);
+        throw new ApiError(response.status, toUserFacingMessage(response.status, serverMessage), errorData);
     }
 
     return response;
+}
+
+const NETWORK_ERROR_MESSAGE = "Can't reach the server. Check your connection and try again.";
+
+/** Generic, readable messages used when the server's own message can't be shown to a user. */
+function fallbackMessageForStatus(status: number): string {
+    if (status >= 500) {
+        return `The server ran into a problem (error ${status}). Please try again in a moment.`;
+    }
+    switch (status) {
+        case 400: return 'Some of the information sent was not valid. Please check it and try again.';
+        case 401: return 'Your session has expired or your credentials are not valid. Please sign in again.';
+        case 403: return "You don't have permission to do that.";
+        case 404: return "We couldn't find what you were looking for.";
+        case 409: return 'This conflicts with a recent change. Refresh and try again.';
+        case 413: return 'The file is too large to upload.';
+        case 429: return 'Too many attempts. Please wait a moment and try again.';
+        default: return `Something went wrong (error ${status}). Please try again.`;
+    }
+}
+
+/**
+ * A server message is shown as-is only when it reads like a sentence meant for a person:
+ * never for 5xx responses (they can carry exception details), and never for stack traces,
+ * HTML error pages or long technical bodies.
+ */
+function toUserFacingMessage(status: number, serverMessage: string | null): string {
+    const message = serverMessage?.trim() ?? '';
+    const looksTechnical =
+        message.length === 0 ||
+        message.length > 300 ||
+        message.startsWith('<') ||
+        message.startsWith('{') ||
+        message.startsWith('[') ||
+        /\n\s*at\s|Exception|^System\.|stack trace/i.test(message);
+
+    if (status >= 500 || looksTechnical) {
+        return fallbackMessageForStatus(status);
+    }
+    return message;
+}
+
+// The backend stores times in UTC but serialises them without a zone ("2026-10-20T09:22:00"),
+// which browsers read as local time — every time showed 5h30 early in Sri Lanka. Timestamps
+// without a zone are marked as UTC here so toLocaleString() shows the user's local time.
+// Fields that hold a calendar date rather than a moment are left as they are.
+const NAIVE_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+const CALENDAR_DATE_FIELDS = new Set(['issueDate', 'expiryDate']);
+
+export function parseApiJson(text: string): any {
+    if (!text) return null;
+    return JSON.parse(text, (key, value) =>
+        typeof value === 'string' && NAIVE_TIMESTAMP.test(value) && !CALENDAR_DATE_FIELDS.has(key)
+            ? `${value}Z`
+            : value
+    );
 }
 
 export async function request<T = any>(
@@ -151,7 +217,7 @@ export async function request<T = any>(
     }
 
     if (contentType.includes('application/json')) {
-        return (await response.json()) as T;
+        return parseApiJson(await response.text()) as T;
     }
 
     // plain text response
@@ -247,6 +313,13 @@ export async function downloadReport(url: string, params: ReportParams = {}): Pr
     Object.entries(params).forEach(([key, value]) => {
         if (value !== undefined && value !== null && value !== '') query.append(key, String(value));
     });
+    // The viewer's IANA time zone (e.g. "Asia/Colombo"), so the PDF/CSV show local times rather than UTC.
+    try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (tz && !query.has('tz')) query.append('tz', tz);
+    } catch {
+        // Older browsers without Intl time zones keep UTC reports.
+    }
     const fullUrl = query.toString() ? `${url}${url.includes('?') ? '&' : '?'}${query.toString()}` : url;
 
     let response: Response;
@@ -394,7 +467,7 @@ export const WorkflowApi = {
             method: 'GET',
             headers: { 'X-Tenant-ID': tenantId },
         });
-        const items = (await response.json()) as StallQueueItem[];
+        const items = parseApiJson(await response.text()) as StallQueueItem[];
         const total = Number(response.headers.get('X-Total-Count'));
         return { items, totalCount: Number.isFinite(total) && total > 0 ? total : items.length };
     },
