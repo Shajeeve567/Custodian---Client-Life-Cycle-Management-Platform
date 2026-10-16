@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { WorkflowApi, ApiError } from '../services/api';
-import { Meeting } from '../types';
+import { Link } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { IdentityApi, WorkflowApi, ApiError } from '../services/api';
+import { ClientProfile, Engagement, Meeting } from '../types';
 import { AlertTriangle, RefreshCw, Calendar } from 'lucide-react';
 
 interface MissedMeetingsPanelProps {
@@ -11,6 +13,10 @@ export const MissedMeetingsPanel: React.FC<MissedMeetingsPanelProps> = ({ tenant
     const [meetings, setMeetings] = useState<Meeting[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const { token } = useAuth();
+    // Only used to name each meeting's client.
+    const [engagements, setEngagements] = useState<Engagement[]>([]);
+    const [clients, setClients] = useState<ClientProfile[]>([]);
 
     const load = useCallback(async () => {
         if (!tenantId) return;
@@ -26,6 +32,17 @@ export const MissedMeetingsPanel: React.FC<MissedMeetingsPanelProps> = ({ tenant
     }, [tenantId]);
 
     useEffect(() => { load(); }, [load]);
+
+    useEffect(() => {
+        if (!tenantId) return;
+        WorkflowApi.getEngagements(tenantId).then(setEngagements).catch(() => setEngagements([]));
+        if (token) IdentityApi.getClients(token).then(setClients).catch(() => setClients([]));
+    }, [tenantId, token]);
+
+    const clientNameFor = (engagementId: string) => {
+        const eng = engagements.find((e) => e.engagementId === engagementId);
+        return (eng && clients.find((c) => c.id === eng.clientId)?.name) || 'Unnamed client';
+    };
 
     if (isLoading && meetings.length === 0) return null;
 
@@ -70,9 +87,12 @@ export const MissedMeetingsPanel: React.FC<MissedMeetingsPanelProps> = ({ tenant
                                 Scheduled for {new Date(m.scheduledAtUtc).toLocaleString()}
                                 {m.status === 'Missed' ? ' · marked missed' : ' · past due'}
                             </div>
-                            <div className="text-[10px] font-mono text-slate-400 mt-0.5">
-                                ENG-{m.engagementId.slice(0, 6).toUpperCase()}
-                            </div>
+                            <Link
+                                to={`/workspace/${m.engagementId}`}
+                                className="inline-block text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 mt-0.5"
+                            >
+                                {clientNameFor(m.engagementId)} →
+                            </Link>
                         </div>
                     </div>
                 ))}

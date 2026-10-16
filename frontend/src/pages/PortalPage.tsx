@@ -9,7 +9,7 @@ export const PortalPage: React.FC = () => {
 
     return (
         <DashboardLayout>
-            <div className="w-full max-w-5xl">
+            <div className="w-full max-w-5xl mx-auto">
                 <ClientPortalView engagementId={engagementId} />
             </div>
         </DashboardLayout>

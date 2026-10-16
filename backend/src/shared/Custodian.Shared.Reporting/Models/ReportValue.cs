@@ -15,6 +15,13 @@ public static class ReportValue
     /// <summary>ISO-8601 UTC, to the second (e.g. 2026-09-28T14:05:00Z).</summary>
     public const string DateTimeFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'";
 
+    /// <summary>
+    /// Local time when a report has a viewer time zone (2026-09-28 19:35:00). The offset is not repeated
+    /// on every value: headings carry it ("Due (UTC+05:30)") and it would make PDF table cells wrap.
+    /// Excel reads this form as a date-time.
+    /// </summary>
+    public const string ZonedDateTimeFormat = "yyyy-MM-dd HH:mm:ss";
+
     public const string DateFormat = "yyyy-MM-dd";
 
     public static bool IsSupported(object? value) => value switch
@@ -50,13 +57,24 @@ public static class ReportValue
         string s => s,
         bool b => b ? "Yes" : "No",
         Guid g => g.ToString("D"),
-        DateTime dt => ToUtc(dt).ToString(DateTimeFormat, CultureInfo.InvariantCulture),
-        DateTimeOffset dto => dto.UtcDateTime.ToString(DateTimeFormat, CultureInfo.InvariantCulture),
+        DateTime dt => FormatDateTime(dt),
+        DateTimeOffset dto => FormatDateTime(dto),
         DateOnly d => d.ToString(DateFormat, CultureInfo.InvariantCulture),
         Enum e => e.ToString(),
         IFormattable f when IsNumeric(value) => f.ToString(null, CultureInfo.InvariantCulture),
         _ => throw new ArgumentException($"Unsupported report value type '{value.GetType().Name}'.")
     };
+
+    /// <summary>
+    /// A stored (UTC) time in the report's time zone (<see cref="ReportTimeZone"/>): ISO-8601 UTC when
+    /// no zone was given, otherwise the viewer's local time (the heading names the offset). Builders use this for any time
+    /// they format themselves, so every time in a report follows the same zone.
+    /// </summary>
+    public static string FormatDateTime(DateTime value) => FormatDateTime(new DateTimeOffset(ToUtc(value)));
+
+    public static string FormatDateTime(DateTimeOffset value) => ReportTimeZone.IsUtc
+        ? value.UtcDateTime.ToString(DateTimeFormat, CultureInfo.InvariantCulture)
+        : ReportTimeZone.Convert(value).ToString(ZonedDateTimeFormat, CultureInfo.InvariantCulture);
 
     // MySQL (Pomelo) returns DateTime with Kind=Unspecified; every stored time in Custodian is UTC.
     private static DateTime ToUtc(DateTime value) => value.Kind switch

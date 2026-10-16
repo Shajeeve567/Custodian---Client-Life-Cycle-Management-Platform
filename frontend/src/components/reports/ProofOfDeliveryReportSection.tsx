@@ -4,8 +4,8 @@ import { useAuth } from '../../context/AuthContext';
 import { ClientProfile, Engagement } from '../../types';
 import { IdentityApi, ReportsApi, WorkflowApi } from '../../services/api';
 import { ReportDownloadButton } from './ReportDownloadButton';
+import { engagementOptionLabel, engagementStatusLabel, stageLabel } from '../../utils/displayLabels';
 
-const shortId = (id: string) => id.replace(/-/g, '').slice(0, 6).toUpperCase();
 
 /**
  * CSTD-249: Proof-of-Delivery Report Section.
@@ -49,10 +49,10 @@ export const ProofOfDeliveryReportSection: React.FC = () => {
             engagements
                 .map((e) => {
                     const client = clients.find((c) => c.id === e.clientId);
-                    const clientLabel = client?.name ?? `Client ${shortId(e.clientId)}`;
+                    const clientLabel = client?.name ?? 'Unnamed client';
                     return {
                         value: e.engagementId,
-                        label: `${clientLabel} · ENG-${shortId(e.engagementId)} (${e.stage} · ${e.status})`,
+                        label: engagementOptionLabel(e, clientLabel),
                     };
                 })
                 .sort((a, b) => a.label.localeCompare(b.label)),
@@ -142,11 +142,11 @@ export const ProofOfDeliveryReportSection: React.FC = () => {
                 <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200/60 text-xs text-slate-600 grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <div>
                         <span className="font-semibold text-slate-500 block">Stage:</span>
-                        <span>{selectedEngagement.stage}</span>
+                        <span>{stageLabel(selectedEngagement.stage)}</span>
                     </div>
                     <div>
                         <span className="font-semibold text-slate-500 block">Status:</span>
-                        <span>{selectedEngagement.status}</span>
+                        <span>{engagementStatusLabel(selectedEngagement.status)}</span>
                     </div>
                     <div>
                         <span className="font-semibold text-slate-500 block">Progress:</span>

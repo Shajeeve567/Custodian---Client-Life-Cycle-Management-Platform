@@ -5,7 +5,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { LandingPage } from './pages/LandingPage';
 import { AuthPage } from './pages/AuthPage';
 import { EngagementsPage } from './pages/EngagementsPage';
-import { WorkflowsPage } from './pages/WorkflowsPage';
+import { ActionHistoryPage } from './pages/ActionHistoryPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { AuditPage } from './pages/AuditPage';
 import { PortalPage } from './pages/PortalPage';
@@ -35,7 +35,7 @@ export const App: React.FC = () => {
                         <Route element={<ProtectedRoute allowedRoles={['Owner', 'Staff', 'Admin']} />}>
                             <Route path="/engagements" element={<EngagementsPage />} />
                             <Route path="/workspace/:engagementId" element={<WorkspacePage />} />
-                            <Route path="/actions" element={<WorkflowsPage />} />
+                            <Route path="/actions" element={<ActionHistoryPage />} />
                             <Route path="/workflows" element={<Navigate to="/actions" replace />} />
                             <Route path="/stall-queue" element={<StallQueuePage />} />
                             <Route path="/documents" element={<DocumentsPage />} />

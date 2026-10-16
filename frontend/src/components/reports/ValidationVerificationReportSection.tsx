@@ -4,11 +4,11 @@ import { useAuth } from '../../context/AuthContext';
 import { ClientProfile, Engagement } from '../../types';
 import { IdentityApi, ReportsApi, WorkflowApi } from '../../services/api';
 import { ReportDownloadButton } from './ReportDownloadButton';
+import { engagementOptionLabel } from '../../utils/displayLabels';
 
 /** yyyy-MM-dd of a UTC day, the format the report API takes. */
 const utcDate = (date: Date) => date.toISOString().slice(0, 10);
 
-const shortId = (id: string) => id.replace(/-/g, '').slice(0, 6).toUpperCase();
 
 /**
  * CSTD-182 / CSTD-31: Validation & Verification Report Section.
@@ -40,7 +40,7 @@ export const ValidationVerificationReportSection: React.FC = () => {
                     const client = clients.find((c) => c.id === e.clientId);
                     return {
                         value: e.engagementId,
-                        label: `${client?.name ?? `Client ${shortId(e.clientId)}`} · ENG-${shortId(e.engagementId)}`,
+                        label: engagementOptionLabel(e, client?.name ?? 'Unnamed client'),
                     };
                 })
                 .sort((a, b) => a.label.localeCompare(b.label)),

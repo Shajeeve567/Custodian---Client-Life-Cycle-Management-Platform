@@ -3,8 +3,10 @@ import { useAuth } from '../context/AuthContext';
 import { AuditEvent, ChainVerificationResult, ClientProfile, Engagement, UserAccountResponse } from '../types';
 import { AuditApi, IdentityApi, WorkflowApi, ApiError } from '../services/api';
 import { AuditCategory, AuditTone, describeAuditEvent, parsePayload, referencedActionId } from './audit/describeAuditEvent';
+import { engagementOptionLabel } from '../utils/displayLabels';
 import {
     AlertTriangle,
+    Calendar,
     CheckCircle2,
     ChevronDown,
     ChevronRight,
@@ -22,7 +24,7 @@ import {
     LifeBuoy,
 } from 'lucide-react';
 
-const CATEGORIES: AuditCategory[] = ['Engagement', 'Tasks', 'Questions', 'Documents', 'Conditions', 'Interventions'];
+const CATEGORIES: AuditCategory[] = ['Engagement', 'Tasks', 'Questions', 'Documents', 'Conditions', 'Meetings', 'Interventions'];
 
 const CATEGORY_ICONS: Record<AuditCategory, React.ReactNode> = {
     Engagement: <Flag className="w-4 h-4" />,
@@ -30,6 +32,7 @@ const CATEGORY_ICONS: Record<AuditCategory, React.ReactNode> = {
     Questions: <MessageSquare className="w-4 h-4" />,
     Documents: <FileText className="w-4 h-4" />,
     Conditions: <Layers className="w-4 h-4" />,
+    Meetings: <Calendar className="w-4 h-4" />,
     Interventions: <LifeBuoy className="w-4 h-4" />,
 };
 
@@ -41,8 +44,6 @@ const TONE_CLASSES: Record<AuditTone, string> = {
     info: 'bg-indigo-50 text-indigo-700 border-indigo-200',
 };
 
-const shortId = (id?: string | null) => (id ? id.slice(0, 8) : '—');
-const engagementCode = (id: string) => `ENG-${id.slice(0, 6).toUpperCase()}`;
 
 // Older events only carry task ids; name them from each engagement's task list (bounded).
 const MAX_ENGAGEMENTS_TO_RESOLVE = 25;
@@ -115,10 +116,16 @@ export const AuditLogView: React.FC = () => {
         (engagementId: string) => {
             const eng = engagements.find((e) => e.engagementId === engagementId);
             const client = eng ? clients.find((c) => c.id === eng.clientId) : undefined;
-            return client?.name ?? (eng ? `Client ${shortId(eng.clientId)}` : 'Unknown engagement');
+            return client?.name ?? (eng ? 'Unnamed client' : 'Unknown engagement');
         },
         [engagements, clients]
     );
+
+    // Filter options also carry the opened date, so two engagements for one client stay distinguishable.
+    const engagementFilterLabel = (engagementId: string) => {
+        const eng = engagements.find((e) => e.engagementId === engagementId);
+        return eng ? engagementOptionLabel(eng, engagementName(engagementId)) : engagementName(engagementId);
+    };
 
     const actorName = useCallback(
         (actor: string) => {
@@ -127,7 +134,7 @@ export const AuditLogView: React.FC = () => {
             if (user) return user.email;
             const client = clients.find((c) => c.id === actor);
             if (client) return `${client.name} (client)`;
-            if (/^[0-9a-f-]{36}$/i.test(actor)) return `User ${shortId(actor)}`;
+            if (/^[0-9a-f-]{36}$/i.test(actor)) return 'A team member';
             return actor === 'documents-service' ? 'Documents service' : actor;
         },
         [team, clients]
@@ -151,7 +158,7 @@ export const AuditLogView: React.FC = () => {
             if (engagementFilter && evt.engagementId !== engagementFilter) return false;
             if (categoryFilter && info.category !== categoryFilter) return false;
             if (!q) return true;
-            const haystack = [info.label, ...info.details, actorName(evt.actor), engagementName(evt.engagementId), engagementCode(evt.engagementId)]
+            const haystack = [info.label, ...info.details, actorName(evt.actor), engagementName(evt.engagementId)]
                 .join(' ')
                 .toLowerCase();
             return haystack.includes(q);
@@ -205,7 +212,7 @@ export const AuditLogView: React.FC = () => {
 
     const handleFlag = async (evt: AuditEvent) => {
         if (evt.isFlagged) return;
-        const reason = window.prompt(`Enter reason for flagging event #${evt.sequenceNumber} (${evt.type}):`);
+        const reason = window.prompt(`Enter reason for flagging event #${evt.sequenceNumber}:`);
         if (reason === null) return;
         const trimmed = reason.trim();
         if (!trimmed) {
@@ -325,7 +332,7 @@ export const AuditLogView: React.FC = () => {
                     </div>
                     {brokenChains.map((b) => (
                         <p key={b.engagementId ?? b.brokenAtEventId} className="text-xs text-rose-800">
-                            {engagementName(b.engagementId ?? '')} ({engagementCode(b.engagementId ?? '')}): {b.reason} — at event {shortId(b.brokenAtEventId)}
+                            {engagementName(b.engagementId ?? '')}: {b.reason}
                         </p>
                     ))}
                 </div>
@@ -342,7 +349,7 @@ export const AuditLogView: React.FC = () => {
                     <option value="">All engagements</option>
                     {engagementIdsInLog.map((id) => (
                         <option key={id} value={id}>
-                            {engagementName(id)} · {engagementCode(id)}
+                            {engagementFilterLabel(id)}
                             {verification?.[id] ? (verification[id].isVerified ? ' ✓' : ' ✗') : ''}
                         </option>
                     ))}
@@ -427,7 +434,7 @@ export const AuditLogView: React.FC = () => {
                                                     <div className="flex flex-wrap items-center gap-2">
                                                         <span className="text-sm font-bold text-slate-900">{info.label}</span>
                                                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-                                                            {engagementName(evt.engagementId)} · {engagementCode(evt.engagementId)}
+                                                            {engagementName(evt.engagementId)}
                                                         </span>
                                                         {evt.isFlagged && (
                                                             <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1">
@@ -456,25 +463,30 @@ export const AuditLogView: React.FC = () => {
                                             {isOpen && (
                                                 <div className="mt-3 ml-11 p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] space-y-2">
                                                     <div className="text-slate-500">
-                                                        Event <span className="font-mono text-slate-700">{evt.type}</span> · #{evt.sequenceNumber} ·{' '}
-                                                        <span className="font-mono">{evt.eventId}</span>
+                                                        Event #{evt.sequenceNumber} · {new Date(evt.timestamp).toLocaleString()}
                                                     </div>
-                                                    <div className="font-mono text-slate-500 break-all">hash {evt.hash}</div>
-                                                    {evt.previousHash && <div className="font-mono text-slate-400 break-all">prev {evt.previousHash}</div>}
-                                                    <pre className="font-mono text-slate-700 whitespace-pre-wrap break-all bg-white p-2 rounded-lg border border-slate-200 max-h-60 overflow-auto">
-                                                        {JSON.stringify(parsePayload(evt), null, 2)}
-                                                    </pre>
+                                                    {/* Hashes and the raw payload are the tamper-evidence record; kept for auditors, folded away by default. */}
+                                                    <details className="text-slate-500">
+                                                        <summary className="cursor-pointer font-semibold text-slate-600 hover:text-slate-800">Technical details</summary>
+                                                        <div className="mt-2 space-y-2">
+                                                            <div className="font-mono break-all">hash {evt.hash}</div>
+                                                            {evt.previousHash && <div className="font-mono text-slate-400 break-all">prev {evt.previousHash}</div>}
+                                                            <pre className="font-mono text-slate-700 whitespace-pre-wrap break-all bg-white p-2 rounded-lg border border-slate-200 max-h-60 overflow-auto">
+                                                                {JSON.stringify(parsePayload(evt), null, 2)}
+                                                            </pre>
+                                                        </div>
+                                                    </details>
 
                                                     {/* Metadata details */}
                                                     {evt.isFlagged && (
                                                         <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 space-y-1">
                                                             <div className="font-semibold flex items-center gap-1.5">
                                                                 <Flag className="w-3.5 h-3.5 text-amber-600" />
-                                                                Flagged by {evt.flaggedBy || 'Staff'} {evt.flaggedAt ? `on ${new Date(evt.flaggedAt).toLocaleString()}` : ''}
+                                                                Flagged by {evt.flaggedBy ? actorName(evt.flaggedBy) : 'Staff'} {evt.flaggedAt ? `on ${new Date(evt.flaggedAt).toLocaleString()}` : ''}
                                                             </div>
                                                             <div className="text-amber-800">Reason: {evt.flagReason || 'None specified'}</div>
                                                             {evt.flagReferenceEventId && (
-                                                                <div className="font-mono text-[10px] text-amber-700">Reference Event: {evt.flagReferenceEventId}</div>
+                                                                <div className="text-[10px] text-amber-700">Refers to event #{events.find((e) => e.eventId === evt.flagReferenceEventId)?.sequenceNumber ?? '—'}</div>
                                                             )}
                                                         </div>
                                                     )}
@@ -483,7 +495,7 @@ export const AuditLogView: React.FC = () => {
                                                         <div className="p-2.5 rounded-lg bg-slate-100 border border-slate-300 text-slate-800 space-y-1">
                                                             <div className="font-semibold flex items-center gap-1.5">
                                                                 <Archive className="w-3.5 h-3.5 text-slate-600" />
-                                                                Archived by {evt.archivedBy || 'Staff'} {evt.archivedAt ? `on ${new Date(evt.archivedAt).toLocaleString()}` : ''}
+                                                                Archived by {evt.archivedBy ? actorName(evt.archivedBy) : 'Staff'} {evt.archivedAt ? `on ${new Date(evt.archivedAt).toLocaleString()}` : ''}
                                                             </div>
                                                             {evt.archiveReason && <div className="text-slate-700">Reason: {evt.archiveReason}</div>}
                                                         </div>
