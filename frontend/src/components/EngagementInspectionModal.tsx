@@ -3,7 +3,7 @@ import { Engagement, ClientProfile, UserAccountResponse } from '../types';
 import { ENGAGEMENT_STAGES, getStageIndex } from '../constants/engagementStages';
 import { WorkflowApi, ApiError } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { engagementCode as formatEngagementCode, engagementStatusLabel } from '../utils/displayLabels';
+import { engagementOpenedLabel, engagementStatusLabel } from '../utils/displayLabels';
 import {
     X,
     Building2,
@@ -52,7 +52,7 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
 
     const handleDelete = async () => {
         if (!tenantId) return;
-        if (!window.confirm(`Delete the draft engagement for ${clientName} (${formatEngagementCode(engagement.engagementId)})? This cannot be undone.`)) {
+        if (!window.confirm(`Delete the draft engagement for ${clientName}? This cannot be undone.`)) {
             return;
         }
 
@@ -77,7 +77,6 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
         .slice(0, 2)
         .toUpperCase();
 
-    const engagementCode = formatEngagementCode(engagement.engagementId);
 
     // Derived from the engagement's real, persisted stage (CSTD-17) — not a guess
     // based on status. -1 falls back to 0 (first stage) if stage is ever missing.
@@ -98,8 +97,8 @@ export const EngagementInspectionModal: React.FC<EngagementInspectionModalProps>
                                 <h2 className="text-xl font-bold text-slate-900">
                                     {clientName}
                                 </h2>
-                                <span className="px-2 py-0.5 rounded text-xs font-mono font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                                    {engagementCode}
+                                <span className="px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                    {engagementOpenedLabel(engagement.createdAt)}
                                 </span>
                             </div>
                             <p className="text-xs text-slate-500 mt-0.5">

@@ -1,4 +1,5 @@
 import { AuditEvent } from '../../types';
+import { engagementStatusLabel } from '../../utils/displayLabels';
 
 /**
  * Turns a raw audit event (type code + JSON payload) into plain language: a label, a category and
@@ -90,23 +91,25 @@ const quoted = (title?: string | null) => (title ? `"${title}"` : undefined);
 const compact = (lines: (string | undefined | false | null)[]) => lines.filter(Boolean) as string[];
 
 export function describeAuditEvent(evt: AuditEvent, lookups: AuditLookups): AuditDescription {
+    // Never print a raw user id: unknown people (or staff the viewer can't list) stay anonymous.
+    const staffName = (id?: string | null) => (id ? lookups.personName?.(id) ?? 'a team member' : 'unassigned');
     const p = parsePayload(evt);
     const taskName = quoted(p.title ?? p.actionTitle ?? lookups.taskTitle(p.actionId ?? p.blockerActionId));
 
     switch (evt.type) {
         // ---------------- Engagement ----------------
         case 'Genesis':
-            return { category: 'Engagement', label: 'Engagement created', details: compact([p.status && `Status: ${p.status}`, p.stage && `Stage: ${humanize(p.stage)}`]), tone: 'info' };
+            return { category: 'Engagement', label: 'Engagement created', details: compact([p.status && `Status: ${engagementStatusLabel(p.status)}`, p.stage && `Stage: ${humanize(p.stage)}`]), tone: 'info' };
         case 'StatusChange': {
             const to = p.toStatus as string | undefined;
             const label = to === 'Started' ? 'Engagement started' : to === 'Closed' ? 'Engagement closed' : to === 'Cancelled' ? 'Engagement cancelled' : 'Engagement status changed';
-            return { category: 'Engagement', label, details: compact([`Status: ${p.fromStatus ?? '?'} → ${to ?? '?'}`]), tone: to === 'Cancelled' ? 'negative' : 'positive' };
+            return { category: 'Engagement', label, details: compact([`Status: ${engagementStatusLabel(p.fromStatus) || '?'} → ${engagementStatusLabel(to) || '?'}`]), tone: to === 'Cancelled' ? 'negative' : 'positive' };
         }
         case 'ResponsibleStaffChanged':
             return {
                 category: 'Engagement',
                 label: 'Responsible staff changed',
-                details: compact([`Staff: ${lookups.personName?.(p.fromStaffId) ?? p.fromStaffId ?? '?'} → ${lookups.personName?.(p.toStaffId) ?? p.toStaffId ?? '?'}`]),
+                details: compact([`Staff: ${staffName(p.fromStaffId)} → ${staffName(p.toStaffId)}`]),
                 tone: 'info',
             };
         case 'StageChange':

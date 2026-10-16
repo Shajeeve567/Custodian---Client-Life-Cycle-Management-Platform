@@ -48,7 +48,7 @@ import {
     Flag,
 } from 'lucide-react';
 import { MeetingList } from './MeetingList';
-import { documentTypeLabel, engagementCode as formatEngagementCode, engagementStatusLabel, formatDate, personLabel, taskSourceLabel, taskTypeLabel } from '../utils/displayLabels';
+import { documentTypeLabel, readableServerText, engagementOpenedLabel, engagementStatusLabel, formatDate, personLabel, taskSourceLabel, taskTypeLabel } from '../utils/displayLabels';
 
 interface WorkspaceStageViewProps {
     engagementId: string;
@@ -832,7 +832,6 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
         .join('')
         .slice(0, 2)
         .toUpperCase() || 'CL';
-    const engagementCode = formatEngagementCode(engagementId);
     const actorName = (actor?: string | null) => personLabel(actor, { users: teamUsers, currentUserId: userId });
 
     // The REAL, gate-checked stage — what PUT /stage actually operates on. Drives the
@@ -915,9 +914,11 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
                                 {clientName}
                             </h1>
-                            <span className="px-2.5 py-0.5 rounded text-xs font-mono font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                                {engagementCode}
-                            </span>
+                            {engagement?.createdAt && (
+                                <span className="px-2.5 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                    {engagementOpenedLabel(engagement.createdAt)}
+                                </span>
+                            )}
                             <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
                                 isTerminalStatus
                                     ? 'bg-slate-100 text-slate-600 border-slate-200'
@@ -1083,7 +1084,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                     {readiness.blockers.map((b, i) => (
                                         <li key={i} className="text-xs text-slate-700 flex items-start gap-1.5">
                                             <span className="font-semibold text-slate-500 min-w-[68px]">{b.kind}:</span>
-                                            <span>{b.reason}</span>
+                                            <span>{readableServerText(b.reason)}</span>
                                         </li>
                                     ))}
                                 </ul>

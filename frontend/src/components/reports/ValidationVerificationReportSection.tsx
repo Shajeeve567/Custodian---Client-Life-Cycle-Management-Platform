@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { ClientProfile, Engagement } from '../../types';
 import { IdentityApi, ReportsApi, WorkflowApi } from '../../services/api';
 import { ReportDownloadButton } from './ReportDownloadButton';
-import { engagementCode } from '../../utils/displayLabels';
+import { engagementOptionLabel } from '../../utils/displayLabels';
 
 /** yyyy-MM-dd of a UTC day, the format the report API takes. */
 const utcDate = (date: Date) => date.toISOString().slice(0, 10);
@@ -40,7 +40,7 @@ export const ValidationVerificationReportSection: React.FC = () => {
                     const client = clients.find((c) => c.id === e.clientId);
                     return {
                         value: e.engagementId,
-                        label: `${client?.name ?? 'Unnamed client'} · ${engagementCode(e.engagementId)}`,
+                        label: engagementOptionLabel(e, client?.name ?? 'Unnamed client'),
                     };
                 })
                 .sort((a, b) => a.label.localeCompare(b.label)),

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { DocumentMetadata, Engagement, ClientAction, ClientProfile, UserAccountResponse } from '../types';
 import { DocumentsApi, IdentityApi, WorkflowApi } from '../services/api';
-import { documentTypeLabel, engagementCode, engagementStatusLabel, personLabel, stageLabel } from '../utils/displayLabels';
+import { documentTypeLabel, engagementOptionLabel, formatDate, personLabel, stageLabel } from '../utils/displayLabels';
 import {
     FileText,
     ShieldCheck,
@@ -406,7 +406,7 @@ export const DocumentVaultView: React.FC = () => {
                         >
                             {engagements.map((eng) => (
                                 <option key={eng.engagementId} value={eng.engagementId}>
-                                    {clientNameFor(eng)} · {engagementCode(eng.engagementId)} ({stageLabel(eng.stage)}, {engagementStatusLabel(eng.status)})
+                                    {engagementOptionLabel(eng, clientNameFor(eng))}
                                 </option>
                             ))}
                             {engagements.length === 0 && <option value="">No engagements yet</option>}
@@ -698,7 +698,7 @@ export const DocumentVaultView: React.FC = () => {
                     </div>
 
                     <div className="text-xs text-slate-500">
-                        {activeEngagement ? `${clientNameFor(activeEngagement)} · ${engagementCode(activeEngagement.engagementId)}` : ''}
+                        {activeEngagement ? `${clientNameFor(activeEngagement)} · ${stageLabel(activeEngagement.stage)}` : ''}
                     </div>
                 </div>
 
@@ -852,7 +852,7 @@ export const DocumentVaultView: React.FC = () => {
                                                 <div className="text-[11px] text-slate-600 space-y-0.5">
                                                     <div className="flex items-center gap-1">
                                                         <span className="text-slate-400 font-medium">Issued:</span>
-                                                        <span className="font-semibold text-slate-700">{doc.issueDate || '—'}</span>
+                                                        <span className="font-semibold text-slate-700">{formatDate(doc.issueDate)}</span>
                                                     </div>
                                                     <div className="flex items-center gap-1">
                                                         <span className="text-slate-400 font-medium">Expires:</span>
@@ -861,7 +861,7 @@ export const DocumentVaultView: React.FC = () => {
                                                                 ? 'text-rose-600 font-bold'
                                                                 : 'text-slate-700'
                                                         }`}>
-                                                            {doc.expiryDate || '—'}
+                                                            {formatDate(doc.expiryDate)}
                                                         </span>
                                                     </div>
                                                 </div>

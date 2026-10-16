@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { personLabel, taskSourceLabel, taskTypeLabel } from '../utils/displayLabels';
 import { ClientActionResponse } from '../types/clientAction';
 import './StaffActionHistoryView.css';
-import { API_BASE } from '../services/api';
+import { API_BASE, request } from '../services/api';
 
 interface StaffActionHistoryViewProps {
     engagementId: string;
@@ -38,21 +38,12 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
                 url += `&status=${encodeURIComponent(statusFilter)}`;
             }
 
-            const response = await fetch(url, {
+            // The shared request helper sends the signed-in user's token and turns failures into readable messages.
+            const data = await request<ClientActionResponse[]>(url, {
                 method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Tenant-ID': tenantId,
-                },
+                headers: { 'X-Tenant-ID': tenantId },
             });
-
-            if (!response.ok) {
-                const text = await response.text();
-                throw new Error(text || `Failed to load action history: HTTP ${response.status}`);
-            }
-
-            const data: ClientActionResponse[] = await response.json();
-            setActions(data);
+            setActions(data || []);
         } catch (err: any) {
             setError(err.message || 'An unexpected error occurred while loading action history.');
         } finally {
@@ -67,21 +58,11 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
     const handleCompleteAction = async (actionId: string) => {
         setCompletingId(actionId);
         try {
-            const response = await fetch(
-                `${baseUrl}/api/engagements/${currentEngagementId}/actions/${actionId}/complete`,
-                {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Tenant-ID': tenantId,
-                    },
-                    body: JSON.stringify({ completedByActor: staffActorName }),
-                }
-            );
-
-            if (!response.ok) {
-                throw new Error(`Failed to complete action: HTTP ${response.status}`);
-            }
+            await request(`${baseUrl}/api/engagements/${currentEngagementId}/actions/${actionId}/complete`, {
+                method: 'PUT',
+                headers: { 'X-Tenant-ID': tenantId },
+                body: JSON.stringify({ completedByActor: staffActorName }),
+            });
 
             await fetchActionHistory();
         } catch (err: any) {
@@ -286,10 +267,10 @@ export const StaffActionHistoryView: React.FC<StaffActionHistoryViewProps> = ({
 
                             {/* Staff Source Metadata Section (Hidden in Client View) */}
                             {!isClientView && action.sourceMetadata && (
-                                <div className="staff-metadata-drawer">
-                                    <span className="metadata-header-label">🔍 Staff Source Audit Payload:</span>
+                                <details className="staff-metadata-drawer">
+                                    <summary className="metadata-header-label" style={{ cursor: 'pointer' }}>Technical details</summary>
                                     {formatMetadata(action.sourceMetadata)}
-                                </div>
+                                </details>
                             )}
 
                             {/* Action Execution Button for Pending items */}

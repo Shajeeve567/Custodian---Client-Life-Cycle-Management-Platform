@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { ClientProfile, Engagement, UserAccountResponse } from '../../types';
 import { IdentityApi, ReportsApi, WorkflowApi } from '../../services/api';
 import { ReportDownloadButton } from './ReportDownloadButton';
-import { engagementCode } from '../../utils/displayLabels';
+import { engagementOptionLabel } from '../../utils/displayLabels';
 import { ValidationVerificationReportSection } from './ValidationVerificationReportSection';
 import { ProofOfDeliveryReportSection } from './ProofOfDeliveryReportSection';
 
@@ -79,7 +79,7 @@ export const ReportsView: React.FC = () => {
                     const client = clients.find((c) => c.id === e.clientId);
                     return {
                         value: e.engagementId,
-                        label: `${client?.name ?? 'Unnamed client'} · ${engagementCode(e.engagementId)}`,
+                        label: engagementOptionLabel(e, client?.name ?? 'Unnamed client'),
                     };
                 })
                 .sort((a, b) => a.label.localeCompare(b.label)),

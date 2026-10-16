@@ -7,7 +7,7 @@ import { ReportDownloadButton } from './reports/ReportDownloadButton';
 import { UploadEvidenceModal } from './UploadEvidenceModal';
 import { SubmitRequirementModal } from './SubmitRequirementModal';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
-import { complianceStatusLabel, documentTypeLabel, engagementCode, engagementStatusLabel, taskTypeLabel, verificationStatusLabel } from '../utils/displayLabels';
+import { complianceStatusLabel, documentTypeLabel, readableServerText, engagementOpenedLabel, engagementStatusLabel, taskTypeLabel, verificationStatusLabel } from '../utils/displayLabels';
 import {
     Shield,
     CheckCircle2,
@@ -415,6 +415,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
     const {
         engagementId,
         status,
+        createdAt,
         currentStageNumber,
         currentStageName,
         currentStageTagline,
@@ -439,7 +440,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                             Staff Preview Mode
                         </span>
                         <span>
-                            You are previewing how client stakeholders see this onboarding portal for <strong>{engagementCode(engagementId)}</strong>.
+                            You are previewing how client stakeholders see this onboarding portal for this engagement ({engagementOpenedLabel(createdAt).toLowerCase()}).
                         </span>
                     </div>
                     <Link
@@ -463,8 +464,8 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                                 <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
                                     Client Onboarding Portal
                                 </h1>
-                                <span className="px-2.5 py-0.5 rounded text-xs font-mono font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                                    {engagementCode(engagementId)}
+                                <span className="px-2.5 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                    {engagementOpenedLabel(createdAt)}
                                 </span>
                                 <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
                                     Status: {engagementStatusLabel(status)}
@@ -505,7 +506,7 @@ export const ClientPortalView: React.FC<ClientPortalViewProps> = ({ engagementId
                         <Clock className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
                         <span className="leading-relaxed">
                             <strong className="text-slate-900 font-semibold">Active Condition: </strong>
-                            {conditionDescription}
+                            {readableServerText(conditionDescription)}
                         </span>
                     </div>
                 )}

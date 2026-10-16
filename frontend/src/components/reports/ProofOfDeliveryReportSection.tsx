@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { ClientProfile, Engagement } from '../../types';
 import { IdentityApi, ReportsApi, WorkflowApi } from '../../services/api';
 import { ReportDownloadButton } from './ReportDownloadButton';
-import { engagementCode, engagementStatusLabel, stageLabel } from '../../utils/displayLabels';
+import { engagementOptionLabel, engagementStatusLabel, stageLabel } from '../../utils/displayLabels';
 
 
 /**
@@ -52,7 +52,7 @@ export const ProofOfDeliveryReportSection: React.FC = () => {
                     const clientLabel = client?.name ?? 'Unnamed client';
                     return {
                         value: e.engagementId,
-                        label: `${clientLabel} · ${engagementCode(e.engagementId)} (${stageLabel(e.stage)} · ${engagementStatusLabel(e.status)})`,
+                        label: engagementOptionLabel(e, clientLabel),
                     };
                 })
                 .sort((a, b) => a.label.localeCompare(b.label)),

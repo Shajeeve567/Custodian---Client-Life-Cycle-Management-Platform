@@ -13,7 +13,7 @@ import {
     CheckCircle2,
 } from 'lucide-react';
 import MissedMeetingsPanel from '../components/MissedMeetingsPanel';
-import { engagementCode, stageLabel } from '../utils/displayLabels';
+import { readableServerText, stageLabel } from '../utils/displayLabels';
 
 function formatOverdue(hours: number): string {
     if (hours < 1) return '<1h';
@@ -287,9 +287,6 @@ export const StallQueuePage: React.FC = () => {
                                                             <div className="font-semibold text-slate-900 truncate max-w-[200px]">
                                                                 {clientName}
                                                             </div>
-                                                            <div className="text-[11px] font-mono text-slate-400">
-                                                                {engagementCode(item.engagementId)}
-                                                            </div>
                                                             <div className="text-[10px] font-semibold text-indigo-600 mt-0.5">
                                                                 {stageLabel(item.engagementStage)}
                                                             </div>
@@ -301,7 +298,7 @@ export const StallQueuePage: React.FC = () => {
                                                     <div className="text-[11px] text-slate-500 mt-0.5">Stage {item.blockerStageNumber}</div>
                                                 </td>
                                                 <td className="px-4 py-4 align-top">
-                                                    <div className="text-xs text-slate-700 max-w-[240px]">{item.nextAction}</div>
+                                                    <div className="text-xs text-slate-700 max-w-[240px]">{readableServerText(item.nextAction)}</div>
                                                     {item.nextActionResponsibleParty && (
                                                         <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mt-0.5">
                                                             Waiting on {item.nextActionResponsibleParty}
@@ -362,7 +359,7 @@ export const StallQueuePage: React.FC = () => {
                     }}
                     tenantId={tenantId}
                     engagementId={interveningOn.engagementId}
-                    engagementLabel={`${resolveClientName(interveningOn.clientId)} — ${engagementCode(interveningOn.engagementId)}`}
+                    engagementLabel={`${resolveClientName(interveningOn.clientId)} — ${stageLabel(interveningOn.engagementStage)}`}
                     blockerActionId={(interveningOn as any).blockerActionId ?? null}
                     blockerActionTitle={interveningOn.blockerActionTitle}
                 />

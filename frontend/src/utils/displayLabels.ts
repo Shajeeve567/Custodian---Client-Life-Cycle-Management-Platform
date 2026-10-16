@@ -23,9 +23,19 @@ export function isGuid(value: string | null | undefined): boolean {
     return Boolean(value && GUID_PATTERN.test(value));
 }
 
-/** Short human reference for an engagement, e.g. "ENG-3F2A1B". */
-export function engagementCode(engagementId: string | null | undefined): string {
-    return engagementId ? `ENG-${engagementId.slice(0, 6).toUpperCase()}` : 'ENG-—';
+/** "Opened 12/10/2026" — tells apart several engagements for the same client without showing ids. */
+export function engagementOpenedLabel(createdAt: string | null | undefined): string {
+    return createdAt ? `Opened ${formatDate(createdAt)}` : '';
+}
+
+/** Picker label for an engagement: client, stage, status and opened date. */
+export function engagementOptionLabel(
+    engagement: { stage?: string | null; status?: string | null; createdAt?: string | null },
+    clientName: string
+): string {
+    const details = [stageLabel(engagement.stage), engagementStatusLabel(engagement.status)].filter(Boolean).join(', ');
+    const opened = engagement.createdAt ? `, opened ${formatDate(engagement.createdAt)}` : '';
+    return `${clientName}${details ? ` — ${details}` : ''}${opened}`;
 }
 
 const TASK_TYPE_LABELS: Record<string, string> = {
@@ -148,4 +158,21 @@ export function formatDate(value: string | null | undefined): string {
     const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
     const date = dateOnly ? new Date(+dateOnly[1], +dateOnly[2] - 1, +dateOnly[3]) : new Date(value);
     return isNaN(date.getTime()) ? value : date.toLocaleDateString();
+}
+
+const STAGE_KEYS = /\b(Onboarding|DocumentCollection|Verification|Execution|Closure)\b/g;
+const DOCUMENT_TYPE_TOKEN = /\b[A-Z]{2,}(?:_[A-Z]+)+\b/g;
+const TASK_TYPE_TOKEN = /\b(KycDocument|SignAgreement|ProofOfAddress|DocumentUpload|CustomTask|ClientInformation)\b/g;
+
+/**
+ * Sentences written by the backend (gate reasons, readiness blockers, next actions) can name
+ * internal values, e.g. "Required document 'KYC_PASSPORT' has not been submitted." This swaps
+ * those tokens for their labels and leaves the rest of the sentence alone.
+ */
+export function readableServerText(text: string | null | undefined): string {
+    if (!text) return '';
+    return text
+        .replace(DOCUMENT_TYPE_TOKEN, (token) => documentTypeLabel(token))
+        .replace(STAGE_KEYS, (token) => stageLabel(token))
+        .replace(TASK_TYPE_TOKEN, (token) => taskTypeLabel(token));
 }

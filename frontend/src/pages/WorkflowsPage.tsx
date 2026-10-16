@@ -4,7 +4,7 @@ import { DashboardLayout } from '../components/DashboardLayout';
 import { StaffActionHistoryView } from '../components/StaffActionHistoryView';
 import { IdentityApi, WorkflowApi } from '../services/api';
 import { ClientProfile, Engagement } from '../types';
-import { engagementCode, engagementStatusLabel } from '../utils/displayLabels';
+import { engagementOptionLabel } from '../utils/displayLabels';
 
 export const WorkflowsPage: React.FC = () => {
     const { tenantId, token } = useAuth();
@@ -48,7 +48,7 @@ export const WorkflowsPage: React.FC = () => {
                             >
                                 {engagements.map((eng) => (
                                     <option key={eng.engagementId} value={eng.engagementId}>
-                                        {clients.find((c) => c.id === eng.clientId)?.name || 'Unnamed client'} · {engagementCode(eng.engagementId)} ({engagementStatusLabel(eng.status)})
+                                        {engagementOptionLabel(eng, clients.find((c) => c.id === eng.clientId)?.name || 'Unnamed client')}
                                     </option>
                                 ))}
                             </select>

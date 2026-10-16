@@ -172,7 +172,7 @@ export const EditTaskModal: React.FC<EditTaskModalProps> = ({ action, engagement
                         className={inputClass}
                     >
                         {!isQuestion && !TASK_TYPE_OPTIONS.some((o) => o.value === action.type) && (
-                            <option value={action.type}>{action.type}</option>
+                            <option value={action.type}>{taskTypeLabel(action.type)}</option>
                         )}
                         {TASK_TYPE_OPTIONS.map((o) => (
                             <option key={o.value} value={o.value}>{o.label}</option>
