@@ -76,12 +76,13 @@ public sealed class PdfReportRenderer : IReportRenderer
             column.Item().Text("Custodian").FontSize(9).Bold().FontColor(AccentColor);
             column.Item().Text(meta.Title).FontSize(16).Bold();
 
-            var generatedAt = meta.GeneratedAtUtc.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+            // Shown in the viewer's time zone when the download carried one (see ReportTimeZone).
+            var generatedAt = $"{ReportTimeZone.Convert(meta.GeneratedAtUtc).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} {ReportTimeZone.OffsetLabel}";
             if (meta.Audience == ReportAudience.Client)
             {
                 // CSTD-14: a client's copy never shows the tenant id (an internal identifier).
                 column.Item().Text($"Prepared for {meta.GeneratedBy}").FontColor(MutedColor);
-                column.Item().Text($"Generated {generatedAt} UTC").FontColor(MutedColor);
+                column.Item().Text($"Generated {generatedAt}").FontColor(MutedColor);
             }
             else
             {
@@ -89,7 +90,7 @@ public sealed class PdfReportRenderer : IReportRenderer
                     ? $"Tenant {meta.TenantId}"
                     : $"{meta.TenantDisplayName} ({meta.TenantId})";
                 column.Item().Text(tenant).FontColor(MutedColor);
-                column.Item().Text($"Generated {generatedAt} UTC by {meta.GeneratedBy}").FontColor(MutedColor);
+                column.Item().Text($"Generated {generatedAt} by {meta.GeneratedBy}").FontColor(MutedColor);
             }
             column.Item().Text($"Source: {meta.DataSource}").FontColor(MutedColor);
         });

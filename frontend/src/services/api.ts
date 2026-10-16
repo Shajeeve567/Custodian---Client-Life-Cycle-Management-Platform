@@ -313,6 +313,13 @@ export async function downloadReport(url: string, params: ReportParams = {}): Pr
     Object.entries(params).forEach(([key, value]) => {
         if (value !== undefined && value !== null && value !== '') query.append(key, String(value));
     });
+    // The viewer's IANA time zone (e.g. "Asia/Colombo"), so the PDF/CSV show local times rather than UTC.
+    try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (tz && !query.has('tz')) query.append('tz', tz);
+    } catch {
+        // Older browsers without Intl time zones keep UTC reports.
+    }
     const fullUrl = query.toString() ? `${url}${url.includes('?') ? '&' : '?'}${query.toString()}` : url;
 
     let response: Response;

@@ -104,9 +104,9 @@ public static class ProofOfDeliveryReportBuilder
             new("Stage", eng.Stage),
             new("Stage progress", $"{eng.StageProgressPercentage}%"),
             new("Responsible staff", eng.StaffId),
-            new("Created at (UTC)", eng.CreatedAt.ToString(ReportValue.DateTimeFormat, CultureInfo.InvariantCulture)),
-            new("Closed at (UTC)", eng.ClosedAt.HasValue
-                ? eng.ClosedAt.Value.ToString(ReportValue.DateTimeFormat, CultureInfo.InvariantCulture)
+            new($"Created at {ReportTimeZone.ColumnSuffix}", ReportValue.FormatDateTime(eng.CreatedAt)),
+            new($"Closed at {ReportTimeZone.ColumnSuffix}", eng.ClosedAt.HasValue
+                ? ReportValue.FormatDateTime(eng.ClosedAt.Value)
                 : "Open / In progress")
         };
 
@@ -130,7 +130,7 @@ public static class ProofOfDeliveryReportBuilder
                 : "None"),
             new("Genesis hash (abbr)", AbbreviateHash(v.GenesisHash)),
             new("Chain tip hash (abbr)", AbbreviateHash(v.StoredChainTipHash)),
-            new("Verified at (UTC)", v.VerifiedAtUtc.ToString(ReportValue.DateTimeFormat, CultureInfo.InvariantCulture)),
+            new($"Verified at {ReportTimeZone.ColumnSuffix}", ReportValue.FormatDateTime(v.VerifiedAtUtc)),
             new("Live-head consistency", v.IsConsistentWithLiveHead
                 ? "Verified (consistent with live database head)"
                 : $"Historical snapshot only (sequence {v.LastSequenceNumber ?? 0}; live head differs/unverified)")
@@ -206,7 +206,7 @@ public static class ProofOfDeliveryReportBuilder
         {
             new("Seq #", ReportColumnAlignment.Right, 0.6f),
             new("Event ID (abbr)", ReportColumnAlignment.Left, 1.1f),
-            new("Timestamp (UTC)", ReportColumnAlignment.Left, 1.5f),
+            new($"Timestamp {ReportTimeZone.ColumnSuffix}", ReportColumnAlignment.Left, 1.5f),
             new("Actor", ReportColumnAlignment.Left, 1.4f),
             new("Event Type", ReportColumnAlignment.Left, 2.2f),
             new("Previous Hash (abbr)", ReportColumnAlignment.Left, 1.2f),
@@ -217,7 +217,7 @@ public static class ProofOfDeliveryReportBuilder
         {
             e.SequenceNumber,
             AbbreviateId(e.EventId),
-            e.Timestamp.ToString(ReportValue.DateTimeFormat, CultureInfo.InvariantCulture),
+            ReportValue.FormatDateTime(e.Timestamp),
             e.Actor,
             e.Type,
             AbbreviateHash(e.PreviousHash),
@@ -244,7 +244,7 @@ public static class ProofOfDeliveryReportBuilder
         {
             e.SequenceNumber,
             e.EventId.ToString("D"),
-            e.Timestamp.ToString(ReportValue.DateTimeFormat, CultureInfo.InvariantCulture),
+            ReportValue.FormatDateTime(e.Timestamp),
             e.Actor,
             e.Type,
             e.PreviousHash ?? string.Empty,
