@@ -46,6 +46,7 @@ const TASK_TYPE_LABELS: Record<string, string> = {
     DocumentUpload: 'Document upload',
     RequestInformation: 'Question',
     ClientInformation: 'Information request',
+    Requirement: 'Information request',
     StallResolved: 'Follow-up',
 };
 

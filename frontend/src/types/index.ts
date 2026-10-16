@@ -185,6 +185,9 @@ export interface ClientAction {
     sourceMetadata?: string | null;
     // Backend JSON field (staff view); `assignedRole` above is kept for older callers.
     assignedToRole?: 'Client' | 'Staff' | string | null;
+    // Evidence verification outcome, when the task is linked to a document.
+    verificationStatus?: string | null;
+    verificationReason?: string | null;
 }
 
 // Staff edit of a Pending, staff-managed task (PATCH /actions/{id}). Omitted fields are unchanged.

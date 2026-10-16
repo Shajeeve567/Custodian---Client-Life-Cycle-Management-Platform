@@ -1680,6 +1680,14 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                     <div className="flex items-center gap-1.5">
                                         <Activity className="w-4 h-4 text-indigo-600" />
                                         <h3 className="text-sm font-bold text-slate-900">Stage Action Queue</h3>
+                                        <button
+                                            type="button"
+                                            onClick={() => navigate(`/actions?engagementId=${engagementId}`)}
+                                            className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
+                                            title="Dates, deadlines and who completed each task"
+                                        >
+                                            Full history
+                                        </button>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[11px]">

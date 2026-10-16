@@ -73,6 +73,16 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                                         Stall Queue
                                     </Link>
                                     <Link
+                                        to="/actions"
+                                        className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition ${
+                                            location.pathname === '/actions'
+                                                ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                                                : 'border-slate-200 hover:bg-slate-50 text-slate-600'
+                                        }`}
+                                    >
+                                        Action History
+                                    </Link>
+                                    <Link
                                         to="/reports"
                                         className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition ${
                                             location.pathname === '/reports'
@@ -156,6 +166,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
                         {role !== 'Client' && (
                             <>
                                 <Link to="/stall-queue" className="hover:text-indigo-600 font-medium transition">Stall Queue</Link>
+                                <Link to="/actions" className="hover:text-indigo-600 font-medium transition">Action History</Link>
                                 <Link to="/documents" className="hover:text-indigo-600 font-medium transition">Document Vault</Link>
                                 <Link to="/audit" className="hover:text-indigo-600 font-medium transition">Audit Log</Link>
                                 <Link to="/reports" className="hover:text-indigo-600 font-medium transition">Reports</Link>
