@@ -1,4 +1,5 @@
 import { AuditEvent } from '../../types';
+import { parseApiJson } from '../../services/api';
 import { engagementStatusLabel } from '../../utils/displayLabels';
 
 /**
@@ -29,7 +30,8 @@ type Payload = Record<string, any>;
 
 export const parsePayload = (evt: AuditEvent): Payload => {
     try {
-        const parsed = JSON.parse(evt.payload || '{}');
+        // Same UTC handling as API responses, so times inside event details show in local time.
+        const parsed = parseApiJson(evt.payload || '{}');
         return parsed && typeof parsed === 'object' ? parsed : {};
     } catch {
         return {};

@@ -188,6 +188,22 @@ function toUserFacingMessage(status: number, serverMessage: string | null): stri
     return message;
 }
 
+// The backend stores times in UTC but serialises them without a zone ("2026-10-20T09:22:00"),
+// which browsers read as local time — every time showed 5h30 early in Sri Lanka. Timestamps
+// without a zone are marked as UTC here so toLocaleString() shows the user's local time.
+// Fields that hold a calendar date rather than a moment are left as they are.
+const NAIVE_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+const CALENDAR_DATE_FIELDS = new Set(['issueDate', 'expiryDate']);
+
+export function parseApiJson(text: string): any {
+    if (!text) return null;
+    return JSON.parse(text, (key, value) =>
+        typeof value === 'string' && NAIVE_TIMESTAMP.test(value) && !CALENDAR_DATE_FIELDS.has(key)
+            ? `${value}Z`
+            : value
+    );
+}
+
 export async function request<T = any>(
     url: string,
     options: RequestInit & { token?: string; skipAuthHeader?: boolean } = {}
@@ -201,7 +217,7 @@ export async function request<T = any>(
     }
 
     if (contentType.includes('application/json')) {
-        return (await response.json()) as T;
+        return parseApiJson(await response.text()) as T;
     }
 
     // plain text response
@@ -444,7 +460,7 @@ export const WorkflowApi = {
             method: 'GET',
             headers: { 'X-Tenant-ID': tenantId },
         });
-        const items = (await response.json()) as StallQueueItem[];
+        const items = parseApiJson(await response.text()) as StallQueueItem[];
         const total = Number(response.headers.get('X-Total-Count'));
         return { items, totalCount: Number.isFinite(total) && total > 0 ? total : items.length };
     },

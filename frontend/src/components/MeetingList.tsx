@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { WorkflowApi, ApiError } from '../services/api';
 import { Meeting, CreateMeetingRequest } from '../types';
-import { Calendar, Plus, RefreshCw, Loader2, X, AlertTriangle, Link2 } from 'lucide-react';
+import { Calendar, Clock, Plus, RefreshCw, Loader2, X, AlertTriangle, Link2, Users } from 'lucide-react';
 
 interface MeetingListProps {
     engagementId: string;
@@ -111,10 +111,11 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
 
     const handleReschedule = async (meeting: Meeting) => {
         const input = window.prompt(
-            `Reschedule "${meeting.purpose}" — enter new date/time (YYYY-MM-DDTHH:MM):`,
+            `Reschedule "${meeting.purpose}" — enter the new date and time in your local time (YYYY-MM-DD HH:MM):`,
             '');
         if (!input) return;
-        const newDate = new Date(input);
+        // Accept "YYYY-MM-DD HH:MM" or "YYYY-MM-DDTHH:MM"; both are read as local time.
+        const newDate = new Date(input.trim().replace(' ', 'T'));
         if (isNaN(newDate.getTime()) || newDate.getTime() <= Date.now()) {
             alert('Invalid or past date.');
             return;
@@ -140,24 +141,29 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
 
     return (
         <div className="bg-white/85 backdrop-blur-md rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-4">
-            <div className="flex items-center justify-between">
-                <div>
+            <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b border-slate-100">
+                <div className="min-w-0">
                     <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                         <Calendar className="w-4 h-4 text-indigo-600" />
                         Meetings
+                        {meetings.length > 0 && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                                {meetings.length}
+                            </span>
+                        )}
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                        Schedule and manage client discussions for this engagement.
+                        Schedule and manage client discussions for this engagement. Times are shown in your local time.
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                     <button onClick={load} disabled={isLoading}
                         className="p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 transition disabled:opacity-50"
-                        title="Refresh">
+                        title="Refresh" aria-label="Refresh meetings">
                         <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
                     </button>
                     <button onClick={openCreate}
-                        className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition inline-flex items-center gap-1.5">
+                        className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition inline-flex items-center gap-1.5">
                         <Plus className="w-3.5 h-3.5" />
                         Schedule Meeting
                     </button>
@@ -165,71 +171,100 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
             </div>
 
             {isLoading && meetings.length === 0 ? (
-                <div className="py-8 text-center">
+                <div className="py-8 text-center space-y-2">
                     <Loader2 className="w-5 h-5 animate-spin text-indigo-600 mx-auto" />
+                    <p className="text-xs text-slate-500">Loading meetings...</p>
                 </div>
             ) : error ? (
                 <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800">{error}</div>
             ) : meetings.length === 0 ? (
-                <div className="py-8 text-center border border-dashed border-slate-300 rounded-xl">
+                <div className="py-8 text-center border border-dashed border-slate-300 rounded-xl space-y-2">
                     <p className="text-xs text-slate-500">No meetings scheduled yet.</p>
+                    <button onClick={openCreate}
+                        className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 hover:underline">
+                        Schedule the first meeting
+                    </button>
                 </div>
             ) : (
-                <div className="space-y-2">
-                    {meetings.map(m => (
-                        <div key={m.meetingId} className="p-3 rounded-xl border border-slate-200 bg-white flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="font-semibold text-slate-900 text-sm truncate max-w-[260px]">{m.purpose}</span>
-                                    {statusBadge(m.status)}
-                                    {m.importance === 'Important' && (
-                                        <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">IMPORTANT</span>
-                                    )}
-                                    {m.rescheduledFromMeetingId && (
-                                        <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
-                                            <Link2 className="w-3 h-3" /> rescheduled
-                                        </span>
-                                    )}
+                <ul className="space-y-3">
+                    {meetings.map(m => {
+                        const when = new Date(m.scheduledAtUtc);
+                        const isPastDue = m.status === 'Scheduled' && when.getTime() < Date.now();
+                        return (
+                            <li key={m.meetingId}
+                                className={`p-4 rounded-xl border bg-white flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${isPastDue ? 'border-amber-200' : 'border-slate-200'}`}>
+                                <div className="flex items-start gap-3 min-w-0 flex-1">
+                                    {/* Date block: the first thing people look for */}
+                                    <div className="shrink-0 w-14 rounded-lg border border-indigo-100 bg-indigo-50/60 text-center py-1.5">
+                                        <div className="text-[10px] font-bold uppercase text-indigo-600">
+                                            {when.toLocaleDateString([], { month: 'short' })}
+                                        </div>
+                                        <div className="text-lg font-bold text-slate-900 leading-tight">{when.getDate()}</div>
+                                        <div className="text-[10px] text-slate-500">{when.toLocaleDateString([], { weekday: 'short' })}</div>
+                                    </div>
+                                    <div className="min-w-0 space-y-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <span className="font-semibold text-slate-900 text-sm break-words">{m.purpose}</span>
+                                            {statusBadge(m.status)}
+                                            {isPastDue && (
+                                                <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border bg-amber-50 text-amber-700 border-amber-200">Past due</span>
+                                            )}
+                                            {m.importance === 'Important' && (
+                                                <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border bg-amber-100 text-amber-800 border-amber-200">Important</span>
+                                            )}
+                                            {m.type === 'Intervention' && (
+                                                <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border bg-violet-50 text-violet-700 border-violet-200">Intervention</span>
+                                            )}
+                                        </div>
+                                        <div className="text-xs text-slate-600 flex flex-wrap items-center gap-x-3 gap-y-1">
+                                            <span className="inline-flex items-center gap-1">
+                                                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                                                {when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                {m.durationMinutes ? ` · ${m.durationMinutes} min` : ''}
+                                            </span>
+                                            {m.participants.length > 0 && (
+                                                <span className="inline-flex items-center gap-1 min-w-0 break-all">
+                                                    <Users className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                                    {m.participants.join(', ')}
+                                                </span>
+                                            )}
+                                            {m.rescheduledFromMeetingId && (
+                                                <span className="inline-flex items-center gap-1 text-slate-500">
+                                                    <Link2 className="w-3 h-3" /> Rescheduled
+                                                </span>
+                                            )}
+                                        </div>
+                                        {m.rescheduleReason && (
+                                            <div className="text-[11px] text-slate-500 italic break-words">
+                                                Reason: {m.rescheduleReason}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="text-xs text-slate-600 mt-1">
-                                    {new Date(m.scheduledAtUtc).toLocaleString()}
-                                    {m.durationMinutes ? ` · ${m.durationMinutes} min` : ''}
-                                    {m.type === 'Intervention' ? ' · Intervention' : ''}
-                                </div>
-                                {m.participants.length > 0 && (
-                                    <div className="text-[11px] text-slate-500 mt-0.5 truncate">
-                                        With: {m.participants.join(', ')}
+                                {m.status === 'Scheduled' && (
+                                    <div className="flex flex-wrap items-center gap-1.5 lg:justify-end shrink-0">
+                                        <button onClick={() => handleStatus(m.meetingId, 'Completed')}
+                                            className="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-semibold">
+                                            Complete
+                                        </button>
+                                        <button onClick={() => handleStatus(m.meetingId, 'Missed')}
+                                            className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-800 text-xs font-semibold">
+                                            Missed
+                                        </button>
+                                        <button onClick={() => handleReschedule(m)}
+                                            className="px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-xs font-semibold">
+                                            Reschedule
+                                        </button>
+                                        <button onClick={() => handleStatus(m.meetingId, 'Cancelled')}
+                                            className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold">
+                                            Cancel
+                                        </button>
                                     </div>
                                 )}
-                                {m.rescheduleReason && (
-                                    <div className="text-[11px] text-slate-500 mt-0.5 italic">
-                                        Reason: {m.rescheduleReason}
-                                    </div>
-                                )}
-                            </div>
-                            {m.status === 'Scheduled' && (
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                    <button onClick={() => handleStatus(m.meetingId, 'Completed')}
-                                        className="px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[11px] font-bold">
-                                        Complete
-                                    </button>
-                                    <button onClick={() => handleStatus(m.meetingId, 'Missed')}
-                                        className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-800 text-[11px] font-bold">
-                                        Missed
-                                    </button>
-                                    <button onClick={() => handleReschedule(m)}
-                                        className="px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 text-[11px] font-bold">
-                                        Reschedule
-                                    </button>
-                                    <button onClick={() => handleStatus(m.meetingId, 'Cancelled')}
-                                        className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold">
-                                        Cancel
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    ))}
-                </div>
+                            </li>
+                        );
+                    })}
+                </ul>
             )}
 
             {modalMode === 'create' && (
@@ -260,9 +295,9 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                                     className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500" />
                             </div>
 
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
-                                    <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">When</label>
+                                    <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">When (your local time)</label>
                                     <input type="datetime-local" value={scheduledAt}
                                         onChange={e => setScheduledAt(e.target.value)} disabled={isSubmitting}
                                         className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20" />
@@ -286,7 +321,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                                     className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20" />
                             </div>
 
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
                                     <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">Type</label>
                                     <select value={type} onChange={e => setType(e.target.value as any)} disabled={isSubmitting}
