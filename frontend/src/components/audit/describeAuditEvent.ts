@@ -61,6 +61,26 @@ const formatDate = (value?: string | null) => {
     return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString();
 };
 
+const MEETING_FIELD_LABELS: Record<string, string> = {
+    purpose: 'Purpose',
+    durationMinutes: 'Duration',
+    participants: 'Participants',
+    importance: 'Importance',
+};
+
+/** One edited meeting field as "Purpose: "Kickoff" → "Kickoff call"". */
+const describeMeetingChange = (change: { field?: string; from?: unknown; to?: unknown }): string => {
+    const show = (v: unknown) => {
+        if (v === null || v === undefined || v === '') return 'none';
+        if (Array.isArray(v)) return v.length ? v.join(', ') : 'none';
+        if (change.field === 'durationMinutes') return `${v} min`;
+        if (change.field === 'purpose') return `"${v}"`;
+        return String(v);
+    };
+    const label = MEETING_FIELD_LABELS[change.field ?? ''] ?? humanize(change.field);
+    return `${label}: ${show(change.from)} → ${show(change.to)}`;
+};
+
 /** Date and time in the viewer's local time, e.g. for a meeting slot. */
 const formatDateTime = (value?: string | null) => {
     if (!value) return undefined;
@@ -317,10 +337,20 @@ export function describeAuditEvent(evt: AuditEvent, lookups: AuditLookups): Audi
                 ]),
                 tone: 'warning',
             };
+        case 'meeting.updated':
+            // Edits carry a list of {field, from, to}; an older status-change fallback has none.
+            if (Array.isArray(p.changes)) {
+                return {
+                    category: 'Meetings',
+                    label: 'Meeting details edited',
+                    details: compact([quoted(p.purpose), ...p.changes.map(describeMeetingChange)]),
+                    tone: 'neutral',
+                };
+            }
+        // falls through
         case 'meeting.completed':
         case 'meeting.missed':
-        case 'meeting.cancelled':
-        case 'meeting.updated': {
+        case 'meeting.cancelled': {
             const outcome = evt.type.split('.')[1];
             const labels: Record<string, string> = {
                 completed: 'Meeting completed',

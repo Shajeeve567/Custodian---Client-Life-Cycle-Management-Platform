@@ -8,7 +8,16 @@ interface MeetingListProps {
     tenantId: string;
 }
 
-type ModalMode = 'create' | null;
+type ModalMode = 'create' | 'edit' | null;
+
+/** ISO timestamp -> value for <input type="datetime-local"> in the viewer's local time. */
+const toLocalInput = (iso: string): string => {
+    const d = new Date(iso);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const parseParticipants = (raw: string) => raw.split(',').map(p => p.trim()).filter(Boolean);
 
 export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId }) => {
     const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -26,6 +35,9 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
     const [participantsRaw, setParticipantsRaw] = useState('');
     const [type, setType] = useState<'Normal' | 'Intervention'>('Normal');
     const [importance, setImportance] = useState<'Normal' | 'Important'>('Normal');
+    // Edit mode: the meeting being edited, and the reason asked for when its time changes.
+    const [editing, setEditing] = useState<Meeting | null>(null);
+    const [rescheduleReason, setRescheduleReason] = useState('');
 
     const load = useCallback(async () => {
         if (!tenantId) return;
@@ -50,6 +62,8 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
         setParticipantsRaw('');
         setType('Normal');
         setImportance('Normal');
+        setEditing(null);
+        setRescheduleReason('');
         setFormError(null);
         setIsSubmitting(false);
     };
@@ -58,6 +72,21 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
         resetForm();
         setModalMode('create');
     };
+
+    const openEdit = (meeting: Meeting) => {
+        resetForm();
+        setEditing(meeting);
+        setPurpose(meeting.purpose);
+        setScheduledAt(toLocalInput(meeting.scheduledAtUtc));
+        setDuration(meeting.durationMinutes ?? '');
+        setParticipantsRaw(meeting.participants.join(', '));
+        setType(meeting.type === 'Intervention' ? 'Intervention' : 'Normal');
+        setImportance(meeting.importance === 'Important' ? 'Important' : 'Normal');
+        setModalMode('edit');
+    };
+
+    // True while editing and the date/time differs from the meeting's current slot.
+    const timeChanged = Boolean(editing) && scheduledAt !== '' && scheduledAt !== toLocalInput(editing!.scheduledAtUtc);
 
     const closeModal = () => {
         if (isSubmitting) return;
@@ -83,10 +112,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                 purpose: purpose.trim(),
                 scheduledAtUtc: parsed.toISOString(),
                 durationMinutes: duration === '' ? null : Number(duration),
-                participants: participantsRaw
-                    .split(',')
-                    .map(p => p.trim())
-                    .filter(Boolean),
+                participants: parseParticipants(participantsRaw),
                 importance,
             };
             await WorkflowApi.createMeeting(engagementId, body, tenantId);
@@ -109,24 +135,58 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
         }
     };
 
-    const handleReschedule = async (meeting: Meeting) => {
-        const input = window.prompt(
-            `Reschedule "${meeting.purpose}" — enter the new date and time in your local time (YYYY-MM-DD HH:MM):`,
-            '');
-        if (!input) return;
-        // Accept "YYYY-MM-DD HH:MM" or "YYYY-MM-DDTHH:MM"; both are read as local time.
-        const newDate = new Date(input.trim().replace(' ', 'T'));
-        if (isNaN(newDate.getTime()) || newDate.getTime() <= Date.now()) {
-            alert('Invalid or past date.');
-            return;
-        }
-        const reason = window.prompt('Reason (optional):', '') || undefined;
+    /**
+     * One Edit dialog for everything. A new date/time goes through reschedule (keeps the original
+     * meeting, links the new one and records the reason in the audit log); other details go through
+     * edit, which updates the meeting in place and is audited as "Meeting updated".
+     */
+    const handleEdit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editing) return;
+        setFormError(null);
+
+        if (!purpose.trim()) { setFormError('Purpose is required.'); return; }
+        const parsed = new Date(scheduledAt);
+        if (isNaN(parsed.getTime())) { setFormError('Scheduled time is invalid.'); return; }
+        if (timeChanged && parsed.getTime() <= Date.now()) { setFormError('The new time must be in the future.'); return; }
+
+        const durationMinutes = duration === '' ? null : Number(duration);
+        const participants = parseParticipants(participantsRaw);
+        const detailsChanged =
+            purpose.trim() !== editing.purpose ||
+            participants.join(',').toLowerCase() !== editing.participants.join(',').toLowerCase() ||
+            importance !== editing.importance ||
+            (!timeChanged && durationMinutes !== (editing.durationMinutes ?? null));
+
+        if (!timeChanged && !detailsChanged) { closeModal(); return; }
+
+        setIsSubmitting(true);
         try {
-            await WorkflowApi.rescheduleMeeting(engagementId, meeting.meetingId,
-                { newScheduledAtUtc: newDate.toISOString(), reason }, tenantId);
+            let target = editing;
+            if (timeChanged) {
+                target = await WorkflowApi.rescheduleMeeting(engagementId, editing.meetingId, {
+                    newScheduledAtUtc: parsed.toISOString(),
+                    durationMinutes,
+                    reason: rescheduleReason.trim() || undefined,
+                }, tenantId);
+            }
+            if (detailsChanged) {
+                await WorkflowApi.updateMeeting(engagementId, target.meetingId, {
+                    purpose: purpose.trim(),
+                    scheduledAtUtc: target.scheduledAtUtc, // unchanged here; a new time was handled above
+                    durationMinutes, // the value in the form (after a reschedule the new meeting already has it)
+                    participants,
+                    importance,
+                }, tenantId);
+            }
+            resetForm();
+            setModalMode(null);
             await load();
         } catch (err: any) {
-            alert(err instanceof ApiError ? err.message : 'Failed to reschedule.');
+            setFormError(err instanceof ApiError ? err.message : 'Failed to save the meeting.');
+            await load();
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -251,9 +311,9 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                                             className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-800 text-xs font-semibold">
                                             Missed
                                         </button>
-                                        <button onClick={() => handleReschedule(m)}
-                                            className="px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-xs font-semibold">
-                                            Reschedule
+                                        <button onClick={() => openEdit(m)}
+                                            className="px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-semibold">
+                                            Edit
                                         </button>
                                         <button onClick={() => handleStatus(m.meetingId, 'Cancelled')}
                                             className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold">
@@ -267,13 +327,13 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                 </ul>
             )}
 
-            {modalMode === 'create' && (
+            {(modalMode === 'create' || modalMode === 'edit') && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
                     <div className="fixed inset-0" onClick={closeModal} />
                     <div className="relative z-10 bg-white rounded-2xl shadow-xl border border-slate-200 max-w-lg w-full p-6 space-y-4">
                         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                            <h2 className="text-lg font-bold text-slate-900">Schedule Meeting</h2>
-                            <button onClick={closeModal} disabled={isSubmitting}
+                            <h2 className="text-lg font-bold text-slate-900">{modalMode === 'edit' ? 'Edit Meeting' : 'Schedule Meeting'}</h2>
+                            <button onClick={closeModal} disabled={isSubmitting} aria-label="Close"
                                 className="p-1 rounded-lg text-slate-400 hover:text-slate-700">
                                 <X className="w-5 h-5" />
                             </button>
@@ -286,7 +346,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                             </div>
                         )}
 
-                        <form onSubmit={handleCreate} className="space-y-3">
+                        <form onSubmit={modalMode === 'edit' ? handleEdit : handleCreate} className="space-y-3">
                             <div>
                                 <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">Purpose</label>
                                 <input type="text" value={purpose} onChange={e => setPurpose(e.target.value)}
@@ -311,6 +371,21 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                                 </div>
                             </div>
 
+                            {timeChanged && (
+                                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 space-y-2">
+                                    <p className="text-xs text-amber-900">
+                                        Changing the time reschedules the meeting: the current slot is kept as <strong>Rescheduled</strong> and a new meeting is linked to it.
+                                    </p>
+                                    <label htmlFor="meeting-reschedule-reason" className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
+                                        Reason for rescheduling (optional)
+                                    </label>
+                                    <input id="meeting-reschedule-reason" type="text" value={rescheduleReason}
+                                        onChange={e => setRescheduleReason(e.target.value)} disabled={isSubmitting} maxLength={2000}
+                                        placeholder="e.g. Client requested a later slot"
+                                        className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                                </div>
+                            )}
+
                             <div>
                                 <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">
                                     Participants (comma separated)
@@ -324,7 +399,8 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
                                     <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">Type</label>
-                                    <select value={type} onChange={e => setType(e.target.value as any)} disabled={isSubmitting}
+                                    <select value={type} onChange={e => setType(e.target.value as any)} disabled={isSubmitting || modalMode === 'edit'}
+                                        title={modalMode === 'edit' ? "A meeting's type can't be changed after it is scheduled" : undefined}
                                         className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm">
                                         <option value="Normal">Normal</option>
                                         <option value="Intervention">Intervention</option>
@@ -347,7 +423,9 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                                 </button>
                                 <button type="submit" disabled={isSubmitting}
                                     className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold disabled:opacity-50 inline-flex items-center gap-1.5">
-                                    {isSubmitting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...</> : 'Schedule'}
+                                    {isSubmitting
+                                        ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...</>
+                                        : modalMode === 'edit' ? (timeChanged ? 'Reschedule & save' : 'Save changes') : 'Schedule'}
                                 </button>
                             </div>
                         </form>
