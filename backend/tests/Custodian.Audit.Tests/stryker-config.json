@@ -7,7 +7,8 @@
       "!**/Migrations/**/*.cs",
       "!**/Program.cs",
       "!**/Data/AuditDbContext.cs",
-      "!**/Data/AuditDbContextFactory.cs"
+      "!**/Data/AuditDbContextFactory.cs",
+      "!**/Data/AuditDatabaseInitializer.cs"
     ],
     "test-case-filter": "FullyQualifiedName!~.Integration.",
     "ignore-methods": ["*Log*", "ToString", "*Exception.ctor"],
