@@ -101,3 +101,6 @@ desktop.ini
 *.pem
 *.pfx
 *.key
+
+# Stryker.NET mutation testing output
+StrykerOutput/

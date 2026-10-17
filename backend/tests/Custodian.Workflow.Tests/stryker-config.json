@@ -1,0 +1,16 @@
+{
+  "stryker-config": {
+    "project": "Workflow.csproj",
+    "reporters": ["html", "progress", "cleartext"],
+    "mutate": [
+      "**/*.cs",
+      "!**/Migrations/**/*.cs",
+      "!**/Program.cs",
+      "!**/Data/WorkflowDbContext.cs",
+      "!**/Data/WorkflowDbContextFactory.cs"
+    ],
+    "test-case-filter": "FullyQualifiedName!~.Integration.",
+    "ignore-methods": ["*Log*", "ToString", "*Exception.ctor"],
+    "thresholds": { "high": 80, "low": 60, "break": 0 }
+  }
+}
