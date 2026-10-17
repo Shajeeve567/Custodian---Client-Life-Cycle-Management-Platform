@@ -4,7 +4,7 @@
     <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Custodian load &amp; performance (staging)">
       <stringProp name="TestPlan.comments">SE3112 load &amp; performance tests for the Custodian microservices (Identity, Workflow, Documents, Audit) on STAGING only.
 Run headless: jmeter -n -t custodian-load.jmx -q staging.properties -Jprofile=smoke -l results/smoke.jtl -e -o reports/smoke
-Profiles (-Jprofile=): smoke, load. stress / spike are added next.</stringProp>
+Profiles (-Jprofile=): smoke, load, stress. spike is added next.</stringProp>
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
       <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
@@ -114,6 +114,33 @@ if (allowed) {
     SampleResult.setResponseMessage('Refused: every URL must be a Custodian staging host (or all loopback)')
     log.error('Staging guard refused the targets: ' + urls)
 }</stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="setUp: build the open-model schedules">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="parameters"/>
+            <stringProp name="filename"/>
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="script">// Builds the Open Model Thread Group schedule from simple properties, so a run is tuned with -J flags
+// instead of hand-writing the schedule language. Stress = a staircase of arrival rates (journeys per second):
+//   -JstressLevels=1,2,4,6,8   -JstressStep=60 (s held at each level)   -JstressRamp=10 (s to climb to it)
+// gives: rate(0/sec) random_arrivals(10 sec) rate(1/sec) random_arrivals(60 sec) rate(1/sec) random_arrivals(10 sec) rate(2/sec) ...
+// A profile that is not selected gets a schedule with rate 0, so its thread group starts no threads.
+def staircase = { String levelsProp, String levelsDefault, String holdProp, String rampProp -&gt;
+    def levels = props.getProperty(levelsProp, levelsDefault).split(',')*.trim()*.toBigDecimal()
+    int hold = props.getProperty(holdProp, '60') as int
+    int ramp = props.getProperty(rampProp, '10') as int
+    def parts = ['rate(0/sec)']
+    levels.each { l -&gt; parts &lt;&lt; "random_arrivals(${ramp} sec)" &lt;&lt; "rate(${l}/sec)" &lt;&lt; "random_arrivals(${hold} sec)" &lt;&lt; "rate(${l}/sec)" }
+    parts.join(' ')
+}
+def off = 'rate(0/sec) random_arrivals(1 sec)'
+def profile = props.getProperty('profile', 'smoke')
+def stress = profile == 'stress' ? staircase('stressLevels', '1,2,4,6,8', 'stressStep', 'stressRamp') : off
+props.put('stressSchedule', stress)
+props.remove('stressBreaker')   // circuit-breaker counters from a previous run (GUI mode)
+SampleResult.setResponseData('stressSchedule=' + stress, 'UTF-8')
+log.info('Stress schedule: ' + stress)</stringProp>
           </JSR223Sampler>
           <hashTree/>
         </hashTree>
@@ -632,6 +659,201 @@ if (vars.get('token') == null) {
               <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
               <stringProp name="2">Requests (shared by every profile)</stringProp>
               <stringProp name="3">REQ Negative cases</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+        </hashTree>
+      </hashTree>
+      <OpenModelThreadGroup guiclass="OpenModelThreadGroupGui" testclass="OpenModelThreadGroup" testname="Stress - staircase of arrival rates (open model)">
+        <stringProp name="TestPlan.comments">Profile "stress": where does staging break, and what fails first? Open model: new journeys ARRIVE at a set rate whether or not the server keeps up. The rate climbs in steps (setUp builds the schedule from -JstressLevels, -JstressStep, -JstressRamp). A circuit breaker stops the run when errors pass -JstressAbortErrorPct.</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="OpenModelThreadGroupController"/>
+        <stringProp name="OpenModelThreadGroup.schedule">${__P(stressSchedule,rate(0/sec) random_arrivals(1 sec))}</stringProp>
+        <stringProp name="OpenModelThreadGroup.random_seed">${__P(randomSeed,0)}</stringProp>
+      </OpenModelThreadGroup>
+      <hashTree>
+        <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="Use a signed-in QA account">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="parameters"/>
+          <stringProp name="filename"/>
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="script">// Runs before every sampler in this group, but only does work once per virtual user:
+// it picks a token slot from setUp (round-robin on the thread number) and keeps it in this thread's vars.
+if (vars.get('token') == null) {
+    int count = props.getProperty('qaAccountCount', '0') as int
+    if (count == 0) {
+        log.error('No signed-in QA account (did setUp fail?)')
+        return
+    }
+    int slot = (ctx.getThreadNum() % count) + 1
+    vars.put('token', props.getProperty('qaToken_' + slot))
+    vars.put('tenantId', props.getProperty('qaTenant_' + slot))
+}</stringProp>
+        </JSR223PreProcessor>
+        <hashTree/>
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Authorization: workspace token">
+          <collectionProp name="HeaderManager.headers">
+            <elementProp name="" elementType="Header">
+              <stringProp name="Header.name">Authorization</stringProp>
+              <stringProp name="Header.value">Bearer ${token}</stringProp>
+            </elementProp>
+          </collectionProp>
+        </HeaderManager>
+        <hashTree/>
+        <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="Think time 0.5-1.5 s">
+          <stringProp name="ConstantTimer.delay">${__P(stressThinkMin,500)}</stringProp>
+          <stringProp name="RandomTimer.range">${__P(stressThinkRand,1000)}</stringProp>
+        </UniformRandomTimer>
+        <hashTree/>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If setUp did not pass (guard refused, or no account signed in)">
+          <stringProp name="IfController.condition">${__jexl3("${__P(stagingGuard,none)}" != "passed" || ${__P(qaAccountCount,0)} == 0)}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <TestAction guiclass="TestActionGui" testclass="TestAction" testname="Stop the whole test now (send nothing)">
+            <intProp name="ActionProcessor.action">2</intProp>
+            <intProp name="ActionProcessor.target">2</intProp>
+            <stringProp name="ActionProcessor.duration">0</stringProp>
+          </TestAction>
+          <hashTree/>
+        </hashTree>
+        <JSR223Listener guiclass="TestBeanGUI" testclass="JSR223Listener" testname="Circuit breaker (stop when the error rate is too high)">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="parameters"/>
+          <stringProp name="filename"/>
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="script">// Circuit breaker: stress testing looks for the breaking point, but must not keep hammering a broken system.
+// Every stressAbortWindow samples (default 100) it logs the error rate and active threads; if the window's
+// error rate is above stressAbortErrorPct (default 20 %), it asks JMeter to stop gracefully.
+// Counters live in a property (shared by all threads) as an AtomicLongArray [samples, errors] for thread safety.
+import java.util.concurrent.atomic.AtomicLongArray
+import org.apache.jmeter.threads.JMeterContextService
+int window = props.getProperty('stressAbortWindow', '100') as int
+double maxErrPct = props.getProperty('stressAbortErrorPct', '20') as double
+def c = props.computeIfAbsent('stressBreaker', { k -&gt; new AtomicLongArray(2) })
+long n = c.incrementAndGet(0)
+long errors = sampleResult.isSuccessful() ? c.get(1) : c.incrementAndGet(1)
+if (n == window) {
+    c.set(0, 0); c.set(1, 0)
+    double pct = 100.0 * errors / n
+    int active = JMeterContextService.getNumberOfThreads()
+    log.info(String.format('Stress window: %d samples, %.1f%% errors, %d active threads', n, pct, active))
+    if (pct &gt; maxErrPct) {
+        log.error(String.format('Circuit breaker OPEN: %.1f%% errors &gt; %.1f%% with %d active threads - stopping the test', pct, maxErrPct, active))
+        props.put('stressBreakerTripped', String.format('%.1f%% errors at %d active threads', pct, active))
+        ctx.getEngine().stopTest(false)
+    }
+}</stringProp>
+        </JSR223Listener>
+        <hashTree/>
+        <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Engagements list">
+          <collectionProp name="ModuleController.node_path">
+            <stringProp name="0">Test Plan</stringProp>
+            <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+            <stringProp name="2">Requests (shared by every profile)</stringProp>
+            <stringProp name="3">REQ Engagements list</stringProp>
+          </collectionProp>
+        </ModuleController>
+        <hashTree/>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If an engagement was found">
+          <stringProp name="IfController.condition">${__jexl3("${engagementId}" != "NOT_FOUND")}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Engagement detail">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Engagement detail</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Next action">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Next action</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+          <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="50% of journeys: Documents tab">
+            <intProp name="ThroughputController.style">1</intProp>
+            <boolProp name="ThroughputController.perThread">false</boolProp>
+            <intProp name="ThroughputController.maxThroughput">1</intProp>
+            <stringProp name="ThroughputController.percentThroughput">${__P(pctDocuments,50)}</stringProp>
+          </ThroughputController>
+          <hashTree>
+            <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Documents tab">
+              <collectionProp name="ModuleController.node_path">
+                <stringProp name="0">Test Plan</stringProp>
+                <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+                <stringProp name="2">Requests (shared by every profile)</stringProp>
+                <stringProp name="3">REQ Documents tab</stringProp>
+              </collectionProp>
+            </ModuleController>
+            <hashTree/>
+          </hashTree>
+          <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="30% of journeys: Audit trail tab">
+            <intProp name="ThroughputController.style">1</intProp>
+            <boolProp name="ThroughputController.perThread">false</boolProp>
+            <intProp name="ThroughputController.maxThroughput">1</intProp>
+            <stringProp name="ThroughputController.percentThroughput">${__P(pctAudit,30)}</stringProp>
+          </ThroughputController>
+          <hashTree>
+            <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Audit trail tab">
+              <collectionProp name="ModuleController.node_path">
+                <stringProp name="0">Test Plan</stringProp>
+                <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+                <stringProp name="2">Requests (shared by every profile)</stringProp>
+                <stringProp name="3">REQ Audit trail tab</stringProp>
+              </collectionProp>
+            </ModuleController>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Unread notifications">
+          <collectionProp name="ModuleController.node_path">
+            <stringProp name="0">Test Plan</stringProp>
+            <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+            <stringProp name="2">Requests (shared by every profile)</stringProp>
+            <stringProp name="3">REQ Unread notifications</stringProp>
+          </collectionProp>
+        </ModuleController>
+        <hashTree/>
+        <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="20% of journeys: Stall queue">
+          <intProp name="ThroughputController.style">1</intProp>
+          <boolProp name="ThroughputController.perThread">false</boolProp>
+          <intProp name="ThroughputController.maxThroughput">1</intProp>
+          <stringProp name="ThroughputController.percentThroughput">${__P(pctStall,20)}</stringProp>
+        </ThroughputController>
+        <hashTree>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Stall queue">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Stall queue</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+        </hashTree>
+        <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="5% of journeys: SLA report PDF">
+          <intProp name="ThroughputController.style">1</intProp>
+          <boolProp name="ThroughputController.perThread">false</boolProp>
+          <intProp name="ThroughputController.maxThroughput">1</intProp>
+          <stringProp name="ThroughputController.percentThroughput">${__P(pctReport,5)}</stringProp>
+        </ThroughputController>
+        <hashTree>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ SLA report PDF">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ SLA report PDF</stringProp>
             </collectionProp>
           </ModuleController>
           <hashTree/>
