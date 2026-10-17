@@ -725,7 +725,8 @@ if (vars.get('token') == null) {
           <stringProp name="cacheKey">true</stringProp>
           <stringProp name="script">// Circuit breaker: stress testing looks for the breaking point, but must not keep hammering a broken system.
 // Every stressAbortWindow samples (default 100) it logs the error rate and active threads; if the window's
-// error rate is above stressAbortErrorPct (default 20 %), it asks JMeter to stop gracefully.
+// error rate is above stressAbortErrorPct (default 20 %), it stops the test immediately (Stop Now):
+// a graceful stop does not end the Open Model arrival scheduler, so JMeter would never exit.
 // Counters live in a property (shared by all threads) as an AtomicLongArray [samples, errors] for thread safety.
 import java.util.concurrent.atomic.AtomicLongArray
 import org.apache.jmeter.threads.JMeterContextService
@@ -742,7 +743,7 @@ if (n == window) {
     if (pct &gt; maxErrPct) {
         log.error(String.format('Circuit breaker OPEN: %.1f%% errors &gt; %.1f%% with %d active threads - stopping the test', pct, maxErrPct, active))
         props.put('stressBreakerTripped', String.format('%.1f%% errors at %d active threads', pct, active))
-        ctx.getEngine().stopTest(false)
+        ctx.getEngine().stopTest(true)
     }
 }</stringProp>
         </JSR223Listener>
