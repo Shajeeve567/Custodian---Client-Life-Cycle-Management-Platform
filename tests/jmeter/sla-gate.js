@@ -49,10 +49,18 @@ function readCsv(file) {
     return data.filter(r => r.length === header.length).map(r => Object.fromEntries(header.map((h, i) => [h, r[i]])));
 }
 
+// "Socket closed" = JMeter closed the connection itself while the request was in flight, which is what Stop Now
+// (the circuit breaker) does. Those samples measure the test stopping, not the server, so they are left out
+// of the statistics and reported separately. A server-side drop shows up differently (e.g. "Connection reset").
+const CUT_OFF_BY_STOP = s => /SocketException/.test(s.responseCode) && /Socket closed/.test(s.responseMessage);
+
 function readSamples(file) {
     if (!fs.existsSync(file)) usage(`no such .jtl: ${file}`);
-    const samples = readCsv(file).filter(s => !SETUP_LABEL.test(s.label));
+    const all = readCsv(file).filter(s => !SETUP_LABEL.test(s.label));
+    const samples = all.filter(s => !CUT_OFF_BY_STOP(s));
     if (samples.length === 0) usage(`no load samples in ${file} (did the guard or setUp stop the test?)`);
+    if (samples.length < all.length)
+        console.log(`Left out ${all.length - samples.length} samples cut off by the test stopping (Socket closed): not server errors.\n`);
     return samples;
 }
 
@@ -131,12 +139,19 @@ function gateStress(rules, sla, samples) {
 function gateSpike(rules, samples) {
     if (!('spikePhase' in samples[0])) usage('the .jtl has no spikePhase column (run with -q report.properties)');
     const phases = Object.fromEntries(['baseline', 'spike', 'recovery'].map(p => [p, samples.filter(s => s.spikePhase === p)]));
-    for (const [p, list] of Object.entries(phases)) if (list.length === 0) usage(`no samples in the ${p} phase`);
-    const [base, spike, rec] = ['baseline', 'spike', 'recovery'].map(p => summarise(phases[p]));
+    if (phases.baseline.length === 0) usage('no samples in the baseline phase');
+    const [base, spike, rec] = ['baseline', 'spike', 'recovery'].map(p => phases[p].length ? summarise(phases[p]) : null);
 
     console.log(`${'phase'.padEnd(10)} ${'samples'.padStart(7)} ${'p95 ms'.padStart(7)} ${'err %'.padStart(6)} ${'threads'.padStart(8)}`);
     for (const [name, s] of [['baseline', base], ['spike', spike], ['recovery', rec]])
-        console.log(`${name.padEnd(10)} ${String(s.count).padStart(7)} ${String(s.p95).padStart(7)} ${fmt(s.errorPct, 1).padStart(6)} ${String(s.maxThreads).padStart(8)}`);
+        console.log(s ? `${name.padEnd(10)} ${String(s.count).padStart(7)} ${String(s.p95).padStart(7)} ${fmt(s.errorPct, 1).padStart(6)} ${String(s.maxThreads).padStart(8)}`
+                      : `${name.padEnd(10)} ${'-'.padStart(7)}   (not reached)`);
+
+    // The run never got to recovery: the circuit breaker stopped it during the burst, so it did not survive.
+    if (!spike || !rec) {
+        const where = spike ? `during the spike (${fmt(spike.errorPct, 1)}% errors, ${spike.maxThreads} active threads)` : 'before the spike';
+        return [`did not survive the spike: the test was stopped ${where}, so the recovery phase was never reached`];
+    }
 
     const failures = [];
     const ratio = rec.p95 / base.p95;

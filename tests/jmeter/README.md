@@ -134,14 +134,15 @@ jmeter -t custodian-load.jmx
 | `smoke` | Closed (Thread Group) | 1 user × 3 loops, every request | Does the script and the deployment work at all? | 0 % errors |
 | `load` | Closed (Thread Group) | 20 users, 60 s ramp-up, 180 s hold | Does it meet its targets at the expected concurrency? | Every request within its p95, errors < 1 % |
 | `stress` | Open (Open Model Thread Group) | 1 → 2 → 4 → 6 → 8 journeys/s, 60 s per step | Where does it break, and what fails first? | Informational: reports the breaking point |
-| `spike` | Open (Open Model Thread Group) | 1/s for 60 s → 8/s for 30 s → 1/s for 60 s | Does it survive a burst and recover? | ≤ 5 % errors in the burst, ≤ 1 % after, recovery p95 ≤ 1.5 × baseline |
+| `spike` | Open (Open Model Thread Group) | 1/s for 60 s → 8/s for 30 s → 1/s for 60 s | Does it survive a burst and recover? | ≤ 5 % errors in the burst, ≤ 1 % after, recovery p95 ≤ 1.5 × baseline. Stopped by the circuit breaker before recovery = FAIL (did not survive) |
 
 **Closed model:** a fixed number of users, each waiting for its response before the next request. **Open model:**
 journeys arrive at a set rate whether or not the server keeps up, so a slow server shows up as a growing number
 of active threads. Stress and spike end with a short `pause` (`-Jdrain`) so journeys in flight can finish.
 
 **Circuit breaker:** stress stops itself when 100 consecutive samples have more than 20 % errors (spike: 50 %),
-so a broken system is not kept under load. The console logs one line per window, e.g.
+so a broken system is not kept under load. Requests still in flight when it stops end with `Socket closed`: the gate leaves those out, because they
+measure the test stopping, not the server. The console logs one line per window, e.g.
 `stress window: 100 samples, 14.0% errors, 11 active threads`.
 
 | Property (`-J`) | Default | Meaning |
