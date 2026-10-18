@@ -128,12 +128,16 @@ if (allowed) {
 // Spike = steady baseline, a sudden jump, then back to baseline to watch recovery:
 //   -JspikeBaseRate=1 -JspikePeakRate=8 (journeys/s)  -JspikeBase=60 -JspikeRise=2 -JspikeHold=30 -JspikeRecover=60 (s)
 // A profile that is not selected gets a schedule with rate 0, so its thread group starts no threads.
+// Both schedules end with pause(drain): no new arrivals for -Jdrain s (default 15), so journeys still in flight
+// can finish. Without it JMeter shuts the thread pool when the schedule ends and cuts them off (Socket closed).
+int drain = props.getProperty('drain', '15') as int
 def staircase = { String levelsProp, String levelsDefault, String holdProp, String rampProp -&gt;
     def levels = props.getProperty(levelsProp, levelsDefault).split(',')*.trim()*.toBigDecimal()
     int hold = props.getProperty(holdProp, '60') as int
     int ramp = props.getProperty(rampProp, '10') as int
     def parts = ['rate(0/sec)']
     levels.each { l -&gt; parts &lt;&lt; "random_arrivals(${ramp} sec)" &lt;&lt; "rate(${l}/sec)" &lt;&lt; "random_arrivals(${hold} sec)" &lt;&lt; "rate(${l}/sec)" }
+    parts &lt;&lt; "pause(${drain} sec)"
     parts.join(' ')
 }
 def off = 'rate(0/sec) random_arrivals(1 sec)'
@@ -150,9 +154,10 @@ def spike = profile != 'spike' ? off : [
     "rate(${b}/sec) random_arrivals(${rise} sec) rate(${peak}/sec)",     // sudden jump
     "random_arrivals(${hold} sec) rate(${peak}/sec)",                    // hold the peak
     "random_arrivals(${rise} sec) rate(${b}/sec)",                       // drop back
-    "random_arrivals(${recover} sec) rate(${b}/sec)"].join(' ')          // recovery
+    "random_arrivals(${recover} sec) rate(${b}/sec)",                    // recovery
+    "pause(${drain} sec)"].join(' ')                                     // drain
 props.put('spikeSchedule', spike)
-// Phase boundaries in seconds from the first spike arrival: [0, base) baseline, [base, base+2*rise+hold) spike, then recovery
+// Phase boundaries in seconds from the end of setUp: [0, base) baseline, [base, base+2*rise+hold) spike, then recovery
 props.put('spikePhaseEnds', "${base},${base + 2 * rise + hold}" as String)
 
 ['stressBreaker', 'spikeBreaker', 'loadStartMs'].each { props.remove(it) }   // leftovers from a previous run (GUI mode)
@@ -1120,6 +1125,10 @@ if (n == window) {
               <intProp name="Assertion.test_type">16</intProp>
             </ResponseAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
           </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Documents: GET / (health)">
             <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
@@ -1141,6 +1150,10 @@ if (n == window) {
               <intProp name="Assertion.test_type">16</intProp>
             </ResponseAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
           </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Audit: GET / (health)">
             <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
@@ -1161,6 +1174,10 @@ if (n == window) {
               <boolProp name="Assertion.assume_success">false</boolProp>
               <intProp name="Assertion.test_type">16</intProp>
             </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
             <hashTree/>
           </hashTree>
         </hashTree>
@@ -1202,6 +1219,10 @@ if (n == window) {
               <boolProp name="ISREGEX">false</boolProp>
             </JSONPathAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
           </hashTree>
         </hashTree>
         <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ Engagement detail"/>
@@ -1234,6 +1255,10 @@ if (n == window) {
               <boolProp name="INVERT">false</boolProp>
               <boolProp name="ISREGEX">false</boolProp>
             </JSONPathAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
             <hashTree/>
           </hashTree>
         </hashTree>
@@ -1268,6 +1293,10 @@ if (n == window) {
               <boolProp name="ISREGEX">false</boolProp>
             </JSONPathAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
           </hashTree>
         </hashTree>
         <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ Documents tab"/>
@@ -1300,6 +1329,10 @@ if (n == window) {
               <boolProp name="INVERT">false</boolProp>
               <boolProp name="ISREGEX">false</boolProp>
             </JSONPathAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
             <hashTree/>
           </hashTree>
         </hashTree>
@@ -1334,6 +1367,10 @@ if (n == window) {
               <boolProp name="ISREGEX">false</boolProp>
             </JSONPathAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
           </hashTree>
         </hashTree>
         <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ Unread notifications"/>
@@ -1367,6 +1404,10 @@ if (n == window) {
               <boolProp name="ISREGEX">false</boolProp>
             </JSONPathAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
           </hashTree>
         </hashTree>
         <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ Stall queue"/>
@@ -1399,6 +1440,10 @@ if (n == window) {
               <boolProp name="INVERT">false</boolProp>
               <boolProp name="ISREGEX">false</boolProp>
             </JSONPathAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
             <hashTree/>
           </hashTree>
         </hashTree>
@@ -1459,6 +1504,10 @@ if (n == window) {
               <intProp name="SizeAssertion.operator">3</intProp>
             </SizeAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxReportMs (default 10 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxReportMs,10000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
           </hashTree>
         </hashTree>
         <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ Negative cases"/>
@@ -1482,6 +1531,10 @@ if (n == window) {
               <boolProp name="Assertion.assume_success">true</boolProp>
               <intProp name="Assertion.test_type">8</intProp>
             </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
             <hashTree/>
           </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Negative: GET /api/Engagements with an invalid token -&gt; 401">
@@ -1512,6 +1565,10 @@ if (n == window) {
               <boolProp name="Assertion.assume_success">true</boolProp>
               <intProp name="Assertion.test_type">8</intProp>
             </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
             <hashTree/>
           </hashTree>
         </hashTree>
