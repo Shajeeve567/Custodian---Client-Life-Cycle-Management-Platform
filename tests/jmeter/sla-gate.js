@@ -109,8 +109,12 @@ function gateStatistics(rules, sla, reportDir) {
     return failures;
 }
 
-// stress: time windows -> where did it break? Informational only.
-function gateStress(rules, sla, samples) {
+// stress: time windows -> where did it break, and what was the most it sustained? Informational only.
+// A window is over the limit when its error rate or its p95 (all requests together) is above the stress limits.
+// The breaking point is the first window from which EVERY later window is over the limit: a one-off slow window
+// (e.g. a database hiccup) is not a breaking point, sustained degradation is. Peak sustainable throughput is the
+// best req/s before that point.
+function gateStress(rules, samples) {
     const t0 = Math.min(...samples.map(s => Number(s.timeStamp)));
     const size = rules.bucketSeconds * 1000;
     const buckets = new Map();
@@ -119,19 +123,29 @@ function gateStress(rules, sla, samples) {
         if (!buckets.has(b)) buckets.set(b, []);
         buckets.get(b).push(s);
     }
-    let breaking = null;
-    console.log(`${'window'.padEnd(12)} ${'req/s'.padStart(6)} ${'p95 ms'.padStart(7)} ${'err %'.padStart(6)} ${'threads'.padStart(8)}`);
-    for (const [b, list] of [...buckets].sort((x, y) => x[0] - y[0])) {
+    const windows = [...buckets].sort((x, y) => x[0] - y[0]).map(([b, list]) => {
         const s = summarise(list);
-        const over = s.errorPct > rules.maxErrorPct || s.p95 > sla.p95Ms.default;
-        if (over && !breaking) breaking = { from: b * rules.bucketSeconds, rate: list.length / rules.bucketSeconds, ...s };
-        console.log(`${`${b * rules.bucketSeconds}-${(b + 1) * rules.bucketSeconds}s`.padEnd(12)} ${fmt(list.length / rules.bucketSeconds, 1).padStart(6)} ` +
-            `${String(s.p95).padStart(7)} ${fmt(s.errorPct, 1).padStart(6)} ${String(s.maxThreads).padStart(8)}${over ? '  <- over limit' : ''}`);
-    }
+        return { from: b * rules.bucketSeconds, rate: list.length / rules.bucketSeconds, over: s.errorPct > rules.maxErrorPct || s.p95 > rules.p95Ms, ...s };
+    });
+    let firstSustained = windows.length;
+    while (firstSustained > 0 && windows[firstSustained - 1].over) firstSustained--;
+    const breaking = windows[firstSustained];
+    const before = windows.slice(0, firstSustained);
+    const peak = before.length ? before.reduce((a, w) => (w.rate > a.rate ? w : a)) : null;
+
+    console.log(`${'window'.padEnd(12)} ${'req/s'.padStart(6)} ${'p95 ms'.padStart(7)} ${'err %'.padStart(6)} ${'threads'.padStart(8)}`);
+    windows.forEach((w, i) => console.log(`${`${w.from}-${w.from + rules.bucketSeconds}s`.padEnd(12)} ${fmt(w.rate, 1).padStart(6)} ` +
+        `${String(w.p95).padStart(7)} ${fmt(w.errorPct, 1).padStart(6)} ${String(w.maxThreads).padStart(8)}` +
+        `${i === firstSustained ? '  <- breaking point (over the limit from here on)' : i > firstSustained ? '  over limit'
+            : w.over ? '  (one-off: recovered)' : ''}`));
+
+    console.log(`\nLimits: p95 ${rules.p95Ms} ms, errors ${rules.maxErrorPct}% per ${rules.bucketSeconds} s window.`);
+    if (peak) console.log(`Peak sustainable throughput: ${fmt(peak.rate, 1)} req/s (${peak.from}-${peak.from + rules.bucketSeconds}s, ` +
+        `${peak.maxThreads} active threads, p95 ${peak.p95} ms).`);
     console.log(breaking
-        ? `\nBreaking point: from ${breaking.from}s, at ~${fmt(breaking.rate, 1)} req/s and ${breaking.maxThreads} active threads ` +
-          `(p95 ${breaking.p95} ms, errors ${fmt(breaking.errorPct, 1)}%; limits ${sla.p95Ms.default} ms / ${rules.maxErrorPct}%).`
-        : `\nNo breaking point within this run: every window stayed under ${sla.p95Ms.default} ms p95 and ${rules.maxErrorPct}% errors.`);
+        ? `Breaking point: from ${breaking.from}s, at ~${fmt(breaking.rate, 1)} req/s and ${breaking.maxThreads} active threads ` +
+          `(p95 ${breaking.p95} ms, errors ${fmt(breaking.errorPct, 1)}%); every later window stayed over the limit.`
+        : 'No breaking point within this run: it never stayed over the limit.');
     return [];
 }
 
@@ -176,7 +190,7 @@ function main() {
     } else {
         if (!args.jtl) usage('--jtl <results file> is required for stress and spike');
         const samples = readSamples(args.jtl);
-        failures = args.profile === 'stress' ? gateStress(rules, sla, samples) : gateSpike(rules, samples);
+        failures = args.profile === 'stress' ? gateStress(rules, samples) : gateSpike(rules, samples);
     }
 
     if (failures.length) {

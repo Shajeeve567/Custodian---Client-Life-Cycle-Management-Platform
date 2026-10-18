@@ -133,7 +133,7 @@ jmeter -t custodian-load.jmx
 |---|---|---|---|---|
 | `smoke` | Closed (Thread Group) | 1 user × 3 loops, every request | Does the script and the deployment work at all? | 0 % errors |
 | `load` | Closed (Thread Group) | 20 users, 60 s ramp-up, 180 s hold | Does it meet its targets at the expected concurrency? | Every request within its p95, errors < 1 % |
-| `stress` | Open (Open Model Thread Group) | 1 → 2 → 4 → 6 → 8 journeys/s, 60 s per step | Where does it break, and what fails first? | Informational: reports the breaking point |
+| `stress` | Open (Open Model Thread Group) | 1 → 2 → 4 → 6 → 8 journeys/s, 60 s per step | Where does it break, and what fails first? | Informational: reports the peak sustainable throughput and the breaking point (first 10 s window from which every later one is over 2 s p95 or 5 % errors) |
 | `spike` | Open (Open Model Thread Group) | 1/s for 60 s → 8/s for 30 s → 1/s for 60 s | Does it survive a burst and recover? | ≤ 5 % errors in the burst, ≤ 1 % after, recovery p95 ≤ 1.5 × baseline. Stopped by the circuit breaker before recovery = FAIL (did not survive) |
 
 **Closed model:** a fixed number of users, each waiting for its response before the next request. **Open model:**

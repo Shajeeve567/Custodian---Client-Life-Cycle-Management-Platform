@@ -18,9 +18,10 @@
       "checkP95": true
     },
     "stress": {
-      "_about": "Informational: finds the breaking point (first time window over the error or p95 limit). Never fails the build.",
+      "_about": "Informational: finds the breaking point (the first time window from which every later window is over p95Ms or maxErrorPct) and the peak sustainable throughput before it. Never fails the build. p95Ms covers all requests together, so it is looser than the per-request load targets.",
       "bucketSeconds": 10,
-      "maxErrorPct": 5
+      "maxErrorPct": 5,
+      "p95Ms": 2000
     },
     "spike": {
       "_about": "Survive and recover: limited errors during the burst, and after it p95 must return to within maxRecoveryP95Ratio of baseline.",
