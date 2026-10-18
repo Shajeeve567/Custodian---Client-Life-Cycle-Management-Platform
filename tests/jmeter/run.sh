@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs one load-test profile end to end and leaves a self-contained evidence folder:
-#   pre-flight (tools, accounts, staging-only guard) -> health check -> JMeter (headless) -> health check
+#   pre-flight (tools, accounts, target guard) -> health check -> JMeter (headless) -> health check
 #   -> secret scan -> SLA gate.
 #
 # usage: ./run.sh <smoke|load|stress|spike> [--props <file>] [--data <dir>] [-- <extra JMeter args>]
@@ -11,6 +11,8 @@
 # Output: results/<run id>/ (results.jtl, jmeter.log, health checks, sla-gate.txt, run-info.txt)
 #         reports/<run id>/ (HTML dashboard) and reports/latest -> the newest dashboard.
 # Exit code: 0 pass, 1 SLA failed, 2 bad usage or setup, 3 target unhealthy or refused, 4 JMeter failed.
+# Environment: JMETER_BIN (JMeter command), HEALTH_ATTEMPTS / HEALTH_DELAY (health-check tries and seconds
+#   between them, default 2 / 5; CI uses more because App Services restart for a minute or two after a deploy).
 # Written for bash 3.2 (macOS) and Linux (CI).
 set -euo pipefail
 
@@ -46,14 +48,21 @@ prop() { sed -n "s/^$1=//p" "$PROPS" | tail -n 1 | tr -d '\r'; }
 IDENTITY_URL="$(prop identityUrl)"; WORKFLOW_URL="$(prop workflowUrl)"
 DOCUMENTS_URL="$(prop documentsUrl)"; AUDIT_URL="$(prop auditUrl)"
 
-# Same rule as the guard inside the .jmx: all four URLs are Custodian staging, or all four are loopback.
-# Checked here too because the health check below would otherwise send requests before JMeter's guard runs.
+# Same rule as the guard inside the .jmx: all four URLs are Custodian staging, exactly the QA target (the four
+# B1 apps re-pointed at QA databases), or all loopback. Checked here too because the health check below would
+# otherwise send requests before JMeter's guard runs.
 STAGING='^https://staging-[a-z]+-service-[a-z0-9]+\.centralindia-01\.azurewebsites\.net$'
 LOOPBACK='^http://(localhost|127\.0\.0\.1):[0-9]+$'
+QA_IDENTITY='https://custodian-identity-prod-gr-cmbqdggxh7gzevgg.southeastasia-01.azurewebsites.net'
+QA_WORKFLOW='https://custodian-workflow-prod-gr-fgcecrfea6cue2d6.southeastasia-01.azurewebsites.net'
+QA_DOCUMENTS='https://custodian-documents-prod-gr-cbc5b5bydgehb3cn.southeastasia-01.azurewebsites.net'
+QA_AUDIT='https://custodian-audit-prod-gr-fmfbdfcnfse9bbfz.southeastasia-01.azurewebsites.net'
 all_match() { local re="$1" u; for u in "$IDENTITY_URL" "$WORKFLOW_URL" "$DOCUMENTS_URL" "$AUDIT_URL"; do
     echo "$u" | grep -Eq "$re" || return 1; done; }
-all_match "$STAGING" || all_match "$LOOPBACK" \
-    || die 3 "refused: every URL in $PROPS must be a Custodian staging host (or all loopback)"
+is_qa() { [ "$IDENTITY_URL" = "$QA_IDENTITY" ] && [ "$WORKFLOW_URL" = "$QA_WORKFLOW" ] &&
+          [ "$DOCUMENTS_URL" = "$QA_DOCUMENTS" ] && [ "$AUDIT_URL" = "$QA_AUDIT" ]; }
+all_match "$STAGING" || all_match "$LOOPBACK" || is_qa \
+    || die 3 "refused: the URLs in $PROPS must all be Custodian staging, exactly the QA target, or all loopback"
 for arg in ${EXTRA[@]+"${EXTRA[@]}"}; do
     # URLs come only from the checked --props file: no URL overrides, extra property files or remote/system props
     case "$arg" in -J*Url=*|-q*|-p*|-S*|-D*|-G*|-R*|-r) die 2 "refused: set targets with --props, not JMeter args ($arg)" ;; esac
@@ -83,13 +92,14 @@ stamp() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) UTC / $(TZ=Asia/Colombo date +%Y-
 # Workflow, Documents and Audit answer GET / with {"status":"Healthy"}. Identity has no health route, so its
 # login is called with an empty body: 400 (validation error) proves the app and its pipeline are running.
 check() {   # check <name> <expected status> <curl args...>
-    local name="$1" want="$2" code attempt; shift 2
-    for attempt in 1 2; do
+    local name="$1" want="$2" code attempt=1 attempts="${HEALTH_ATTEMPTS:-2}"; shift 2
+    while [ "$attempt" -le "$attempts" ]; do
         code="$(curl -sS -o "$OUT/health-body.tmp" -w '%{http_code}' --max-time 60 "$@" 2>/dev/null || true)"
         if [ "$code" = "$want" ] && { [ "$want" != 200 ] || grep -q Healthy "$OUT/health-body.tmp"; }; then
             echo "  ok    $name ($code)"; return 0
         fi
-        [ "$attempt" = 1 ] && sleep 5
+        if [ "$attempt" -lt "$attempts" ]; then sleep "${HEALTH_DELAY:-5}"; fi
+        attempt=$((attempt + 1))
     done
     echo "  FAIL  $name (got ${code:-no response}, expected $want)"; return 1
 }

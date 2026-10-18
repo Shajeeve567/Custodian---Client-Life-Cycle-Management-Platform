@@ -1,0 +1,138 @@
+name: Load Test — JMeter (manual)
+
+# Runs ONLY when someone presses "Run workflow" in the Actions tab: never on push, pull request or a schedule.
+# Every run rebuilds, tests and redeploys the four services; the JMeter load test runs only if its box is ticked.
+on:
+  workflow_dispatch:
+    inputs:
+      run_load_test:
+        description: 'Run the JMeter load test after the deploy (untick = only rebuild and redeploy the services)'
+        type: boolean
+        default: true
+      profile:
+        description: 'Load-test profile (used only when the box above is ticked)'
+        type: choice
+        options: [smoke, load, stress, spike]
+        default: smoke
+
+# One run at a time: a second click waits for the first instead of doubling the load on the target.
+concurrency:
+  group: load-test
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # 1. Rebuild, unit-test and redeploy every service: the existing deploy workflows, reused unchanged.
+  deploy-identity:
+    uses: ./.github/workflows/deploy-identity.yml
+    secrets: inherit
+  deploy-workflow:
+    uses: ./.github/workflows/deploy-workflow.yml
+    secrets: inherit
+  deploy-documents:
+    uses: ./.github/workflows/deploy-document.yml
+    secrets: inherit
+  deploy-audit:
+    uses: ./.github/workflows/deploy-audit.yml
+    secrets: inherit
+
+  # 2. Optional: load-test the freshly deployed QA target (the B1 apps re-pointed at QA databases).
+  load-test:
+    name: JMeter ${{ inputs.profile }} profile (QA target)
+    needs: [deploy-identity, deploy-workflow, deploy-documents, deploy-audit]
+    if: ${{ inputs.run_load_test }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: tests/jmeter
+    env:
+      PROFILE: ${{ inputs.profile }}
+      JMETER_VERSION: '5.6.3'
+      # SHA-256 of apache-jmeter-5.6.3.tgz: a tampered or corrupted download fails the job before it runs.
+      JMETER_SHA256: 'f68efc17fe060f698c48a6abe2599a933927486bda2924dbe14c74895318ddde'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21 (JMeter runs on the JVM)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Node 20 (SLA gate)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install JMeter (pinned version, checksum verified)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/jmeter.tgz" \
+            "https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-${JMETER_VERSION}.tgz"
+          echo "${JMETER_SHA256}  $RUNNER_TEMP/jmeter.tgz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/jmeter.tgz" -C "$RUNNER_TEMP"
+          echo "JMETER_BIN=$RUNNER_TEMP/apache-jmeter-${JMETER_VERSION}/bin/jmeter" >> "$GITHUB_ENV"
+
+      - name: Write the QA login from repository secrets (git-ignored file)
+        env:
+          QA_EMAIL: ${{ secrets.QA_EMAIL }}
+          QA_PASSWORD: ${{ secrets.QA_PASSWORD }}
+        run: |
+          if [ -z "$QA_EMAIL" ] || [ -z "$QA_PASSWORD" ]; then
+            echo "::error::Add the QA_EMAIL and QA_PASSWORD repository secrets (the QA-only login)"
+            exit 2
+          fi
+          printf 'email,password\n%s,%s\n' "$QA_EMAIL" "$QA_PASSWORD" > data/accounts.csv
+
+      - name: Run the load test (run.sh)
+        id: run
+        env:
+          # The App Services restart after the deploy: allow up to ~3 minutes for them to answer the health check.
+          HEALTH_ATTEMPTS: '12'
+          HEALTH_DELAY: '15'
+        run: |
+          set +e
+          ./run.sh "$PROFILE" --props qa.properties
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the result to the job summary
+        if: always()
+        env:
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+        run: |
+          latest="$(ls -1d results/*/ 2>/dev/null | sort | tail -n 1)"
+          {
+            echo "## Load test: profile \`$PROFILE\` - run.sh exit code ${EXIT_CODE:-none}"
+            echo "0 pass · 1 SLA failed · 2 bad setup or secret found · 3 target refused or unhealthy · 4 JMeter failed"
+            if [ -n "$latest" ]; then
+              echo '```'
+              cat "$latest/run-info.txt"
+              [ -f "$latest/sla-gate.txt" ] && { echo; cat "$latest/sla-gate.txt"; }
+              echo '```'
+            else
+              echo "No results folder: the runner stopped before the test (see the step log)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Skipped on exit code 2: that includes a failed secret scan, and evidence with a secret must not be uploaded.
+      - name: Upload evidence (results + HTML dashboard)
+        if: always() && steps.run.outputs.exit_code != '' && steps.run.outputs.exit_code != '2'
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-${{ inputs.profile }}-run${{ github.run_number }}
+          path: |
+            tests/jmeter/results/
+            tests/jmeter/reports/
+            !tests/jmeter/reports/latest
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Pass or fail the job with the runner's exit code
+        if: always()
+        env:
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+        run: exit "${EXIT_CODE:-2}"

@@ -92,13 +92,21 @@ Profiles (-Jprofile=): smoke, load, stress, spike.</stringProp>
             <stringProp name="parameters"/>
             <stringProp name="filename"/>
             <stringProp name="cacheKey">true</stringProp>
-            <stringProp name="script">// Safety guard. Load tests may only hit Custodian STAGING, or a loopback server (local stack / mock).
+            <stringProp name="script">// Safety guard. Load tests may only hit Custodian STAGING, the QA target (the four B1 apps re-pointed at QA
+// databases, allowed by exact URL only), or a loopback server (local stack / mock).
 // It runs before any HTTP request; a failure stops the test (setUp: "Stop Test Now" on error).
+// The QA hosts cannot prove which database they use: the QA login (data/accounts.csv) must exist ONLY in the
+// QA databases, so if they are ever pointed back at the real ones, setUp's login fails and nothing is loaded.
 def names = ['identityUrl', 'workflowUrl', 'documentsUrl', 'auditUrl']
 def urls = names.collect { props.getProperty(it, '') }
 def staging = /^https:\/\/staging-[a-z]+-service-[a-z0-9]+\.centralindia-01\.azurewebsites\.net$/
 def loopback = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/
-boolean allowed = urls.every { it ==~ staging } || urls.every { it ==~ loopback }
+def qa = [identityUrl : 'https://custodian-identity-prod-gr-cmbqdggxh7gzevgg.southeastasia-01.azurewebsites.net',
+          workflowUrl : 'https://custodian-workflow-prod-gr-fgcecrfea6cue2d6.southeastasia-01.azurewebsites.net',
+          documentsUrl: 'https://custodian-documents-prod-gr-cbc5b5bydgehb3cn.southeastasia-01.azurewebsites.net',
+          auditUrl    : 'https://custodian-audit-prod-gr-fmfbdfcnfse9bbfz.southeastasia-01.azurewebsites.net']
+boolean allowed = urls.every { it ==~ staging } || urls.every { it ==~ loopback } ||
+                  names.every { props.getProperty(it, '') == qa[it] }
 
 props.put('qaAccountCount', '0')   // reset the token slots (properties outlive a run in GUI mode)
 // Every HTTP request in the plan is behind a check of this property, so the plan fails closed:
@@ -107,11 +115,11 @@ props.put('stagingGuard', allowed ? 'passed' : 'refused')
 SampleResult.setResponseData([names, urls].transpose().collect { it.join('=') }.join('\n'), 'UTF-8')
 if (allowed) {
     SampleResult.setResponseCodeOK()
-    SampleResult.setResponseMessage('All targets are staging (or loopback)')
+    SampleResult.setResponseMessage('All targets are staging, the QA target, or loopback')
 } else {
     SampleResult.setSuccessful(false)
     SampleResult.setResponseCode('GUARD')
-    SampleResult.setResponseMessage('Refused: every URL must be a Custodian staging host (or all loopback)')
+    SampleResult.setResponseMessage('Refused: all URLs must be Custodian staging, exactly the QA target, or all loopback')
     log.error('Staging guard refused the targets: ' + urls)
 }</stringProp>
           </JSR223Sampler>
