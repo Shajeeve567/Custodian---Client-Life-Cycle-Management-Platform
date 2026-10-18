@@ -24,10 +24,12 @@
       "p95Ms": 2000
     },
     "spike": {
-      "_about": "Survive and recover: limited errors during the burst, and after it p95 must return to within maxRecoveryP95Ratio of baseline.",
+      "_about": "Survive and recover: limited errors during the burst, and after it the system must be back to normal (every later 10 s window with p95 <= maxRecoveryP95Ratio x baseline p95 and errors <= maxErrorPctRecovery) within maxRecoverySeconds.",
       "maxErrorPctSpike": 5,
       "maxErrorPctRecovery": 1,
-      "maxRecoveryP95Ratio": 1.5
+      "maxRecoveryP95Ratio": 1.5,
+      "maxRecoverySeconds": 30,
+      "bucketSeconds": 10
     }
   }
 }

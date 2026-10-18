@@ -167,12 +167,39 @@ function gateSpike(rules, samples) {
         return [`did not survive the spike: the test was stopped ${where}, so the recovery phase was never reached`];
     }
 
+    // Recovery = how long after the burst until the system is back to normal and stays there. The start of the
+    // recovery phase still drains the backlog the burst built up, so a p95 over the whole phase mostly measures that
+    // drain; it is printed for reference only. Recovered = the first window from which every later window has
+    // p95 <= maxRecoveryP95Ratio x baseline p95 and errors <= maxErrorPctRecovery.
+    const burstEnd = Math.min(...phases.recovery.map(s => Number(s.timeStamp)));
+    const size = rules.bucketSeconds * 1000;
+    const buckets = new Map();
+    for (const s of phases.recovery) {
+        const b = Math.floor((Number(s.timeStamp) - burstEnd) / size);
+        if (!buckets.has(b)) buckets.set(b, []);
+        buckets.get(b).push(s);
+    }
+    const p95Limit = rules.maxRecoveryP95Ratio * base.p95;
+    const windows = [...buckets].sort((x, y) => x[0] - y[0]).map(([b, list]) => {
+        const s = summarise(list);
+        return { from: b * rules.bucketSeconds, ok: s.p95 <= p95Limit && s.errorPct <= rules.maxErrorPctRecovery, ...s };
+    });
+    let firstOk = windows.length;
+    while (firstOk > 0 && windows[firstOk - 1].ok) firstOk--;
+    const recoveredAt = firstOk < windows.length ? windows[firstOk].from : null;
+
+    console.log(`\nAfter the burst (limit: p95 <= ${fmt(rules.maxRecoveryP95Ratio, 1)} x baseline = ${Math.round(p95Limit)} ms, errors <= ${rules.maxErrorPctRecovery}%):`);
+    windows.forEach((w, i) => console.log(`  +${String(w.from).padStart(3)}-${w.from + rules.bucketSeconds}s  p95 ${String(w.p95).padStart(6)} ms  ` +
+        `errors ${fmt(w.errorPct, 1).padStart(5)}%  threads ${String(w.maxThreads).padStart(3)}${i === firstOk ? '  <- back to normal from here' : ''}`));
+    console.log(`\nWhole recovery phase (reference only, includes draining the backlog): p95 ${rec.p95} ms = ${fmt(rec.p95 / base.p95, 2)}x baseline; ` +
+        `spike p95 = ${fmt(spike.p95 / base.p95, 2)}x baseline.`);
+    console.log(recoveredAt === null ? 'Did not get back to normal before the end of the run.'
+        : `Time to recover: ${recoveredAt} s after the burst ended (limit ${rules.maxRecoverySeconds} s).`);
+
     const failures = [];
-    const ratio = rec.p95 / base.p95;
     if (spike.errorPct > rules.maxErrorPctSpike) failures.push(`spike: errors ${fmt(spike.errorPct, 1)}% > ${rules.maxErrorPctSpike}%`);
-    if (rec.errorPct > rules.maxErrorPctRecovery) failures.push(`recovery: errors ${fmt(rec.errorPct, 1)}% > ${rules.maxErrorPctRecovery}%`);
-    if (ratio > rules.maxRecoveryP95Ratio) failures.push(`recovery: p95 is ${fmt(ratio, 2)}x baseline > ${rules.maxRecoveryP95Ratio}x (did not recover)`);
-    console.log(`\nRecovery p95 / baseline p95 = ${fmt(ratio, 2)}x (limit ${rules.maxRecoveryP95Ratio}x); spike p95 = ${fmt(spike.p95 / base.p95, 2)}x baseline.`);
+    if (recoveredAt === null) failures.push('recovery: never got back to normal before the end of the run (did not recover)');
+    else if (recoveredAt > rules.maxRecoverySeconds) failures.push(`recovery: took ${recoveredAt} s > ${rules.maxRecoverySeconds} s`);
     return failures;
 }
 
