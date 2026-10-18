@@ -23,6 +23,11 @@ public static class TestEnvironment
     public static string ClientEmail => Environment.GetEnvironmentVariable("E2E_CLIENT_EMAIL") ?? "";
     public static string ClientPassword => Environment.GetEnvironmentVariable("E2E_CLIENT_PASSWORD") ?? "";
 
+    public static string IdentityApiUrl => Environment.GetEnvironmentVariable("E2E_IDENTITY_URL") ?? "http://localhost:5281";
+    public static string WorkflowApiUrl => Environment.GetEnvironmentVariable("E2E_WORKFLOW_URL") ?? "http://localhost:5225";
+    public static string DocumentsApiUrl => Environment.GetEnvironmentVariable("E2E_DOCUMENTS_URL") ?? "http://localhost:5171";
+    public static string AuditApiUrl => Environment.GetEnvironmentVariable("E2E_AUDIT_URL") ?? "http://localhost:5051";
+
     /// <summary>
     /// When true, Chrome runs visibly and pauses briefly during key UI actions
     /// so the evaluator can observe live execution during the SE3112 demonstration.

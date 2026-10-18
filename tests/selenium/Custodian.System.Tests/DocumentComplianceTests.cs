@@ -353,14 +353,14 @@ public class DocumentComplianceTests : TestBase
                 password = TestEnvironment.StaffPassword
             });
             var loginContent = new StringContent(authBody, Encoding.UTF8, "application/json");
-            var loginResp = client.PostAsync("http://localhost:5281/api/auth/login", loginContent).GetAwaiter().GetResult();
+            var loginResp = client.PostAsync($"{TestEnvironment.IdentityApiUrl}/api/auth/login", loginContent).GetAwaiter().GetResult();
             Console.WriteLine($"[EnsureTask] Login: {loginResp.StatusCode}");
             if (!loginResp.IsSuccessStatusCode) return;
 
             var loginJson = JsonDocument.Parse(loginResp.Content.ReadAsStringAsync().GetAwaiter().GetResult());
             var globalToken = loginJson.RootElement.GetProperty("token").GetString();
 
-            using var tenantReq = new HttpRequestMessage(HttpMethod.Get, "http://localhost:5281/api/tenant/mine");
+            using var tenantReq = new HttpRequestMessage(HttpMethod.Get, $"{TestEnvironment.IdentityApiUrl}/api/tenant/mine");
             tenantReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", globalToken);
             var tenantResp = client.SendAsync(tenantReq).GetAwaiter().GetResult();
             Console.WriteLine($"[EnsureTask] TenantMine: {tenantResp.StatusCode}");
@@ -391,7 +391,7 @@ public class DocumentComplianceTests : TestBase
             Console.WriteLine($"[EnsureTask] TenantId: {tenantId}");
             if (string.IsNullOrEmpty(tenantId)) return;
 
-            using var wsReq = new HttpRequestMessage(HttpMethod.Post, $"http://localhost:5281/api/auth/select-workspace/{tenantId}");
+            using var wsReq = new HttpRequestMessage(HttpMethod.Post, $"{TestEnvironment.IdentityApiUrl}/api/auth/select-workspace/{tenantId}");
             wsReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", globalToken);
             var wsResp = client.SendAsync(wsReq).GetAwaiter().GetResult();
             Console.WriteLine($"[EnsureTask] SelectWs: {wsResp.StatusCode}");
@@ -400,7 +400,7 @@ public class DocumentComplianceTests : TestBase
             var wsJson = JsonDocument.Parse(wsResp.Content.ReadAsStringAsync().GetAwaiter().GetResult());
             var wsToken = wsJson.RootElement.GetProperty("token").GetString();
 
-            using var actionsReq = new HttpRequestMessage(HttpMethod.Get, $"http://localhost:5225/api/engagements/{Stage2EngagementId}/actions?tenantId={tenantId}");
+            using var actionsReq = new HttpRequestMessage(HttpMethod.Get, $"{TestEnvironment.WorkflowApiUrl}/api/engagements/{Stage2EngagementId}/actions?tenantId={tenantId}");
             actionsReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", wsToken);
             var actionsResp = client.SendAsync(actionsReq).GetAwaiter().GetResult();
             Console.WriteLine($"[EnsureTask] GetActions: {actionsResp.StatusCode}");
@@ -423,7 +423,7 @@ public class DocumentComplianceTests : TestBase
                             verifiedBy = "StaffUser",
                             verificationReason = "Reset for test"
                         });
-                        using var putReq = new HttpRequestMessage(HttpMethod.Put, $"http://localhost:5225/api/engagements/{Stage2EngagementId}/actions/{actionId}/verification?tenantId={tenantId}");
+                        using var putReq = new HttpRequestMessage(HttpMethod.Put, $"{TestEnvironment.WorkflowApiUrl}/api/engagements/{Stage2EngagementId}/actions/{actionId}/verification?tenantId={tenantId}");
                         putReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", wsToken);
                         putReq.Content = new StringContent(verifyBody, Encoding.UTF8, "application/json");
                         var putResp = client.SendAsync(putReq).GetAwaiter().GetResult();

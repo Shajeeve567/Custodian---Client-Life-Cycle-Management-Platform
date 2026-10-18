@@ -27,9 +27,9 @@ public class AuditAndSecurityTests : TestBase
     private const string ClosedEngagementId = "015bfe04-cb20-44c5-8be0-ccb4be30b18f";
     private const string Stage2EngagementId = "4ca380d3-04e0-4be5-8e6a-6f8a760803b6";
 
-    private const string WorkflowApiBase = "http://localhost:5225";
-    private const string DocumentsApiBase = "http://localhost:5171";
-    private const string AuditApiBase = "http://localhost:5051";
+    private static string WorkflowApiBase => TestEnvironment.WorkflowApiUrl;
+    private static string DocumentsApiBase => TestEnvironment.DocumentsApiUrl;
+    private static string AuditApiBase => TestEnvironment.AuditApiUrl;
 
     [Fact]
     [Trait("Category", "CI")]

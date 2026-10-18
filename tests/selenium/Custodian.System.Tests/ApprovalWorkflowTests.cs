@@ -135,7 +135,16 @@ public class ApprovalWorkflowTests : TestBase
 
             // Confirm reject button becomes active and submit
             Assert.True(confirmRejectBtn.Enabled);
-            confirmRejectBtn.Click();
+            ((IJavaScriptExecutor)Driver).ExecuteScript("arguments[0].scrollIntoView({block: 'center', inline: 'center'});", confirmRejectBtn);
+            TestEnvironment.DemoPause(300);
+            try
+            {
+                confirmRejectBtn.Click();
+            }
+            catch
+            {
+                ((IJavaScriptExecutor)Driver).ExecuteScript("arguments[0].click();", confirmRejectBtn);
+            }
             TestEnvironment.DemoPause(800);
 
             // Wait for rejection modal to dismiss
