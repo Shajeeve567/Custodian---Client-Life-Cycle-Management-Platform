@@ -1,0 +1,84 @@
+name: CI — E2E Testing Pipeline (Role D)
+
+on:
+  push:
+    branches: [E2EUI-Selenium, dev, main]
+  pull_request:
+    branches: [E2EUI-Selenium, dev, main]
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: 'Select test suite mode'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - 'auto'   # Auto-detects: Full suite on E2EUI-Selenium, Smoke on dev/main
+          - 'full'   # Full suite (All 11 tests)
+          - 'smoke'  # Fast smoke test (APPR01_ only, ~60s)
+
+jobs:
+  e2e-tests:
+    name: Selenium WebDriver Tests (Headless)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build Selenium Test Project
+        run: dotnet build tests/selenium/Custodian.System.Tests/Custodian.System.Tests.csproj --configuration Release
+
+      - name: Determine Test Suite Tier
+        id: select-tier
+        shell: bash
+        run: |
+          TARGET_BRANCH="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            TARGET_BRANCH="${{ github.base_ref }}"
+          fi
+
+          MANUAL_CHOICE="${{ github.event.inputs.test_suite }}"
+
+          if [ "$MANUAL_CHOICE" = "full" ]; then
+            echo "mode=full" >> $GITHUB_OUTPUT
+            echo "filter=Category=CI" >> $GITHUB_OUTPUT
+            echo "Tier: FULL SUITE (Manual Override)"
+          elif [ "$MANUAL_CHOICE" = "smoke" ]; then
+            echo "mode=smoke" >> $GITHUB_OUTPUT
+            echo "filter=FullyQualifiedName~APPR01_" >> $GITHUB_OUTPUT
+            echo "Tier: SMOKE TEST (Manual Override)"
+          elif [ "$TARGET_BRANCH" = "E2EUI-Selenium" ]; then
+            echo "mode=full" >> $GITHUB_OUTPUT
+            echo "filter=Category=CI" >> $GITHUB_OUTPUT
+            echo "Tier: FULL REGRESSION SUITE (11 Tests) for branch E2EUI-Selenium"
+          else
+            echo "mode=smoke" >> $GITHUB_OUTPUT
+            echo "filter=FullyQualifiedName~APPR01_" >> $GITHUB_OUTPUT
+            echo "Tier: FAST SMOKE TEST (APPR01_ Flagship) for branch $TARGET_BRANCH"
+          fi
+
+      - name: Execute Headless CI Test Suite
+        run: |
+          echo "Executing test filter: ${{ steps.select-tier.outputs.filter }}"
+          dotnet test tests/selenium/Custodian.System.Tests/Custodian.System.Tests.csproj \
+            --no-build \
+            --filter "${{ steps.select-tier.outputs.filter }}" \
+            --configuration Release \
+            --logger "console;verbosity=normal"
+        env:
+          SELENIUM_HEADLESS: "true"
+          DOTNET_ROLL_FORWARD: "Major"
+          E2E_BASE_URL: "https://custodian-blue.vercel.app"
+          E2E_TENANT_NAME: "SE3112 E2E Testing Agency"
+          E2E_OWNER_EMAIL: "se3112.e2e.owner.261017@example.com"
+          E2E_OWNER_PASSWORD: "W7@rQ2!pL9#vT5$zN8"
+          E2E_STAFF_EMAIL: "se3112.e2e.staff.261017@example.com"
+          E2E_STAFF_PASSWORD: "F6!mK8#qR2@tY9$wH4"
+          E2E_CLIENT_EMAIL: "se3112.e2e.client.261017@example.com"
+          E2E_CLIENT_PASSWORD: "J5#cV9!nP3@xL7$sD2"
