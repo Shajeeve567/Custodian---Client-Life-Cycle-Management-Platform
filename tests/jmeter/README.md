@@ -46,7 +46,7 @@ The weights are Throughput Controllers and can be changed with `-JpctDocuments`,
 | File | Purpose |
 |---|---|
 | `custodian-load.jmx` | The test plan: setUp, the four profiles, and a Test Fragment with every request defined once |
-| `run.sh` | Runs one profile end to end: guard → health check → JMeter → health check → secret scan → SLA gate |
+| `run.sh` | Runs one profile end to end: guard → health check → warm-up → JMeter → health check → secret scan → SLA gate |
 | `sla.json` | Performance targets (p95 per request) and the pass rules of each profile |
 | `sla-gate.js` | Turns a run into PASS / FAIL (exit code), used by `run.sh` and CI |
 | `staging.properties` | Base URLs of the staging App Services |
@@ -106,6 +106,12 @@ below can be tuned without editing the plan:
 ./run.sh load --props qa.properties -- -JloadUsers=30 -JloadHold=300
 ```
 
+Before measuring, `run.sh` sends every request once in an untimed **warm-up** loop (kept in `results/<run>/warmup/`,
+never gated). A freshly restarted App Service pays one-off costs on its first real requests (JIT and EF Core query
+compilation, opening the MySQL connection pool, cold caches): a first smoke run straight after a restart saw the
+stall queue at 4.5 s and the PDF at 9 s, then 0.2–0.4 s on the next loops. Add `--no-warmup` to measure a cold
+start on purpose.
+
 `run.sh` exit codes: **0** pass · **1** SLA failed · **2** bad usage/setup or a secret found in the output ·
 **3** target refused or unhealthy · **4** JMeter could not run.
 
@@ -157,7 +163,8 @@ Each run gets its own folders (JMeter appends to an existing `.jtl`, so folders 
 
 ```text
 results/<UTC time>-<profile>/   run-info.txt (targets, settings, start/end in UTC and Asia/Colombo),
-                                health-before.txt, health-after.txt, results.jtl, jmeter.log, sla-gate.txt
+                                health-before.txt, health-after.txt, results.jtl, jmeter.log, sla-gate.txt,
+                                warmup/ (the untimed warm-up loop)
 reports/<UTC time>-<profile>/   HTML dashboard (index.html); reports/latest points to the newest one
 ```
 
@@ -214,4 +221,5 @@ results from CI are reliable; for load, stress and spike figures, run `run.sh` f
 | setUp `login` fails, test stops at once | Wrong password, or the account does not exist in this target's database (which is the canary doing its job on a non-QA database) |
 | `Cannot write to …` when running JMeter by hand | The `-o` folder must not exist yet and its parent must exist. `run.sh` handles this |
 | Statistics look doubled or mixed | The `.jtl` already existed and JMeter appended to it. Use a new file (`run.sh` always does) |
+| A request fails with `success=false`, status 200 and no message | It was slower than `maxResponseMs` / `maxReportMs` (Duration Assertion). The first requests after an app restart are slow: let the warm-up run (the default) |
 | `WARNING: package sun.awt.X11…`, `StatusConsoleListener` lines | Harmless messages from JMeter's Java libraries at startup |

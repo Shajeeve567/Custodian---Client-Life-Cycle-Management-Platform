@@ -1218,6 +1218,10 @@ if (n == window) {
               <intProp name="Assertion.test_type">8</intProp>
             </ResponseAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
             <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert the tenant has an engagement">
               <stringProp name="JSON_PATH">$[0].engagementId</stringProp>
               <stringProp name="EXPECTED_VALUE"/>
@@ -1226,10 +1230,6 @@ if (n == window) {
               <boolProp name="INVERT">false</boolProp>
               <boolProp name="ISREGEX">false</boolProp>
             </JSONPathAssertion>
-            <hashTree/>
-            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
-              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
-            </DurationAssertion>
             <hashTree/>
           </hashTree>
         </hashTree>
@@ -1255,6 +1255,10 @@ if (n == window) {
               <intProp name="Assertion.test_type">8</intProp>
             </ResponseAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
             <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert $.engagementId is the requested id">
               <stringProp name="JSON_PATH">$.engagementId</stringProp>
               <stringProp name="EXPECTED_VALUE">${engagementId}</stringProp>
@@ -1263,10 +1267,6 @@ if (n == window) {
               <boolProp name="INVERT">false</boolProp>
               <boolProp name="ISREGEX">false</boolProp>
             </JSONPathAssertion>
-            <hashTree/>
-            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
-              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
-            </DurationAssertion>
             <hashTree/>
           </hashTree>
         </hashTree>
@@ -1292,6 +1292,10 @@ if (n == window) {
               <intProp name="Assertion.test_type">8</intProp>
             </ResponseAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
             <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert $.engagementId is the requested id">
               <stringProp name="JSON_PATH">$.engagementId</stringProp>
               <stringProp name="EXPECTED_VALUE">${engagementId}</stringProp>
@@ -1300,10 +1304,6 @@ if (n == window) {
               <boolProp name="INVERT">false</boolProp>
               <boolProp name="ISREGEX">false</boolProp>
             </JSONPathAssertion>
-            <hashTree/>
-            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
-              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
-            </DurationAssertion>
             <hashTree/>
           </hashTree>
         </hashTree>
@@ -1329,6 +1329,10 @@ if (n == window) {
               <intProp name="Assertion.test_type">8</intProp>
             </ResponseAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
             <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert body is JSON">
               <stringProp name="JSON_PATH">$</stringProp>
               <stringProp name="EXPECTED_VALUE"/>
@@ -1337,10 +1341,6 @@ if (n == window) {
               <boolProp name="INVERT">false</boolProp>
               <boolProp name="ISREGEX">false</boolProp>
             </JSONPathAssertion>
-            <hashTree/>
-            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
-              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
-            </DurationAssertion>
             <hashTree/>
           </hashTree>
         </hashTree>
@@ -1366,6 +1366,10 @@ if (n == window) {
               <intProp name="Assertion.test_type">8</intProp>
             </ResponseAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
             <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert body is JSON">
               <stringProp name="JSON_PATH">$</stringProp>
               <stringProp name="EXPECTED_VALUE"/>
@@ -1374,10 +1378,6 @@ if (n == window) {
               <boolProp name="INVERT">false</boolProp>
               <boolProp name="ISREGEX">false</boolProp>
             </JSONPathAssertion>
-            <hashTree/>
-            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
-              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
-            </DurationAssertion>
             <hashTree/>
           </hashTree>
         </hashTree>
@@ -1403,6 +1403,10 @@ if (n == window) {
               <intProp name="Assertion.test_type">8</intProp>
             </ResponseAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
             <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert $.unreadCount present">
               <stringProp name="JSON_PATH">$.unreadCount</stringProp>
               <stringProp name="EXPECTED_VALUE"/>
@@ -1411,10 +1415,6 @@ if (n == window) {
               <boolProp name="INVERT">false</boolProp>
               <boolProp name="ISREGEX">false</boolProp>
             </JSONPathAssertion>
-            <hashTree/>
-            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
-              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
-            </DurationAssertion>
             <hashTree/>
           </hashTree>
         </hashTree>
@@ -1440,6 +1440,10 @@ if (n == window) {
               <intProp name="Assertion.test_type">8</intProp>
             </ResponseAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
             <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert body is JSON">
               <stringProp name="JSON_PATH">$</stringProp>
               <stringProp name="EXPECTED_VALUE"/>
@@ -1448,10 +1452,6 @@ if (n == window) {
               <boolProp name="INVERT">false</boolProp>
               <boolProp name="ISREGEX">false</boolProp>
             </JSONPathAssertion>
-            <hashTree/>
-            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
-              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
-            </DurationAssertion>
             <hashTree/>
           </hashTree>
         </hashTree>
@@ -1486,6 +1486,10 @@ if (n == window) {
               <intProp name="Assertion.test_type">8</intProp>
             </ResponseAssertion>
             <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxReportMs (default 10 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxReportMs,10000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
             <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert Content-Type is application/pdf">
               <collectionProp name="Asserion.test_strings">
                 <stringProp name="0">application/pdf</stringProp>
@@ -1511,10 +1515,6 @@ if (n == window) {
               <stringProp name="SizeAssertion.size">1024</stringProp>
               <intProp name="SizeAssertion.operator">3</intProp>
             </SizeAssertion>
-            <hashTree/>
-            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxReportMs (default 10 s)">
-              <stringProp name="DurationAssertion.duration">${__P(maxReportMs,10000)}</stringProp>
-            </DurationAssertion>
             <hashTree/>
           </hashTree>
         </hashTree>
