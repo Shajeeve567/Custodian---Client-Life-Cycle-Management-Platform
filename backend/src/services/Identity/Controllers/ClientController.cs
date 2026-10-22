@@ -22,6 +22,7 @@ public class ClientController(
         return Ok(clients);
     }
 
+    // get client
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<ClientProfile>> GetClient(Guid id, CancellationToken cancellationToken)
     {
