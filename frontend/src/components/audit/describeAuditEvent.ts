@@ -1,11 +1,13 @@
 import { AuditEvent } from '../../types';
+import { parseApiJson } from '../../services/api';
+import { engagementStatusLabel } from '../../utils/displayLabels';
 
 /**
  * Turns a raw audit event (type code + JSON payload) into plain language: a label, a category and
  * detail lines that say exactly what changed. Pure; names and task titles are supplied by the caller.
  */
 
-export type AuditCategory = 'Engagement' | 'Tasks' | 'Questions' | 'Documents' | 'Conditions' | 'Interventions';
+export type AuditCategory = 'Engagement' | 'Tasks' | 'Questions' | 'Documents' | 'Conditions' | 'Meetings' | 'Interventions';
 
 export type AuditTone = 'neutral' | 'positive' | 'negative' | 'warning' | 'info';
 
@@ -28,7 +30,8 @@ type Payload = Record<string, any>;
 
 export const parsePayload = (evt: AuditEvent): Payload => {
     try {
-        const parsed = JSON.parse(evt.payload || '{}');
+        // Same UTC handling as API responses, so times inside event details show in local time.
+        const parsed = parseApiJson(evt.payload || '{}');
         return parsed && typeof parsed === 'object' ? parsed : {};
     } catch {
         return {};
@@ -56,6 +59,35 @@ const formatDate = (value?: string | null) => {
     if (!value) return 'none';
     const d = new Date(value);
     return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString();
+};
+
+const MEETING_FIELD_LABELS: Record<string, string> = {
+    purpose: 'Purpose',
+    durationMinutes: 'Duration',
+    participants: 'Participants',
+    importance: 'Importance',
+};
+
+/** One edited meeting field as "Purpose: "Kickoff" → "Kickoff call"". */
+const describeMeetingChange = (change: { field?: string; from?: unknown; to?: unknown }): string => {
+    const show = (v: unknown) => {
+        if (v === null || v === undefined || v === '') return 'none';
+        if (Array.isArray(v)) return v.length ? v.join(', ') : 'none';
+        if (change.field === 'durationMinutes') return `${v} min`;
+        if (change.field === 'purpose') return `"${v}"`;
+        return String(v);
+    };
+    const label = MEETING_FIELD_LABELS[change.field ?? ''] ?? humanize(change.field);
+    return `${label}: ${show(change.from)} → ${show(change.to)}`;
+};
+
+/** Date and time in the viewer's local time, e.g. for a meeting slot. */
+const formatDateTime = (value?: string | null) => {
+    if (!value) return undefined;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime())
+        ? value
+        : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 };
 
 const FIELD_LABELS: Record<string, string> = {
@@ -90,23 +122,25 @@ const quoted = (title?: string | null) => (title ? `"${title}"` : undefined);
 const compact = (lines: (string | undefined | false | null)[]) => lines.filter(Boolean) as string[];
 
 export function describeAuditEvent(evt: AuditEvent, lookups: AuditLookups): AuditDescription {
+    // Never print a raw user id: unknown people (or staff the viewer can't list) stay anonymous.
+    const staffName = (id?: string | null) => (id ? lookups.personName?.(id) ?? 'a team member' : 'unassigned');
     const p = parsePayload(evt);
     const taskName = quoted(p.title ?? p.actionTitle ?? lookups.taskTitle(p.actionId ?? p.blockerActionId));
 
     switch (evt.type) {
         // ---------------- Engagement ----------------
         case 'Genesis':
-            return { category: 'Engagement', label: 'Engagement created', details: compact([p.status && `Status: ${p.status}`, p.stage && `Stage: ${humanize(p.stage)}`]), tone: 'info' };
+            return { category: 'Engagement', label: 'Engagement created', details: compact([p.status && `Status: ${engagementStatusLabel(p.status)}`, p.stage && `Stage: ${humanize(p.stage)}`]), tone: 'info' };
         case 'StatusChange': {
             const to = p.toStatus as string | undefined;
             const label = to === 'Started' ? 'Engagement started' : to === 'Closed' ? 'Engagement closed' : to === 'Cancelled' ? 'Engagement cancelled' : 'Engagement status changed';
-            return { category: 'Engagement', label, details: compact([`Status: ${p.fromStatus ?? '?'} → ${to ?? '?'}`]), tone: to === 'Cancelled' ? 'negative' : 'positive' };
+            return { category: 'Engagement', label, details: compact([`Status: ${engagementStatusLabel(p.fromStatus) || '?'} → ${engagementStatusLabel(to) || '?'}`]), tone: to === 'Cancelled' ? 'negative' : 'positive' };
         }
         case 'ResponsibleStaffChanged':
             return {
                 category: 'Engagement',
                 label: 'Responsible staff changed',
-                details: compact([`Staff: ${lookups.personName?.(p.fromStaffId) ?? p.fromStaffId ?? '?'} → ${lookups.personName?.(p.toStaffId) ?? p.toStaffId ?? '?'}`]),
+                details: compact([`Staff: ${staffName(p.fromStaffId)} → ${staffName(p.toStaffId)}`]),
                 tone: 'info',
             };
         case 'StageChange':
@@ -264,6 +298,77 @@ export function describeAuditEvent(evt: AuditEvent, lookups: AuditLookups): Audi
         }
         case 'ConditionDeactivated':
             return { category: 'Conditions', label: 'Condition removed', details: compact([p.deactivationReason && `Reason: ${p.deactivationReason}`]), tone: 'negative' };
+
+        // ---------------- Engagement lifecycle (CSTD-20) ----------------
+        case 'EngagementReady':
+            return {
+                category: 'Engagement',
+                label: 'Engagement handed off',
+                details: compact([p.handoffSummary && `Summary: ${p.handoffSummary}`]),
+                tone: 'positive',
+            };
+        case 'EngagementClosed':
+            return {
+                category: 'Engagement',
+                label: 'Engagement sealed and closed',
+                details: compact([p.closureSummary && `Summary: ${p.closureSummary}`]),
+                tone: 'positive',
+            };
+
+        // ---------------- Meetings (CSTD-32) ----------------
+        case 'meeting.scheduled':
+            return {
+                category: 'Meetings',
+                label: p.type === 'Intervention' ? 'Intervention meeting scheduled' : 'Meeting scheduled',
+                details: compact([
+                    quoted(p.purpose),
+                    formatDateTime(p.scheduledAtUtc) && `When: ${formatDateTime(p.scheduledAtUtc)}`,
+                    p.importance === 'Important' && 'Marked important',
+                ]),
+                tone: 'info',
+            };
+        case 'meeting.rescheduled':
+            return {
+                category: 'Meetings',
+                label: 'Meeting rescheduled',
+                details: compact([
+                    formatDateTime(p.newScheduledAtUtc) && `New time: ${formatDateTime(p.newScheduledAtUtc)}`,
+                    p.reason && `Reason: ${p.reason}`,
+                ]),
+                tone: 'warning',
+            };
+        case 'meeting.updated':
+            // Edits carry a list of {field, from, to}; an older status-change fallback has none.
+            if (Array.isArray(p.changes)) {
+                return {
+                    category: 'Meetings',
+                    label: 'Meeting details edited',
+                    details: compact([quoted(p.purpose), ...p.changes.map(describeMeetingChange)]),
+                    tone: 'neutral',
+                };
+            }
+        // falls through
+        case 'meeting.completed':
+        case 'meeting.missed':
+        case 'meeting.cancelled': {
+            const outcome = evt.type.split('.')[1];
+            const labels: Record<string, string> = {
+                completed: 'Meeting completed',
+                missed: 'Meeting marked as missed',
+                cancelled: 'Meeting cancelled',
+                updated: 'Meeting updated',
+            };
+            const tones: Record<string, AuditTone> = { completed: 'positive', missed: 'negative', cancelled: 'neutral', updated: 'neutral' };
+            return {
+                category: 'Meetings',
+                label: labels[outcome],
+                details: compact([
+                    formatDateTime(p.scheduledAtUtc) && `Scheduled for: ${formatDateTime(p.scheduledAtUtc)}`,
+                    p.importance === 'Important' && 'Important meeting',
+                ]),
+                tone: tones[outcome],
+            };
+        }
 
         // ---------------- Interventions (CSTD-35) ----------------
         case 'intervention.recovered': {

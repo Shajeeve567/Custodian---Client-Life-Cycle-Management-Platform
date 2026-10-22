@@ -52,7 +52,7 @@ public static class ReadinessHandoffReportBuilder
     private static IEnumerable<KeyValuePair<string, string>> AppliedFilters(ReadinessHandoffReportData data) =>
     [
         new("Engagement", EngagementCode(data.Engagement.EngagementId)),
-        new("Generated at (UTC)", data.GeneratedAtUtc.UtcDateTime.ToString("u", CultureInfo.InvariantCulture))
+        new($"Generated at {ReportTimeZone.ColumnSuffix}", ReportValue.FormatDateTime(data.GeneratedAtUtc.UtcDateTime))
     ];
 
     private static ReportSection Summary(ReadinessHandoffReportData data) => new KeyValueSection("Engagement",
@@ -62,7 +62,7 @@ public static class ReadinessHandoffReportBuilder
         new("Responsible staff", data.Engagement.StaffId),
         new("Stage", data.Engagement.Stage),
         new("Status", data.Engagement.Status),
-        new("Created", data.Engagement.CreatedAt.ToString("u", CultureInfo.InvariantCulture))
+        new($"Created {ReportTimeZone.ColumnSuffix}", ReportValue.FormatDateTime(data.Engagement.CreatedAt))
     ]);
 
     private static ReportSection ReadinessVerdict(ReadinessHandoffReportData data)
@@ -77,13 +77,13 @@ public static class ReadinessHandoffReportBuilder
             ? "Unavailable"
             : data.Readiness?.State ?? "Unknown";
 
-        var evaluatedAt = data.Readiness?.EvaluatedAtUtc.ToString("u", CultureInfo.InvariantCulture) ?? NotApplicable;
+        var evaluatedAt = data.Readiness is null ? NotApplicable : ReportValue.FormatDateTime(data.Readiness.EvaluatedAtUtc);
 
         return new KeyValueSection("Readiness (generation time)",
         [
             new("Verdict", verdict),
             new("State", stateText),
-            new("Evaluated at (UTC)", evaluatedAt),
+            new($"Evaluated at {ReportTimeZone.ColumnSuffix}", evaluatedAt),
             new("Documents evidence", data.DocumentsUnavailable
                 ? "Unavailable at generation time"
                 : $"{data.Documents.Count} document(s) on record")
@@ -151,7 +151,7 @@ public static class ReadinessHandoffReportBuilder
                 new ReportColumn("Title", Width: 2),
                 new ReportColumn("Status", Width: 1.2f),
                 new ReportColumn("Approval status", Width: 1.4f),
-                new ReportColumn("Satisfied at (UTC)", Width: 1.6f),
+                new ReportColumn($"Satisfied at {ReportTimeZone.ColumnSuffix}", Width: 1.6f),
                 new ReportColumn("Rejection reason", Width: 2)
             ],
             data.ApprovalConditions.Select(c => new object?[]
@@ -159,7 +159,7 @@ public static class ReadinessHandoffReportBuilder
                 c.Title,
                 c.IsActive ? c.Status : $"{c.Status} (inactive)",
                 c.ApprovalStatus ?? NotApplicable,
-                c.SatisfiedAt?.ToString("u", CultureInfo.InvariantCulture) ?? NotApplicable,
+                c.SatisfiedAt is { } satisfiedAt ? ReportValue.FormatDateTime(satisfiedAt) : NotApplicable,
                 c.RejectionReason ?? string.Empty
             }));
     }
@@ -178,7 +178,7 @@ public static class ReadinessHandoffReportBuilder
                 new ReportColumn("Amount", Width: 1.2f),
                 new ReportColumn("Currency", Width: 1),
                 new ReportColumn("Status", Width: 1.2f),
-                new ReportColumn("Satisfied at (UTC)", Width: 1.6f)
+                new ReportColumn($"Satisfied at {ReportTimeZone.ColumnSuffix}", Width: 1.6f)
             ],
             data.PaymentConditions.Select(c => new object?[]
             {
@@ -186,7 +186,7 @@ public static class ReadinessHandoffReportBuilder
                 c.Amount?.ToString("0.00", CultureInfo.InvariantCulture) ?? NotApplicable,
                 c.Currency ?? NotApplicable,
                 c.IsActive ? c.Status : $"{c.Status} (inactive)",
-                c.SatisfiedAt?.ToString("u", CultureInfo.InvariantCulture) ?? NotApplicable
+                c.SatisfiedAt is { } satisfiedAt ? ReportValue.FormatDateTime(satisfiedAt) : NotApplicable
             }));
     }
 
@@ -201,7 +201,7 @@ public static class ReadinessHandoffReportBuilder
         return new KeyValueSection(title,
         [
             new("Handed off by", data.Handoff.HandedOffBy),
-            new("Handed off at (UTC)", data.Handoff.HandedOffAtUtc.ToString("u", CultureInfo.InvariantCulture)),
+            new($"Handed off at {ReportTimeZone.ColumnSuffix}", ReportValue.FormatDateTime(data.Handoff.HandedOffAtUtc)),
             new("Summary", string.IsNullOrWhiteSpace(data.Handoff.Summary) ? "(none provided)" : data.Handoff.Summary)
         ]);
     }
@@ -217,7 +217,7 @@ public static class ReadinessHandoffReportBuilder
         return new KeyValueSection(title,
         [
             new("Closed by", data.Closure.ClosedBy),
-            new("Closed at (UTC)", data.Closure.ClosedAt.ToString("u", CultureInfo.InvariantCulture)),
+            new($"Closed at {ReportTimeZone.ColumnSuffix}", ReportValue.FormatDateTime(data.Closure.ClosedAt)),
             new("Summary", string.IsNullOrWhiteSpace(data.Closure.Summary) ? "(none provided)" : data.Closure.Summary)
         ]);
     }
@@ -229,6 +229,6 @@ public static class ReadinessHandoffReportBuilder
         "Document verification summary: the compliance and verification status of each document on record. When the Documents service is unavailable, verification cannot be confirmed and the top-line verdict is forced to Not ready.",
         "Approval and payment conditions: staff-configured Approval and Payment gates. Inactive conditions are still listed (marked inactive) but never affect the readiness verdict.",
         "Handoff and closure: the persisted handoff/closure context recorded by CSTD-20. Kept distinct from the readiness verdict, which is a generation-time state.",
-        "All timestamps are UTC."
+        $"All timestamps are {ReportTimeZone.Description}."
     ]);
 }

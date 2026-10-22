@@ -1,16 +1,25 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { WorkflowApi, ApiError } from '../services/api';
 import { Meeting, CreateMeetingRequest } from '../types';
-import { Calendar, Plus, RefreshCw, Loader2, X, AlertTriangle, Link2 } from 'lucide-react';
 import { formatDateTime, formatDuration } from '../utils/formatDate';
 import { RescheduleMeetingModal } from './RescheduleMeetingModal';
+import { Calendar, Clock, Plus, RefreshCw, Loader2, X, AlertTriangle, Link2, Users } from 'lucide-react';
 
 interface MeetingListProps {
     engagementId: string;
     tenantId: string;
 }
 
-type ModalMode = 'create' | null;
+type ModalMode = 'create' | 'edit' | null;
+
+/** ISO timestamp -> value for <input type="datetime-local"> in the viewer's local time. */
+const toLocalInput = (iso: string): string => {
+    const d = new Date(iso);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const parseParticipants = (raw: string) => raw.split(',').map(p => p.trim()).filter(Boolean);
 
 export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId }) => {
     const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -29,6 +38,9 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
     const [participantsRaw, setParticipantsRaw] = useState('');
     const [type, setType] = useState<'Normal' | 'Intervention'>('Normal');
     const [importance, setImportance] = useState<'Normal' | 'Important'>('Normal');
+    // Edit mode: the meeting being edited, and the reason asked for when its time changes.
+    const [editing, setEditing] = useState<Meeting | null>(null);
+    const [rescheduleReason, setRescheduleReason] = useState('');
 
     const load = useCallback(async () => {
         if (!tenantId) return;
@@ -53,6 +65,8 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
         setParticipantsRaw('');
         setType('Normal');
         setImportance('Normal');
+        setEditing(null);
+        setRescheduleReason('');
         setFormError(null);
         setIsSubmitting(false);
     };
@@ -61,6 +75,21 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
         resetForm();
         setModalMode('create');
     };
+
+    const openEdit = (meeting: Meeting) => {
+        resetForm();
+        setEditing(meeting);
+        setPurpose(meeting.purpose);
+        setScheduledAt(toLocalInput(meeting.scheduledAtUtc));
+        setDuration(meeting.durationMinutes ?? '');
+        setParticipantsRaw(meeting.participants.join(', '));
+        setType(meeting.type === 'Intervention' ? 'Intervention' : 'Normal');
+        setImportance(meeting.importance === 'Important' ? 'Important' : 'Normal');
+        setModalMode('edit');
+    };
+
+    // True while editing and the date/time differs from the meeting's current slot.
+    const timeChanged = Boolean(editing) && scheduledAt !== '' && scheduledAt !== toLocalInput(editing!.scheduledAtUtc);
 
     const closeModal = () => {
         if (isSubmitting) return;
@@ -86,10 +115,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                 purpose: purpose.trim(),
                 scheduledAtUtc: parsed.toISOString(),
                 durationMinutes: duration === '' ? null : Number(duration),
-                participants: participantsRaw
-                    .split(',')
-                    .map(p => p.trim())
-                    .filter(Boolean),
+                participants: parseParticipants(participantsRaw),
                 importance,
             };
             await WorkflowApi.createMeeting(engagementId, body, tenantId);
@@ -112,8 +138,59 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
         }
     };
 
-    const handleReschedule = (meeting: Meeting) => {
-        setMeetingToReschedule(meeting);
+    /**
+     * One Edit dialog for everything. A new date/time goes through reschedule (keeps the original
+     * meeting, links the new one and records the reason in the audit log); other details go through
+     * edit, which updates the meeting in place and is audited as "Meeting updated".
+     */
+    const handleEdit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editing) return;
+        setFormError(null);
+
+        if (!purpose.trim()) { setFormError('Purpose is required.'); return; }
+        const parsed = new Date(scheduledAt);
+        if (isNaN(parsed.getTime())) { setFormError('Scheduled time is invalid.'); return; }
+        if (timeChanged && parsed.getTime() <= Date.now()) { setFormError('The new time must be in the future.'); return; }
+
+        const durationMinutes = duration === '' ? null : Number(duration);
+        const participants = parseParticipants(participantsRaw);
+        const detailsChanged =
+            purpose.trim() !== editing.purpose ||
+            participants.join(',').toLowerCase() !== editing.participants.join(',').toLowerCase() ||
+            importance !== editing.importance ||
+            (!timeChanged && durationMinutes !== (editing.durationMinutes ?? null));
+
+        if (!timeChanged && !detailsChanged) { closeModal(); return; }
+
+        setIsSubmitting(true);
+        try {
+            let target = editing;
+            if (timeChanged) {
+                target = await WorkflowApi.rescheduleMeeting(engagementId, editing.meetingId, {
+                    newScheduledAtUtc: parsed.toISOString(),
+                    durationMinutes,
+                    reason: rescheduleReason.trim() || undefined,
+                }, tenantId);
+            }
+            if (detailsChanged) {
+                await WorkflowApi.updateMeeting(engagementId, target.meetingId, {
+                    purpose: purpose.trim(),
+                    scheduledAtUtc: target.scheduledAtUtc, // unchanged here; a new time was handled above
+                    durationMinutes, // the value in the form (after a reschedule the new meeting already has it)
+                    participants,
+                    importance,
+                }, tenantId);
+            }
+            resetForm();
+            setModalMode(null);
+            await load();
+        } catch (err: any) {
+            setFormError(err instanceof ApiError ? err.message : 'Failed to save the meeting.');
+            await load();
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     const statusBadge = (status: string) => {
@@ -130,24 +207,29 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
 
     return (
         <div className="bg-white/85 backdrop-blur-md rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-4">
-            <div className="flex items-center justify-between">
-                <div>
+            <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b border-slate-100">
+                <div className="min-w-0">
                     <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                         <Calendar className="w-4 h-4 text-indigo-600" />
                         Meetings
+                        {meetings.length > 0 && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                                {meetings.length}
+                            </span>
+                        )}
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                        Schedule and manage client discussions for this engagement.
+                        Schedule and manage client discussions for this engagement. Times are shown in your local time.
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                     <button onClick={load} disabled={isLoading}
                         className="p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 transition disabled:opacity-50"
-                        title="Refresh">
+                        title="Refresh" aria-label="Refresh meetings">
                         <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
                     </button>
                     <button onClick={openCreate}
-                        className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition inline-flex items-center gap-1.5">
+                        className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition inline-flex items-center gap-1.5">
                         <Plus className="w-3.5 h-3.5" />
                         Schedule Meeting
                     </button>
@@ -155,151 +237,109 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
             </div>
 
             {isLoading && meetings.length === 0 ? (
-                <div className="py-8 text-center">
+                <div className="py-8 text-center space-y-2">
                     <Loader2 className="w-5 h-5 animate-spin text-indigo-600 mx-auto" />
+                    <p className="text-xs text-slate-500">Loading meetings...</p>
                 </div>
             ) : error ? (
                 <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800">{error}</div>
             ) : meetings.length === 0 ? (
-                <div className="py-8 text-center border border-dashed border-slate-300 rounded-xl">
+                <div className="py-8 text-center border border-dashed border-slate-300 rounded-xl space-y-2">
                     <p className="text-xs text-slate-500">No meetings scheduled yet.</p>
+                    <button onClick={openCreate}
+                        className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 hover:underline">
+                        Schedule the first meeting
+                    </button>
                 </div>
             ) : (
-                <div className="space-y-3">
-                    {/* Main list: only meetings whose status !== 'Rescheduled' */}
-                    {activeMeetings.length === 0 ? (
-                        <div className="py-6 text-center border border-dashed border-slate-200 rounded-xl">
-                            <p className="text-xs text-slate-500">No active meetings scheduled.</p>
-                        </div>
-                    ) : (
-                        <div className="space-y-2">
-                            {activeMeetings.map(m => (
-                                <div key={m.meetingId} className="p-4 rounded-xl border border-slate-200 bg-white space-y-2">
-                                    {/* Row 1: Title (left, truncating) + Status badge (right) */}
-                                    <div className="flex items-center justify-between gap-2">
-                                        <div className="flex items-center gap-2 min-w-0">
-                                            <span className="font-semibold text-slate-900 text-sm truncate" title={m.purpose}>
-                                                {m.purpose}
+                <ul className="space-y-3">
+                    {meetings.map(m => {
+                        const when = new Date(m.scheduledAtUtc);
+                        const isPastDue = m.status === 'Scheduled' && when.getTime() < Date.now();
+                        return (
+                            <li key={m.meetingId}
+                                className={`p-4 rounded-xl border bg-white flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${isPastDue ? 'border-amber-200' : 'border-slate-200'}`}>
+                                <div className="flex items-start gap-3 min-w-0 flex-1">
+                                    {/* Date block: the first thing people look for */}
+                                    <div className="shrink-0 w-14 rounded-lg border border-indigo-100 bg-indigo-50/60 text-center py-1.5">
+                                        <div className="text-[10px] font-bold uppercase text-indigo-600">
+                                            {when.toLocaleDateString([], { month: 'short' })}
+                                        </div>
+                                        <div className="text-lg font-bold text-slate-900 leading-tight">{when.getDate()}</div>
+                                        <div className="text-[10px] text-slate-500">{when.toLocaleDateString([], { weekday: 'short' })}</div>
+                                    </div>
+                                    <div className="min-w-0 space-y-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <span className="font-semibold text-slate-900 text-sm break-words">{m.purpose}</span>
+                                            {statusBadge(m.status)}
+                                            {isPastDue && (
+                                                <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border bg-amber-50 text-amber-700 border-amber-200">Past due</span>
+                                            )}
+                                            {m.importance === 'Important' && (
+                                                <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border bg-amber-100 text-amber-800 border-amber-200">Important</span>
+                                            )}
+                                            {m.type === 'Intervention' && (
+                                                <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border bg-violet-50 text-violet-700 border-violet-200">Intervention</span>
+                                            )}
+                                        </div>
+                                        <div className="text-xs text-slate-600 flex flex-wrap items-center gap-x-3 gap-y-1">
+                                            <span className="inline-flex items-center gap-1">
+                                                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                                                {when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                {m.durationMinutes ? ` · ${m.durationMinutes} min` : ''}
                                             </span>
+                                            {m.participants.length > 0 && (
+                                                <span className="inline-flex items-center gap-1 min-w-0 break-all">
+                                                    <Users className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                                    {m.participants.join(', ')}
+                                                </span>
+                                            )}
                                             {m.rescheduledFromMeetingId && (
-                                                <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 shrink-0">
-                                                    <Link2 className="w-3 h-3" /> rescheduled
+                                                <span className="inline-flex items-center gap-1 text-slate-500">
+                                                    <Link2 className="w-3 h-3" /> Rescheduled
                                                 </span>
                                             )}
                                         </div>
-                                        <div className="shrink-0">{statusBadge(m.status)}</div>
-                                    </div>
-
-                                    {/* Row 2: Single line — calendar icon, formatted date, duration, importance */}
-                                    <div className="flex items-center gap-1.5 text-xs text-slate-600 truncate">
-                                        <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                                        <span>{formatDateTime(m.scheduledAtUtc)}</span>
-                                        {m.durationMinutes ? (
-                                            <>
-                                                <span className="text-slate-300">·</span>
-                                                <span>{formatDuration(m.durationMinutes)}</span>
-                                            </>
-                                        ) : null}
-                                        {m.importance === 'Important' && (
-                                            <>
-                                                <span className="text-slate-300">·</span>
-                                                <span className="font-bold text-amber-700">Important</span>
-                                            </>
-                                        )}
-                                        {m.type === 'Intervention' && (
-                                            <>
-                                                <span className="text-slate-300">·</span>
-                                                <span className="text-indigo-600 font-medium">Intervention</span>
-                                            </>
+                                        {m.rescheduleReason && (
+                                            <div className="text-[11px] text-slate-500 italic break-words">
+                                                Reason: {m.rescheduleReason}
+                                            </div>
                                         )}
                                     </div>
-
-                                    {m.participants.length > 0 && (
-                                        <div className="text-[11px] text-slate-500 truncate">
-                                            With: {m.participants.join(', ')}
-                                        </div>
-                                    )}
-
-                                    {m.rescheduleReason && (
-                                        <div className="text-[11px] text-slate-500 italic truncate">
-                                            Reason: {m.rescheduleReason}
-                                        </div>
-                                    )}
-
-                                    {/* Row 3: Action controls */}
-                                    {m.status === 'Scheduled' && (
-                                        <div className="flex items-center gap-1.5 pt-2.5 mt-1 border-t border-slate-100">
-                                            <button
-                                                type="button"
-                                                onClick={() => handleStatus(m.meetingId, 'Completed')}
-                                                className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[11px] font-bold transition"
-                                            >
-                                                Complete
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleStatus(m.meetingId, 'Missed')}
-                                                className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-800 text-[11px] font-bold transition"
-                                            >
-                                                Missed
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleReschedule(m)}
-                                                className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 text-[11px] font-bold transition"
-                                            >
-                                                Reschedule
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleStatus(m.meetingId, 'Cancelled')}
-                                                className="ml-auto px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold transition"
-                                            >
-                                                Cancel
-                                            </button>
-                                        </div>
-                                    )}
                                 </div>
-                            ))}
-                        </div>
-                    )}
-
-                    {/* Rescheduled meetings in compact collapsible details */}
-                    {rescheduledMeetings.length > 0 && (
-                        <details className="pt-2 text-xs text-slate-600 group border-t border-slate-100">
-                            <summary className="cursor-pointer font-medium text-slate-500 hover:text-slate-800 select-none py-1 inline-flex items-center gap-1.5 focus:outline-none">
-                                <span>Show {rescheduledMeetings.length} rescheduled meeting{rescheduledMeetings.length === 1 ? '' : 's'}</span>
-                            </summary>
-                            <div className="mt-2 space-y-1.5 pl-2 border-l-2 border-slate-100">
-                                {rescheduledMeetings.map(m => (
-                                    <div
-                                        key={m.meetingId}
-                                        className="flex items-center gap-2 py-1.5 px-2.5 rounded-lg bg-slate-50 text-slate-600 text-xs"
-                                    >
-                                        <span className="font-medium text-slate-800 truncate" title={m.purpose}>
-                                            {m.purpose}
-                                        </span>
-                                        <span className="text-slate-300 shrink-0">·</span>
-                                        <span className="text-slate-500 shrink-0">
-                                            was {formatDateTime(m.scheduledAtUtc)}
-                                        </span>
-                                        <span className="text-slate-300 shrink-0">·</span>
-                                        <span className="shrink-0">{statusBadge(m.status)}</span>
+                                {m.status === 'Scheduled' && (
+                                    <div className="flex flex-wrap items-center gap-1.5 lg:justify-end shrink-0">
+                                        <button onClick={() => handleStatus(m.meetingId, 'Completed')}
+                                            className="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-semibold">
+                                            Complete
+                                        </button>
+                                        <button onClick={() => handleStatus(m.meetingId, 'Missed')}
+                                            className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-800 text-xs font-semibold">
+                                            Missed
+                                        </button>
+                                        <button onClick={() => openEdit(m)}
+                                            className="px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-semibold">
+                                            Edit
+                                        </button>
+                                        <button onClick={() => handleStatus(m.meetingId, 'Cancelled')}
+                                            className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold">
+                                            Cancel
+                                        </button>
                                     </div>
-                                ))}
-                            </div>
-                        </details>
-                    )}
-                </div>
+                                )}
+                            </li>
+                        );
+                    })}
+                </ul>
             )}
 
-            {modalMode === 'create' && (
+            {(modalMode === 'create' || modalMode === 'edit') && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
                     <div className="fixed inset-0" onClick={closeModal} />
                     <div className="relative z-10 bg-white rounded-2xl shadow-xl border border-slate-200 max-w-lg w-full p-6 space-y-4">
                         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                            <h2 className="text-lg font-bold text-slate-900">Schedule Meeting</h2>
-                            <button onClick={closeModal} disabled={isSubmitting}
+                            <h2 className="text-lg font-bold text-slate-900">{modalMode === 'edit' ? 'Edit Meeting' : 'Schedule Meeting'}</h2>
+                            <button onClick={closeModal} disabled={isSubmitting} aria-label="Close"
                                 className="p-1 rounded-lg text-slate-400 hover:text-slate-700">
                                 <X className="w-5 h-5" />
                             </button>
@@ -312,7 +352,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                             </div>
                         )}
 
-                        <form onSubmit={handleCreate} className="space-y-3">
+                        <form onSubmit={modalMode === 'edit' ? handleEdit : handleCreate} className="space-y-3">
                             <div>
                                 <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">Purpose</label>
                                 <input type="text" value={purpose} onChange={e => setPurpose(e.target.value)}
@@ -321,9 +361,9 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                                     className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500" />
                             </div>
 
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
-                                    <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">When</label>
+                                    <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">When (your local time)</label>
                                     <input type="datetime-local" value={scheduledAt}
                                         onChange={e => setScheduledAt(e.target.value)} disabled={isSubmitting}
                                         className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20" />
@@ -337,6 +377,21 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                                 </div>
                             </div>
 
+                            {timeChanged && (
+                                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 space-y-2">
+                                    <p className="text-xs text-amber-900">
+                                        Changing the time reschedules the meeting: the current slot is kept as <strong>Rescheduled</strong> and a new meeting is linked to it.
+                                    </p>
+                                    <label htmlFor="meeting-reschedule-reason" className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
+                                        Reason for rescheduling (optional)
+                                    </label>
+                                    <input id="meeting-reschedule-reason" type="text" value={rescheduleReason}
+                                        onChange={e => setRescheduleReason(e.target.value)} disabled={isSubmitting} maxLength={2000}
+                                        placeholder="e.g. Client requested a later slot"
+                                        className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20" />
+                                </div>
+                            )}
+
                             <div>
                                 <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">
                                     Participants (comma separated)
@@ -347,10 +402,11 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                                     className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20" />
                             </div>
 
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
                                     <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">Type</label>
-                                    <select value={type} onChange={e => setType(e.target.value as any)} disabled={isSubmitting}
+                                    <select value={type} onChange={e => setType(e.target.value as any)} disabled={isSubmitting || modalMode === 'edit'}
+                                        title={modalMode === 'edit' ? "A meeting's type can't be changed after it is scheduled" : undefined}
                                         className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm">
                                         <option value="Normal">Normal</option>
                                         <option value="Intervention">Intervention</option>
@@ -373,7 +429,9 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                                 </button>
                                 <button type="submit" disabled={isSubmitting}
                                     className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold disabled:opacity-50 inline-flex items-center gap-1.5">
-                                    {isSubmitting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...</> : 'Schedule'}
+                                    {isSubmitting
+                                        ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...</>
+                                        : modalMode === 'edit' ? (timeChanged ? 'Reschedule & save' : 'Save changes') : 'Schedule'}
                                 </button>
                             </div>
                         </form>

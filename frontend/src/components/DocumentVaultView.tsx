@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { DocumentMetadata, Engagement, ClientAction } from '../types';
-import { DocumentsApi, WorkflowApi } from '../services/api';
+import { DocumentMetadata, Engagement, ClientAction, ClientProfile, UserAccountResponse } from '../types';
+import { DocumentsApi, IdentityApi, WorkflowApi } from '../services/api';
+import { documentTypeLabel, engagementOptionLabel, formatDate, personLabel, stageLabel } from '../utils/displayLabels';
 import {
     FileText,
     ShieldCheck,
@@ -26,13 +27,14 @@ import {
 } from 'lucide-react';
 
 export const DocumentVaultView: React.FC = () => {
-    const { tenantId, userId } = useAuth();
+    const { tenantId, userId, email, token, role } = useAuth();
 
     // Engagement selection
     const [engagements, setEngagements] = useState<Engagement[]>([]);
-    const [selectedEngagementId, setSelectedEngagementId] = useState<string>('e689ce2c-b694-4860-aa0d-96d946283b71');
-    const [isCustomEngagement, setIsCustomEngagement] = useState<boolean>(false);
-    const [customEngagementInput, setCustomEngagementInput] = useState<string>('');
+    const [selectedEngagementId, setSelectedEngagementId] = useState<string>('');
+    // Used only to show client and staff names instead of ids.
+    const [clients, setClients] = useState<ClientProfile[]>([]);
+    const [teamUsers, setTeamUsers] = useState<UserAccountResponse[]>([]);
 
     // Document state
     const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
@@ -77,7 +79,13 @@ export const DocumentVaultView: React.FC = () => {
     const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
     // Active engagement ID
-    const activeEngagementId = isCustomEngagement ? customEngagementInput : selectedEngagementId;
+    const activeEngagementId = selectedEngagementId;
+
+    const clientNameFor = (eng?: Engagement) =>
+        (eng && clients.find((c) => c.id === eng.clientId)?.name) || 'Unnamed client';
+    const activeEngagement = engagements.find((eng) => eng.engagementId === activeEngagementId);
+    const actorName = (actor?: string | null, fallback?: string) =>
+        personLabel(actor, { users: teamUsers, currentUserId: userId, fallback });
 
     // Load engagements list
     useEffect(() => {
@@ -86,16 +94,20 @@ export const DocumentVaultView: React.FC = () => {
                 const data = await WorkflowApi.getEngagements(tenantId);
                 if (data && data.length > 0) {
                     setEngagements(data);
-                    if (!selectedEngagementId || selectedEngagementId === 'e689ce2c-b694-4860-aa0d-96d946283b71') {
-                        setSelectedEngagementId(data[0].engagementId);
-                    }
+                    setSelectedEngagementId((current) => current || data[0].engagementId);
                 }
             } catch (e) {
-                console.warn('Could not load engagement list, defaulting to manual entry', e);
+                console.warn('Could not load engagement list', e);
             }
         };
         fetchEngagements();
-    }, [tenantId]);
+        if (token) {
+            IdentityApi.getClients(token).then(setClients).catch(() => setClients([]));
+            if (role === 'Owner') {
+                IdentityApi.getUsers(token).then(setTeamUsers).catch(() => setTeamUsers([]));
+            }
+        }
+    }, [tenantId, token, role]);
 
     // Fetch documents
     const fetchDocuments = async () => {
@@ -253,7 +265,7 @@ export const DocumentVaultView: React.FC = () => {
             // Synchronize workflow state
             await syncWorkflowActionVerification(verifyingDoc.documentId, 'Verified', verifyNotes);
 
-            showSuccess(`Document ${verifyingDoc.documentId.slice(0, 8)}... successfully verified!`);
+            showSuccess(`${documentTypeLabel(verifyingDoc.type)} verified.`);
             setVerifyingDoc(null);
             setVerifyNotes('');
             fetchDocuments();
@@ -287,7 +299,7 @@ export const DocumentVaultView: React.FC = () => {
             // Synchronize workflow state
             await syncWorkflowActionVerification(rejectingDoc.documentId, 'Rejected', rejectionReason);
 
-            showSuccess(`Document ${rejectingDoc.documentId.slice(0, 8)}... marked as REJECTED.`);
+            showSuccess(`${documentTypeLabel(rejectingDoc.type)} rejected.`);
             setRejectingDoc(null);
             setRejectionReason('');
             fetchDocuments();
@@ -385,43 +397,20 @@ export const DocumentVaultView: React.FC = () => {
                             Engagement:
                         </div>
 
-                        {!isCustomEngagement ? (
-                            <select
-                                value={selectedEngagementId}
-                                onChange={(e) => setSelectedEngagementId(e.target.value)}
-                                className="text-xs font-medium bg-white border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 shadow-sm"
-                            >
-                                {engagements.map((eng) => (
-                                    <option key={eng.engagementId} value={eng.engagementId}>
-                                        {eng.clientId ? `Client ${eng.clientId.slice(0, 8)}...` : eng.engagementId.slice(0, 8)} ({eng.status})
-                                    </option>
-                                ))}
-                                {engagements.length === 0 && (
-                                    <option value={selectedEngagementId}>{selectedEngagementId.slice(0, 8)}...</option>
-                                )}
-                            </select>
-                        ) : (
-                            <input
-                                type="text"
-                                placeholder="Enter engagement UUID..."
-                                value={customEngagementInput}
-                                onChange={(e) => setCustomEngagementInput(e.target.value)}
-                                className="text-xs font-mono bg-white border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 w-64 shadow-sm"
-                            />
-                        )}
-
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setIsCustomEngagement(!isCustomEngagement);
-                                if (!isCustomEngagement && !customEngagementInput) {
-                                    setCustomEngagementInput(selectedEngagementId);
-                                }
-                            }}
-                            className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline px-1 py-1"
+                        <select
+                            value={selectedEngagementId}
+                            onChange={(e) => setSelectedEngagementId(e.target.value)}
+                            disabled={engagements.length === 0}
+                            aria-label="Engagement"
+                            className="text-xs font-medium bg-white border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 shadow-sm"
                         >
-                            {isCustomEngagement ? 'Pick from list' : 'Custom UUID'}
-                        </button>
+                            {engagements.map((eng) => (
+                                <option key={eng.engagementId} value={eng.engagementId}>
+                                    {engagementOptionLabel(eng, clientNameFor(eng))}
+                                </option>
+                            ))}
+                            {engagements.length === 0 && <option value="">No engagements yet</option>}
+                        </select>
 
                         <button
                             type="button"
@@ -708,8 +697,8 @@ export const DocumentVaultView: React.FC = () => {
                         </span>
                     </div>
 
-                    <div className="text-xs text-slate-400 font-mono">
-                        Engagement: {activeEngagementId.slice(0, 13)}...
+                    <div className="text-xs text-slate-500">
+                        {activeEngagement ? `${clientNameFor(activeEngagement)} · ${stageLabel(activeEngagement.stage)}` : ''}
                     </div>
                 </div>
 
@@ -777,14 +766,16 @@ export const DocumentVaultView: React.FC = () => {
                                                     <div>
                                                         <div className="font-semibold text-slate-900 flex items-center gap-1.5">
                                                             <span className={isDeleted ? 'line-through text-slate-500' : ''}>
-                                                                {doc.type}
+                                                                {documentTypeLabel(doc.type)}
                                                             </span>
                                                         </div>
-                                                        <div className="text-[11px] font-mono text-slate-400 mt-0.5" title={doc.documentId}>
-                                                            ID: {doc.documentId.slice(0, 14)}...
-                                                        </div>
+                                                        {doc.fileName && (
+                                                            <div className="text-[11px] text-slate-500 mt-0.5 truncate max-w-[220px]" title={doc.fileName}>
+                                                                {doc.fileName}
+                                                            </div>
+                                                        )}
                                                         <div className="text-[11px] text-slate-400 mt-0.5">
-                                                            Uploaded: {new Date(doc.uploadedAt).toLocaleDateString()} by {doc.uploaderId || 'Client'}
+                                                            Uploaded: {new Date(doc.uploadedAt).toLocaleDateString()} by {actorName(doc.uploaderId, 'a workspace user')}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -827,7 +818,7 @@ export const DocumentVaultView: React.FC = () => {
                                                         </span>
                                                         {doc.verifiedBy && (
                                                             <div className="text-[10px] text-slate-500 font-medium mt-0.5">
-                                                                By: {doc.verifiedBy}
+                                                                By: {actorName(doc.verifiedBy)}
                                                             </div>
                                                         )}
                                                         {doc.verificationReason && (
@@ -861,7 +852,7 @@ export const DocumentVaultView: React.FC = () => {
                                                 <div className="text-[11px] text-slate-600 space-y-0.5">
                                                     <div className="flex items-center gap-1">
                                                         <span className="text-slate-400 font-medium">Issued:</span>
-                                                        <span className="font-semibold text-slate-700">{doc.issueDate || '—'}</span>
+                                                        <span className="font-semibold text-slate-700">{formatDate(doc.issueDate)}</span>
                                                     </div>
                                                     <div className="flex items-center gap-1">
                                                         <span className="text-slate-400 font-medium">Expires:</span>
@@ -870,7 +861,7 @@ export const DocumentVaultView: React.FC = () => {
                                                                 ? 'text-rose-600 font-bold'
                                                                 : 'text-slate-700'
                                                         }`}>
-                                                            {doc.expiryDate || '—'}
+                                                            {formatDate(doc.expiryDate)}
                                                         </span>
                                                     </div>
                                                 </div>
@@ -1003,9 +994,9 @@ export const DocumentVaultView: React.FC = () => {
                         </div>
 
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-1">
-                            <div><span className="font-semibold text-slate-700">Type:</span> {verifyingDoc.type}</div>
-                            <div><span className="font-semibold text-slate-700">Doc ID:</span> <span className="font-mono">{verifyingDoc.documentId}</span></div>
-                            <div><span className="font-semibold text-slate-700">Staff Verifier:</span> {userId || 'user-staff-1'}</div>
+                            <div><span className="font-semibold text-slate-700">Type:</span> {documentTypeLabel(verifyingDoc.type)}</div>
+                            {verifyingDoc.fileName && <div><span className="font-semibold text-slate-700">File:</span> {verifyingDoc.fileName}</div>}
+                            <div><span className="font-semibold text-slate-700">Staff Verifier:</span> {email || 'You'}</div>
                         </div>
 
                         <div>
@@ -1071,8 +1062,8 @@ export const DocumentVaultView: React.FC = () => {
                         </div>
 
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-1">
-                            <div><span className="font-semibold text-slate-700">Type:</span> {rejectingDoc.type}</div>
-                            <div><span className="font-semibold text-slate-700">Doc ID:</span> <span className="font-mono">{rejectingDoc.documentId}</span></div>
+                            <div><span className="font-semibold text-slate-700">Type:</span> {documentTypeLabel(rejectingDoc.type)}</div>
+                            {rejectingDoc.fileName && <div><span className="font-semibold text-slate-700">File:</span> {rejectingDoc.fileName}</div>}
                         </div>
 
                         <div>

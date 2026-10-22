@@ -51,6 +51,8 @@ import {
 import { MeetingList } from './MeetingList';
 import { SatisfyPaymentModal } from './SatisfyPaymentModal';
 import { formatDate } from '../utils/formatDate';
+import { ACTION_TYPE_TO_DOCUMENT_TYPE } from '../constants/documentTypes';
+import { documentTypeLabel, readableServerText, engagementOpenedLabel, engagementStatusLabel, formatDate, personLabel, taskSourceLabel, taskTypeLabel } from '../utils/displayLabels';
 
 interface WorkspaceStageViewProps {
     engagementId: string;
@@ -83,12 +85,14 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     onBack,
 }) => {
     const navigate = useNavigate();
-    const { token, tenantId, userId, role } = useAuth();
+    const { token, tenantId, tenantName, userId, email, role } = useAuth();
 
     // Data state
     const [engagement, setEngagement] = useState<Engagement | null>(null);
     const [client, setClient] = useState<ClientProfile | null>(null);
     const [staffLead, setStaffLead] = useState<UserAccountResponse | null>(null);
+    // Everyone the Owner can see, used to show names instead of user ids (Staff can't list users).
+    const [teamUsers, setTeamUsers] = useState<UserAccountResponse[]>([]);
     // Owner only: workspace owners and staff who can be made responsible for this engagement.
     const [assignableStaff, setAssignableStaff] = useState<UserAccountResponse[]>([]);
     const [isChangingStaff, setIsChangingStaff] = useState(false);
@@ -297,6 +301,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             const matchedStaff = users.find((u) => u.id === foundEng.staffId);
                             setStaffLead(matchedStaff ?? null);
                         }
+                        setTeamUsers(users);
                         setAssignableStaff(users.filter((u) => isTeamMemberOf(u, tenantId)));
                     } catch (uErr) {
                         console.warn(uErr);
@@ -816,7 +821,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     };
 
     // Client display info
-    const clientName = client?.name || `Client ${engagementId.slice(0, 8)}`;
+    const clientName = client?.name || 'Unnamed client';
     const initials = clientName
         .split(' ')
         .map((n) => n[0])
@@ -824,7 +829,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
         .join('')
         .slice(0, 2)
         .toUpperCase() || 'CL';
-    const engagementCode = `ENG-${engagementId.slice(0, 6).toUpperCase()}`;
+    const actorName = (actor?: string | null) => personLabel(actor, { users: teamUsers, currentUserId: userId });
 
     // The REAL, gate-checked stage — what PUT /stage actually operates on. Drives the
     // Advance Stage action and stage-detail panel below; must never be swapped for the
@@ -852,8 +857,8 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
 
     return (
         <div className="space-y-6">
-            {/* Top Navigation & Breadcrumb */}
-            <div className="flex items-center justify-between">
+            {/* Top Navigation & Breadcrumb: wraps onto a second line on narrow screens instead of overflowing */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
                 <button
                     onClick={onBack ? onBack : () => navigate('/engagements')}
                     className="inline-flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-indigo-600 transition"
@@ -862,7 +867,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                     <span>Back to Engagements</span>
                 </button>
 
-                <div className="flex items-start gap-2.5">
+                <div className="flex flex-wrap items-start gap-2">
                     {/* CSTD-14: the client-safe engagement summary, as an Owner or the responsible Staff member sees it. */}
                     <ReportDownloadButton
                         url={ReportsApi.engagementSummaryStaffUrl(engagementId)}
@@ -902,13 +907,15 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                         {initials}
                     </div>
                     <div>
-                        <div className="flex items-center gap-3">
+                        <div className="flex flex-wrap items-center gap-3">
                             <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
                                 {clientName}
                             </h1>
-                            <span className="px-2.5 py-0.5 rounded text-xs font-mono font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                                {engagementCode}
-                            </span>
+                            {engagement?.createdAt && (
+                                <span className="px-2.5 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                    {engagementOpenedLabel(engagement.createdAt)}
+                                </span>
+                            )}
                             <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
                                 isTerminalStatus
                                     ? 'bg-slate-100 text-slate-600 border-slate-200'
@@ -917,7 +924,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                     : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                             }`}>
                                 <span className={`w-1.5 h-1.5 rounded-full ${isTerminalStatus ? 'bg-slate-400' : isDraft ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-                                {isDraft ? 'Draft — not started' : engagement?.status || 'Active Pipeline'}
+                                {isDraft ? 'Draft — not started' : engagementStatusLabel(engagement?.status) || 'In progress'}
                             </span>
                             {isDraft && (
                                 <button
@@ -931,10 +938,13 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                 </button>
                             )}
                         </div>
+                        <p className="text-xs text-slate-500 mt-1">
+                            Workspace: <span className="font-semibold text-slate-700">{tenantName || 'Main workspace'}</span>
+                        </p>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex flex-wrap items-center gap-3">
                     {/* Engagement-wide template: kept away from "Add Task" and reviewed in a dialog before applying */}
                     {!isTerminalStatus && (
                         <button
@@ -961,7 +971,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                 className="mt-0.5 w-full bg-transparent font-semibold text-slate-800 truncate focus:outline-none cursor-pointer disabled:opacity-60"
                             >
                                 {!assignableStaff.some((u) => u.id === engagement.staffId) && (
-                                    <option value={engagement.staffId}>Unknown ({engagement.staffId.slice(0, 8)})</option>
+                                    <option value={engagement.staffId}>Former or unknown staff member</option>
                                 )}
                                 {assignableStaff.map((u) => (
                                     <option key={u.id} value={u.id}>
@@ -1071,7 +1081,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                     {readiness.blockers.map((b, i) => (
                                         <li key={i} className="text-xs text-slate-700 flex items-start gap-1.5">
                                             <span className="font-semibold text-slate-500 min-w-[68px]">{b.kind}:</span>
-                                            <span>{b.reason}</span>
+                                            <span>{readableServerText(b.reason)}</span>
                                         </li>
                                     ))}
                                 </ul>
@@ -1088,7 +1098,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             </div>
                             {engagement.handoffSummary && <div>{engagement.handoffSummary}</div>}
                             <div className="text-[11px] text-slate-500">
-                                by {engagement.handedOffBy} · {new Date(engagement.handedOffAtUtc).toLocaleString()}
+                                by {actorName(engagement.handedOffBy)} · {new Date(engagement.handedOffAtUtc).toLocaleString()}
                             </div>
                         </div>
                     )}
@@ -1102,7 +1112,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                             </div>
                             {engagement.closureSummary && <div>{engagement.closureSummary}</div>}
                             <div className="text-[11px] text-slate-500">
-                                by {engagement.closedBy} · {new Date(engagement.closedAt).toLocaleString()}
+                                by {actorName(engagement.closedBy)} · {new Date(engagement.closedAt).toLocaleString()}
                             </div>
                         </div>
                     )}
@@ -1236,910 +1246,842 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                 </div>
             )}
 
-            {/* Stage Deep Dive: Two Columns */}
+            {/* Two columns on wide screens: stage details, conditions and meetings on the left; the task
+                list on the right, sticky and scrolling on its own so neither column leaves an empty gap.
+                On phones the left wrapper dissolves (display: contents) and `order` puts tasks second. */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                {/* Left: Stage Details & Advancement (8 Cols) */}
-                <div className="lg:col-span-8 space-y-4">
-                    <div className="bg-white/90 backdrop-blur-md p-6 rounded-2xl border border-slate-200/90 shadow-xs space-y-5">
-                        {/* Stage Header */}
-                        <div>
-                            <div className="flex items-center gap-2 mb-1.5">
-                                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-700 uppercase tracking-wider">
-                                    Stage {selectedStageDef.order}
+              <div className="contents lg:block lg:col-span-7 lg:space-y-6">
+                <div className="order-1 lg:order-none bg-white/90 backdrop-blur-md p-6 rounded-2xl border border-slate-200/90 shadow-xs space-y-5">
+                    {/* Stage Header */}
+                    <div>
+                        <div className="flex items-center gap-2 mb-1.5">
+                            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-700 uppercase tracking-wider">
+                                Stage {selectedStageDef.order}
+                            </span>
+                            {isViewingCurrentStage && (
+                                <span className="text-xs font-semibold text-emerald-700 flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Active Operational Target
                                 </span>
-                                {isViewingCurrentStage && (
-                                    <span className="text-xs font-semibold text-emerald-700 flex items-center gap-1">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Active Operational Target
-                                    </span>
+                            )}
+                        </div>
+                        <h3 className="text-xl font-bold text-slate-900">
+                            {selectedStageDef.name}
+                        </h3>
+                        <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                            {selectedStageDef.description}
+                        </p>
+                    </div>
+
+                    {/* Progress Bar — derived from the backend's real stageProgressPercentage,
+                        never computed locally, so it can't drift from the engagement's actual stage */}
+                    <div className="pt-2 border-t border-slate-100">
+                        <div className="flex items-center justify-between text-xs mb-1.5">
+                            <span className="font-bold text-slate-500 uppercase tracking-wider">
+                                Overall Engagement Progress
+                            </span>
+                            <span className="font-bold text-indigo-600">
+                                {progressPercent}%
+                            </span>
+                        </div>
+                        <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-gradient-to-r from-[#635bff] to-[#712ae2] rounded-full transition-all duration-300"
+                                style={{ width: `${progressPercent}%` }}
+                            />
+                        </div>
+                    </div>
+
+                    {/* Advance Stage Footer */}
+                    {isViewingCurrentStage && nextStage && !isTerminalStatus && (
+                        <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+                            <span className="text-xs text-slate-500">
+                                {canAdvanceStage ? 'Ready to advance to the next stage in the pipeline.' : advanceBlockedHint}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={handleAdvanceStage}
+                                disabled={isAdvancingStage || !canAdvanceStage}
+                                title={canAdvanceStage ? undefined : advanceBlockedHint}
+                                className="px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-sm bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white shadow-indigo-500/25 disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                                {isAdvancingStage ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        <span>Advancing Stage...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <span>Advance to Stage {getStageDefinition(nextStage).order}: {getStageDefinition(nextStage).name}</span>
+                                        <ChevronRight className="w-4 h-4" />
+                                    </>
                                 )}
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Upcoming Stage Activation Banner: When viewing the immediate next stage */}
+                    {!isViewingCurrentStage && selectedStageDef.order === currentStageOrder + 1 && !isTerminalStatus && (
+                        <div className="pt-4 border-t border-indigo-100 bg-indigo-50/60 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                            <div>
+                                <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                                    <span>Next Upcoming Stage</span>
+                                    <span className="px-2 py-0.5 rounded bg-indigo-200/70 text-indigo-800 text-[10px] font-bold">Stage {selectedStageDef.order}</span>
+                                </div>
+                                <p className="text-[11px] text-indigo-700 mt-1">
+                                    Engagement is currently active at Stage {currentStageOrder}. Advance engagement to Stage {selectedStageDef.order} ({selectedStageDef.name}) to activate tasks on the Client Portal.
+                                    {!canAdvanceStage && ` ${advanceBlockedHint}`}
+                                </p>
                             </div>
-                            <h3 className="text-xl font-bold text-slate-900">
-                                {selectedStageDef.name}
-                            </h3>
-                            <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                                {selectedStageDef.description}
+                            <button
+                                type="button"
+                                onClick={handleAdvanceStage}
+                                disabled={isAdvancingStage || !canAdvanceStage}
+                                title={canAdvanceStage ? undefined : advanceBlockedHint}
+                                className="px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-sm bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white shadow-indigo-500/25 disabled:opacity-60 disabled:cursor-not-allowed shrink-0"
+                            >
+                                {isAdvancingStage ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        <span>Advancing...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <span>Advance to Stage {selectedStageDef.order} Now</span>
+                                        <ChevronRight className="w-4 h-4" />
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Completed Past Stage Notice */}
+                    {!isViewingCurrentStage && selectedStageDef.order < currentStageOrder && (
+                        <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                            <span className="flex items-center gap-1.5 text-emerald-700 font-semibold">
+                                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                Stage {selectedStageDef.order} is completed.
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setSelectedStageKey(engagement?.stage ?? null)}
+                                className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1"
+                            >
+                                <span>Jump to Active Stage {currentStageOrder}</span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Future Stage Sequential Notice */}
+                    {!isViewingCurrentStage && selectedStageDef.order > currentStageOrder + 1 && (
+                        <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                            <span className="text-slate-500">
+                                Stages must proceed sequentially. Complete Stage {currentStageOrder} before unlocking Stage {selectedStageDef.order}.
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setSelectedStageKey(engagement?.stage ?? null)}
+                                className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1"
+                            >
+                                <span>Back to Stage {currentStageOrder}</span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+                        </div>
+                    )}
+
+                    {isViewingCurrentStage && isTerminalStatus && (
+                        <div className="pt-4 border-t border-slate-100 text-xs text-slate-500">
+                            Engagement status is <span className="font-semibold">{engagementStatusLabel(engagement?.status)}</span> — stage can no longer advance.
+                        </div>
+                    )}
+
+                    {/* Old "Seal & Complete" placeholder removed — the Lifecycle card above owns this action now. */}
+                </div>
+
+                {/* CSTD-24: Engagement Conditions Management Panel */}
+                <div className="order-3 lg:order-none bg-white/90 backdrop-blur-md p-6 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2.5 rounded-xl bg-violet-50 text-violet-700 border border-violet-100">
+                                <ShieldCheck className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <h3 className="text-base font-bold text-slate-900">Engagement Conditions</h3>
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-100 text-violet-700">
+                                        {conditions.filter((c) => c.isActive).length} Active Gate{conditions.filter((c) => c.isActive).length === 1 ? '' : 's'}
+                                    </span>
+                                </div>
+                                <p className="text-xs text-slate-500">
+                                    Approval and Payment gating conditions that block stage advancement until satisfied.
+                                </p>
+                            </div>
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={handleOpenAddCondition}
+                            disabled={isTerminalStatus || currentStageOrder >= 5}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                        >
+                            <Plus className="w-4 h-4" />
+                            <span>Attach Condition</span>
+                        </button>
+                    </div>
+
+                    {/* Condition List or Empty State */}
+                    {conditions.length === 0 ? (
+                        <div className="text-center py-8 px-4 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 space-y-2">
+                            <ShieldCheck className="w-8 h-8 text-slate-400 mx-auto" />
+                            <p className="text-xs font-bold text-slate-700">No Conditions Attached</p>
+                            <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
+                                Attach an Approval or Payment condition to gate stage advancement. Conditions enforce client compliance before unlocking subsequent pipeline stages.
                             </p>
                         </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {conditions.map((cond) => {
+                                const isPayment = cond.type === 'Payment';
+                                const stageDef = getStageDefinition(cond.requiredBeforeStage as EngagementStage);
+                                const isEditable = !isTerminalStatus && cond.isActive && cond.status === 'Pending';
+                                const canSatisfy = isEditable && isPayment;
+                                const isDeactivatable = !isTerminalStatus && cond.isActive;
 
-                        {/* Progress Bar — derived from the backend's real stageProgressPercentage,
-                            never computed locally, so it can't drift from the engagement's actual stage */}
-                        <div className="pt-2 border-t border-slate-100">
-                            <div className="flex items-center justify-between text-xs mb-1.5">
-                                <span className="font-bold text-slate-500 uppercase tracking-wider">
-                                    Overall Engagement Progress
-                                </span>
-                                <span className="font-bold text-indigo-600">
-                                    {progressPercent}%
-                                </span>
-                            </div>
-                            <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-gradient-to-r from-[#635bff] to-[#712ae2] rounded-full transition-all duration-300"
-                                    style={{ width: `${progressPercent}%` }}
-                                />
-                            </div>
+                                return (
+                                    <div
+                                        key={cond.conditionId}
+                                        className={`p-4 rounded-xl border transition ${
+                                            !cond.isActive
+                                                ? 'bg-slate-50/60 border-slate-200 opacity-70'
+                                                : cond.status === 'Satisfied'
+                                                ? 'bg-emerald-50/40 border-emerald-200'
+                                                : cond.status === 'Rejected'
+                                                ? 'bg-rose-50/40 border-rose-200'
+                                                : 'bg-white border-slate-200/90 shadow-xs'
+                                        }`}
+                                    >
+                                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                                            <div className="space-y-1.5 flex-1">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    {/* Type Badge */}
+                                                    <span
+                                                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                                            isPayment
+                                                                ? 'bg-emerald-100 text-emerald-800'
+                                                                : 'bg-indigo-100 text-indigo-800'
+                                                        }`}
+                                                    >
+                                                        {isPayment ? (
+                                                            <CreditCard className="w-3 h-3" />
+                                                        ) : (
+                                                            <CheckSquare className="w-3 h-3" />
+                                                        )}
+                                                        {cond.type} Gate
+                                                    </span>
+
+                                                    {/* Status Badge */}
+                                                    <span
+                                                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                                            cond.status === 'Satisfied'
+                                                                ? 'bg-emerald-100 text-emerald-800'
+                                                                : cond.status === 'Rejected'
+                                                                ? 'bg-rose-100 text-rose-800'
+                                                                : 'bg-amber-100 text-amber-800'
+                                                        }`}
+                                                    >
+                                                        {cond.status === 'Satisfied' ? (
+                                                            <CheckCircle2 className="w-3 h-3" />
+                                                        ) : cond.status === 'Rejected' ? (
+                                                            <XCircle className="w-3 h-3" />
+                                                        ) : (
+                                                            <Clock className="w-3 h-3" />
+                                                        )}
+                                                        {cond.status}
+                                                    </span>
+
+                                                    {/* Active/Inactive Badge */}
+                                                    {!cond.isActive && (
+                                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-700">
+                                                            <Ban className="w-3 h-3" />
+                                                            Deactivated
+                                                        </span>
+                                                    )}
+
+                                                    {/* Gated Stage */}
+                                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+                                                        Gates: Stage {stageDef.order} ({stageDef.name})
+                                                    </span>
+
+                                                    {/* Overdue Tag */}
+                                                    {cond.isOverdue && cond.isActive && cond.status === 'Pending' && (
+                                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200 animate-pulse">
+                                                            Overdue
+                                                        </span>
+                                                    )}
+                                                </div>
+
+                                                <h4 className="text-sm font-bold text-slate-900">{cond.title}</h4>
+                                                {cond.description && (
+                                                    <p className="text-xs text-slate-600 leading-relaxed">{cond.description}</p>
+                                                )}
+
+                                                {/* Payment Details */}
+                                                {isPayment && (
+                                                    <div className="flex flex-wrap items-center gap-3 pt-1 text-xs">
+                                                        <span className="font-bold text-emerald-700 flex items-center gap-1">
+                                                            <DollarSign className="w-3.5 h-3.5" />
+                                                            {cond.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {cond.currency}
+                                                        </span>
+                                                        {cond.paymentType && (
+                                                            <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold text-[10px]">
+                                                                {cond.paymentType} Payment
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                {/* Due Date */}
+                                                {cond.dueDateUtc && (
+                                                    <div className="flex items-center gap-1.5 text-[11px] text-slate-500 pt-0.5">
+                                                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                                                        <span>Due: {new Date(cond.dueDateUtc).toLocaleDateString()}</span>
+                                                    </div>
+                                                )}
+
+                                                {/* Staff Internal Note (Internal Staff Only) */}
+                                                {cond.internalNote && (
+                                                    <div className="p-2 rounded-lg bg-amber-50/70 border border-amber-200/80 text-[11px] text-amber-900 flex items-start gap-1.5 mt-1">
+                                                        <Lock className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
+                                                        <div>
+                                                            <strong className="font-semibold text-amber-950">Internal Staff Note: </strong>
+                                                            {cond.internalNote}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Deactivation Audit Details */}
+                                                {!cond.isActive && cond.deactivationReason && (
+                                                    <div className="p-2 rounded-lg bg-slate-100 border border-slate-200 text-[11px] text-slate-600 flex items-start gap-1.5 mt-1">
+                                                        <Info className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" />
+                                                        <div>
+                                                            <strong className="font-semibold text-slate-700">Deactivation Reason: </strong>
+                                                            {cond.deactivationReason}
+                                                            {cond.deactivatedBy && (
+                                                                <span className="text-slate-400"> (by {actorName(cond.deactivatedBy)})</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Action Buttons */}
+                                            {(canSatisfy || isEditable || isDeactivatable) && (
+                                                <div className="flex items-center gap-1.5 shrink-0 sm:self-center">
+                                                    {/* CSTD-26: Mark a pending Payment condition satisfied — clears the gate */}
+                                                    {canSatisfy && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleSatisfyCondition(cond)}
+                                                            disabled={satisfyingConditionId === cond.conditionId}
+                                                            className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 border border-slate-200 transition disabled:opacity-50"
+                                                            title="Mark payment satisfied"
+                                                        >
+                                                            {satisfyingConditionId === cond.conditionId ? (
+                                                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                            ) : (
+                                                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                                            )}
+                                                        </button>
+                                                    )}
+                                                    {isEditable && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleOpenEditCondition(cond)}
+                                                            className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 transition"
+                                                            title="Edit condition"
+                                                        >
+                                                            <Edit3 className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    )}
+                                                    {isDeactivatable && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleOpenDeactivateCondition(cond)}
+                                                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition"
+                                                            title="Deactivate condition"
+                                                        >
+                                                            <Trash2 className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
+                    )}
+                </div>
 
-                        {/* Advance Stage Footer */}
-                        {isViewingCurrentStage && nextStage && !isTerminalStatus && (
-                            <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-                                <span className="text-xs text-slate-500">
-                                    {canAdvanceStage ? 'Ready to advance to the next stage in the pipeline.' : advanceBlockedHint}
-                                </span>
+                {/* CSTD-32: Meetings for this engagement */}
+                {tenantId && (
+                    <div className="order-4 lg:order-none">
+                        <MeetingList
+                            engagementId={engagementId}
+                            tenantId={tenantId}
+                        />
+                    </div>
+                )}
+              </div>
+
+              {/* Stage Tasks: right column, one task per row */}
+              <div className="order-2 lg:order-none lg:col-span-5 lg:sticky lg:top-20 min-w-0">
+            {(() => {
+                const currentStageActions = actions.filter((a) => (a.stageNumber || 1) === currentStageOrder);
+                const hasCurrentStageActions = currentStageActions.length > 0;
+                const allCurrentStageActionsCompleted = hasCurrentStageActions && currentStageActions.every(
+                    (a) => a.isCompleted || a.status === 'Completed' || (a as any).verificationStatus === 'Verified'
+                );
+
+                const stageSelectedActions = actions.filter((a) => (a.stageNumber || 1) === selectedStageDef.order);
+                const displayActions = stageFilterMode === 'stage' ? stageSelectedActions : actions;
+
+                return (
+                    <div className="bg-white/90 backdrop-blur-md p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-3 lg:max-h-[calc(100vh-6.5rem)] lg:flex lg:flex-col">
+                        {/* Stage Completion Callout Banner */}
+                        {allCurrentStageActionsCompleted && nextStage && !isTerminalStatus && (
+                            <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 text-xs shadow-xs space-y-2">
+                                <div className="flex items-center gap-2 font-bold text-emerald-900">
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                                    <span>All Stage {currentStageOrder} Tasks Completed!</span>
+                                </div>
+                                <p className="text-emerald-700 text-[11px] leading-relaxed">
+                                    All deliverables for Stage {currentStageOrder} ({ENGAGEMENT_STAGES[currentStageOrder - 1]?.name}) are complete. Advance to unlock Stage {getStageDefinition(nextStage).order}: {getStageDefinition(nextStage).name} for the client.
+                                </p>
+                                {!canAdvanceStage && (
+                                    <p className="text-amber-700 text-[11px] font-semibold">{advanceBlockedHint}</p>
+                                )}
                                 <button
                                     type="button"
                                     onClick={handleAdvanceStage}
                                     disabled={isAdvancingStage || !canAdvanceStage}
                                     title={canAdvanceStage ? undefined : advanceBlockedHint}
-                                    className="px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-sm bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white shadow-indigo-500/25 disabled:opacity-60 disabled:cursor-not-allowed"
+                                    className="w-full py-2 px-3 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition flex items-center justify-center gap-2 shadow-xs disabled:opacity-60"
                                 >
                                     {isAdvancingStage ? (
                                         <>
-                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                            <span>Advancing Stage...</span>
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            <span>Advancing to Stage {getStageDefinition(nextStage).order}...</span>
                                         </>
                                     ) : (
                                         <>
                                             <span>Advance to Stage {getStageDefinition(nextStage).order}: {getStageDefinition(nextStage).name}</span>
-                                            <ChevronRight className="w-4 h-4" />
+                                            <ChevronRight className="w-3.5 h-3.5" />
                                         </>
                                     )}
                                 </button>
                             </div>
                         )}
 
-                        {/* Upcoming Stage Activation Banner: When viewing the immediate next stage */}
-                        {!isViewingCurrentStage && selectedStageDef.order === currentStageOrder + 1 && !isTerminalStatus && (
-                            <div className="pt-4 border-t border-indigo-100 bg-indigo-50/60 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                                <div>
-                                    <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
-                                        <span>Next Upcoming Stage</span>
-                                        <span className="px-2 py-0.5 rounded bg-indigo-200/70 text-indigo-800 text-[10px] font-bold">Stage {selectedStageDef.order}</span>
-                                    </div>
-                                    <p className="text-[11px] text-indigo-700 mt-1">
-                                        Engagement is currently active at Stage {currentStageOrder}. Advance engagement to Stage {selectedStageDef.order} ({selectedStageDef.name}) to activate tasks on the Client Portal.
-                                        {!canAdvanceStage && ` ${advanceBlockedHint}`}
-                                    </p>
+                        <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                            <div className="flex items-center gap-1.5">
+                                <Activity className="w-4 h-4 text-indigo-600" />
+                                <h3 className="text-sm font-bold text-slate-900">Stage Tasks</h3>
+                                <button
+                                    type="button"
+                                    onClick={() => navigate(`/actions?engagementId=${engagementId}`)}
+                                    className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
+                                    title="Dates, deadlines and who completed each task"
+                                >
+                                    Full history
+                                </button>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[11px]">
+                                    <button
+                                        type="button"
+                                        onClick={() => setStageFilterMode('stage')}
+                                        className={`px-2 py-0.5 rounded-md transition ${
+                                            stageFilterMode === 'stage'
+                                                ? 'bg-white text-indigo-700 shadow-xs font-semibold'
+                                                : 'text-slate-600 hover:text-slate-900'
+                                        }`}
+                                    >
+                                        Stage {selectedStageDef.order} ({stageSelectedActions.length})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setStageFilterMode('all')}
+                                        className={`px-2 py-0.5 rounded-md transition ${
+                                            stageFilterMode === 'all'
+                                                ? 'bg-white text-indigo-700 shadow-xs font-semibold'
+                                                : 'text-slate-600 hover:text-slate-900'
+                                        }`}
+                                    >
+                                        All ({actions.length})
+                                    </button>
                                 </div>
                                 <button
                                     type="button"
-                                    onClick={handleAdvanceStage}
-                                    disabled={isAdvancingStage || !canAdvanceStage}
-                                    title={canAdvanceStage ? undefined : advanceBlockedHint}
-                                    className="px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-sm bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 text-white shadow-indigo-500/25 disabled:opacity-60 disabled:cursor-not-allowed shrink-0"
+                                    onClick={() => {
+                                        setNewTaskStage(Math.max(selectedStageDef.order, currentStageOrder || 1));
+                                        setIsAddTaskOpen(true);
+                                    }}
+                                    disabled={isTerminalStatus}
+                                    className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold flex items-center gap-1 transition shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                                    title="Add a task for the current stage or a later one"
                                 >
-                                    {isAdvancingStage ? (
-                                        <>
-                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                            <span>Advancing...</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <span>Advance to Stage {selectedStageDef.order} Now</span>
-                                            <ChevronRight className="w-4 h-4" />
-                                        </>
-                                    )}
+                                    <Plus className="w-3.5 h-3.5" />
+                                    <span>Add Task</span>
                                 </button>
                             </div>
-                        )}
-
-                        {/* Completed Past Stage Notice */}
-                        {!isViewingCurrentStage && selectedStageDef.order < currentStageOrder && (
-                            <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                                <span className="flex items-center gap-1.5 text-emerald-700 font-semibold">
-                                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                                    Stage {selectedStageDef.order} is completed.
-                                </span>
-                                <button
-                                    type="button"
-                                    onClick={() => setSelectedStageKey(engagement?.stage ?? null)}
-                                    className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1"
-                                >
-                                    <span>Jump to Active Stage {currentStageOrder}</span>
-                                    <ArrowRight className="w-3.5 h-3.5" />
-                                </button>
-                            </div>
-                        )}
-
-                        {/* Future Stage Sequential Notice */}
-                        {!isViewingCurrentStage && selectedStageDef.order > currentStageOrder + 1 && (
-                            <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                                <span className="text-slate-500">
-                                    Stages must proceed sequentially. Complete Stage {currentStageOrder} before unlocking Stage {selectedStageDef.order}.
-                                </span>
-                                <button
-                                    type="button"
-                                    onClick={() => setSelectedStageKey(engagement?.stage ?? null)}
-                                    className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1"
-                                >
-                                    <span>Back to Stage {currentStageOrder}</span>
-                                    <ArrowRight className="w-3.5 h-3.5" />
-                                </button>
-                            </div>
-                        )}
-
-                        {isViewingCurrentStage && isTerminalStatus && (
-                            <div className="pt-4 border-t border-slate-100 text-xs text-slate-500">
-                                Engagement status is <span className="font-semibold">{engagement?.status}</span> — stage can no longer advance.
-                            </div>
-                        )}
-
-                        {/* Old "Seal & Complete" placeholder removed — the Lifecycle card above owns this action now. */}
-                    </div>
-
-                    {/* CSTD-24: Engagement Conditions Management Panel */}
-                    <div className="bg-white/90 backdrop-blur-md p-6 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2.5 rounded-xl bg-violet-50 text-violet-700 border border-violet-100">
-                                    <ShieldCheck className="w-5 h-5" />
-                                </div>
-                                <div>
-                                    <div className="flex items-center gap-2">
-                                        <h3 className="text-base font-bold text-slate-900">Engagement Conditions</h3>
-                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-100 text-violet-700">
-                                            {conditions.filter((c) => c.isActive).length} Active Gate{conditions.filter((c) => c.isActive).length === 1 ? '' : 's'}
-                                        </span>
-                                    </div>
-                                    <p className="text-xs text-slate-500">
-                                        Approval and Payment gating conditions that block stage advancement until satisfied.
-                                    </p>
-                                </div>
-                            </div>
-
-                            <button
-                                type="button"
-                                onClick={handleOpenAddCondition}
-                                disabled={isTerminalStatus || currentStageOrder >= 5}
-                                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-[#635bff] to-[#712ae2] hover:opacity-95 shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-                            >
-                                <Plus className="w-4 h-4" />
-                                <span>Attach Condition</span>
-                            </button>
                         </div>
 
-                        {/* Condition List or Empty State */}
-                        {conditions.length === 0 ? (
-                            <div className="text-center py-8 px-4 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 space-y-2">
-                                <ShieldCheck className="w-8 h-8 text-slate-400 mx-auto" />
-                                <p className="text-xs font-bold text-slate-700">No Conditions Attached</p>
-                                <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
-                                    Attach an Approval or Payment condition to gate stage advancement. Conditions enforce client compliance before unlocking subsequent pipeline stages.
-                                </p>
-                            </div>
-                        ) : (
-                            <div className="space-y-3">
-                                {conditions.map((cond) => {
-                                    const isPayment = cond.type === 'Payment';
-                                    const stageDef = getStageDefinition(cond.requiredBeforeStage as EngagementStage);
-                                    const isEditable = !isTerminalStatus && cond.isActive && cond.status === 'Pending';
-                                    const canSatisfy = isEditable && isPayment;
-                                    const isDeactivatable = !isTerminalStatus && cond.isActive;
-
-                                    return (
-                                        <div
-                                            key={cond.conditionId}
-                                            className={`p-4 rounded-xl border transition ${
-                                                !cond.isActive
-                                                    ? 'bg-slate-50/60 border-slate-200 opacity-70'
-                                                    : cond.status === 'Satisfied'
-                                                    ? 'bg-emerald-50/40 border-emerald-200'
-                                                    : cond.status === 'Rejected'
-                                                    ? 'bg-rose-50/40 border-rose-200'
-                                                    : 'bg-white border-slate-200/90 shadow-xs'
-                                            }`}
-                                        >
-                                            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                                                <div className="space-y-1.5 flex-1">
-                                                    <div className="flex flex-wrap items-center gap-2">
-                                                        {/* Type Badge */}
-                                                        <span
-                                                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                                                                isPayment
-                                                                    ? 'bg-emerald-100 text-emerald-800'
-                                                                    : 'bg-indigo-100 text-indigo-800'
-                                                            }`}
-                                                        >
-                                                            {isPayment ? (
-                                                                <CreditCard className="w-3 h-3" />
-                                                            ) : (
-                                                                <CheckSquare className="w-3 h-3" />
-                                                            )}
-                                                            {cond.type} Gate
-                                                        </span>
-
-                                                        {/* Status Badge */}
-                                                        <span
-                                                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                                                                cond.status === 'Satisfied'
-                                                                    ? 'bg-emerald-100 text-emerald-800'
-                                                                    : cond.status === 'Rejected'
-                                                                    ? 'bg-rose-100 text-rose-800'
-                                                                    : 'bg-amber-100 text-amber-800'
-                                                            }`}
-                                                        >
-                                                            {cond.status === 'Satisfied' ? (
-                                                                <CheckCircle2 className="w-3 h-3" />
-                                                            ) : cond.status === 'Rejected' ? (
-                                                                <XCircle className="w-3 h-3" />
-                                                            ) : (
-                                                                <Clock className="w-3 h-3" />
-                                                            )}
-                                                            {cond.status}
-                                                        </span>
-
-                                                        {/* Active/Inactive Badge */}
-                                                        {!cond.isActive && (
-                                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-700">
-                                                                <Ban className="w-3 h-3" />
-                                                                Deactivated
-                                                            </span>
-                                                        )}
-
-                                                        {/* Gated Stage */}
-                                                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
-                                                            Gates: Stage {stageDef.order} ({stageDef.name})
-                                                        </span>
-
-                                                        {/* Overdue Tag */}
-                                                        {cond.isOverdue && cond.isActive && cond.status === 'Pending' && (
-                                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200 animate-pulse">
-                                                                Overdue
-                                                            </span>
-                                                        )}
-                                                    </div>
-
-                                                    <h4 className="text-sm font-bold text-slate-900">{cond.title}</h4>
-                                                    {cond.description && (
-                                                        <p className="text-xs text-slate-600 leading-relaxed">{cond.description}</p>
-                                                    )}
-
-                                                    {/* Payment Details */}
-                                                    {isPayment && (
-                                                        <div className="flex flex-wrap items-center gap-3 pt-1 text-xs">
-                                                            <span className="font-bold text-emerald-700 flex items-center gap-1">
-                                                                <DollarSign className="w-3.5 h-3.5" />
-                                                                {cond.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {cond.currency}
-                                                            </span>
-                                                            {cond.paymentType && (
-                                                                <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold text-[10px]">
-                                                                    {cond.paymentType} Payment
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                    )}
-
-                                                    {/* Due Date */}
-                                                    {cond.dueDateUtc && (
-                                                        <div className="flex items-center gap-1.5 text-[11px] text-slate-500 pt-0.5">
-                                                            <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                                                            <span>Due: {formatDate(cond.dueDateUtc)}</span>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Staff Internal Note (Internal Staff Only) */}
-                                                    {cond.internalNote && (
-                                                        <div className="p-2 rounded-lg bg-amber-50/70 border border-amber-200/80 text-[11px] text-amber-900 flex items-start gap-1.5 mt-1">
-                                                            <Lock className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
-                                                            <div>
-                                                                <strong className="font-semibold text-amber-950">Internal Staff Note: </strong>
-                                                                {cond.internalNote}
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Deactivation Audit Details */}
-                                                    {!cond.isActive && cond.deactivationReason && (
-                                                        <div className="p-2 rounded-lg bg-slate-100 border border-slate-200 text-[11px] text-slate-600 flex items-start gap-1.5 mt-1">
-                                                            <Info className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" />
-                                                            <div>
-                                                                <strong className="font-semibold text-slate-700">Deactivation Reason: </strong>
-                                                                {cond.deactivationReason}
-                                                                {cond.deactivatedBy && (
-                                                                    <span className="text-slate-400"> (by {cond.deactivatedBy})</span>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-
-                                                {/* Action Buttons */}
-                                                {(canSatisfy || isEditable || isDeactivatable) && (
-                                                    <div className="flex items-center gap-1.5 shrink-0 sm:self-center">
-                                                        {/* CSTD-26: Mark a pending Payment condition satisfied — clears the gate */}
-                                                        {canSatisfy && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleSatisfyCondition(cond)}
-                                                                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 border border-slate-200 transition"
-                                                                title="Mark payment satisfied"
-                                                                aria-label="Mark payment satisfied"
-                                                            >
-                                                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                                            </button>
-                                                        )}
-                                                        {isEditable && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleOpenEditCondition(cond)}
-                                                                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 transition"
-                                                                title="Edit condition"
-                                                                aria-label="Edit condition"
-                                                            >
-                                                                <Edit3 className="w-3.5 h-3.5" />
-                                                            </button>
-                                                        )}
-                                                        {isDeactivatable && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleOpenDeactivateCondition(cond)}
-                                                                className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition"
-                                                                title="Deactivate condition"
-                                                                aria-label="Deactivate condition"
-                                                            >
-                                                                <Trash2 className="w-3.5 h-3.5" />
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
+                        {checklistMessage && (
+                            <div className={`p-2.5 rounded-lg text-[11px] font-semibold border ${
+                                checklistMessage.tone === 'success'
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                    : 'bg-rose-50 text-rose-800 border-rose-200'
+                            }`}>
+                                {checklistMessage.text}
                             </div>
                         )}
-                    </div>
-                </div>
 
-                {/* Right: Stage Actions & Vaults (4 Cols) */}
-                <div className="lg:col-span-4 space-y-4">
-                    {/* Action Queue */}
-                    {(() => {
-                        const currentStageActions = actions.filter((a) => (a.stageNumber || 1) === currentStageOrder);
-                        const hasCurrentStageActions = currentStageActions.length > 0;
-                        const allCurrentStageActionsCompleted = hasCurrentStageActions && currentStageActions.every(
-                            (a) => a.isCompleted || a.status === 'Completed' || (a as any).verificationStatus === 'Verified'
-                        );
-
-                        const stageSelectedActions = actions.filter((a) => (a.stageNumber || 1) === selectedStageDef.order);
-                        const displayActions = stageFilterMode === 'stage' ? stageSelectedActions : actions;
-
-                        return (
-                            <div className="bg-white/90 backdrop-blur-md p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-3">
-                                {/* Stage Completion Callout Banner */}
-                                {allCurrentStageActionsCompleted && nextStage && !isTerminalStatus && (
-                                    <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 text-xs shadow-xs space-y-2">
-                                        <div className="flex items-center gap-2 font-bold text-emerald-900">
-                                            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                                            <span>All Stage {currentStageOrder} Tasks Completed!</span>
-                                        </div>
-                                        <p className="text-emerald-700 text-[11px] leading-relaxed">
-                                            All deliverables for Stage {currentStageOrder} ({ENGAGEMENT_STAGES[currentStageOrder - 1]?.name}) are complete. Advance to unlock Stage {getStageDefinition(nextStage).order}: {getStageDefinition(nextStage).name} for the client.
-                                        </p>
-                                        {!canAdvanceStage && (
-                                            <p className="text-amber-700 text-[11px] font-semibold">{advanceBlockedHint}</p>
-                                        )}
-                                        <button
-                                            type="button"
-                                            onClick={handleAdvanceStage}
-                                            disabled={isAdvancingStage || !canAdvanceStage}
-                                            title={canAdvanceStage ? undefined : advanceBlockedHint}
-                                            className="w-full py-2 px-3 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition flex items-center justify-center gap-2 shadow-xs disabled:opacity-60"
-                                        >
-                                            {isAdvancingStage ? (
-                                                <>
-                                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                                    <span>Advancing to Stage {getStageDefinition(nextStage).order}...</span>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <span>Advance to Stage {getStageDefinition(nextStage).order}: {getStageDefinition(nextStage).name}</span>
-                                                    <ChevronRight className="w-3.5 h-3.5" />
-                                                </>
-                                            )}
-                                        </button>
-                                    </div>
-                                )}
-
-                                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                                    <div className="flex items-center gap-1.5">
-                                        <Activity className="w-4 h-4 text-indigo-600" />
-                                        <h3 className="text-sm font-bold text-slate-900">Stage Action Queue</h3>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[11px] h-7">
-                                            <button
-                                                type="button"
-                                                onClick={() => setStageFilterMode('stage')}
-                                                className={`h-full px-2 rounded-md transition flex items-center ${
-                                                    stageFilterMode === 'stage'
-                                                        ? 'bg-white text-indigo-700 shadow-xs font-semibold'
-                                                        : 'text-slate-600 hover:text-slate-900'
-                                                }`}
-                                            >
-                                                Stage {selectedStageDef.order} ({stageSelectedActions.length})
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => setStageFilterMode('all')}
-                                                className={`h-full px-2 rounded-md transition flex items-center ${
-                                                    stageFilterMode === 'all'
-                                                        ? 'bg-white text-indigo-700 shadow-xs font-semibold'
-                                                        : 'text-slate-600 hover:text-slate-900'
-                                                }`}
-                                            >
-                                                All ({actions.length})
-                                            </button>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setNewTaskStage(Math.max(selectedStageDef.order, currentStageOrder || 1));
-                                                setIsAddTaskOpen(true);
-                                            }}
-                                            disabled={isTerminalStatus}
-                                            className="h-7 px-2.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold inline-flex items-center gap-1 transition shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
-                                            title="Add a task for the current stage or a later one"
-                                        >
-                                            <Plus className="w-3.5 h-3.5" />
-                                            <span>Add Task</span>
-                                        </button>
-                                    </div>
+                        {displayActions.length === 0 ? (
+                            <div className="p-5 rounded-xl bg-slate-50 text-center space-y-2 border border-slate-200">
+                                <CheckCircle2 className="w-7 h-7 text-indigo-600 mx-auto" />
+                                <div className="text-xs font-bold text-slate-900">
+                                    {stageFilterMode === 'stage'
+                                        ? `No Tasks Configured for Stage ${selectedStageDef.order}`
+                                        : 'All Stage Actions Up-To-Date'}
                                 </div>
-
-                                {checklistMessage && (
-                                    <div className={`p-2.5 rounded-lg text-[11px] font-semibold border ${
-                                        checklistMessage.tone === 'success'
-                                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                                            : 'bg-rose-50 text-rose-800 border-rose-200'
-                                    }`}>
-                                        {checklistMessage.text}
-                                    </div>
+                                <p className="text-[11px] text-slate-500 max-w-xs mx-auto">
+                                    {stageFilterMode === 'stage'
+                                        ? `Add deliverables for Stage ${selectedStageDef.order} (${selectedStageDef.name}), or apply the standard checklist. With no tasks, only required documents and conditions gate this stage.`
+                                        : 'No tasks yet. Add tasks per stage, or apply the standard checklist.'}
+                                </p>
+                                {selectedStageDef.order >= currentStageOrder && !isTerminalStatus && (
+                                <div className="pt-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setNewTaskStage(selectedStageDef.order);
+                                            setIsAddTaskOpen(true);
+                                        }}
+                                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-xs"
+                                    >
+                                        <Plus className="w-3.5 h-3.5" />
+                                        <span>Configure Task for Stage {selectedStageDef.order}</span>
+                                    </button>
+                                </div>
                                 )}
+                            </div>
+                        ) : (
+                            <div className="space-y-3 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+                                {displayActions.map((act) => {
+                            const linkedDoc = findLinkedDoc(act);
+                            const isActionVerified = (act as any).verificationStatus === 'Verified' || linkedDoc?.verificationStatus?.toUpperCase() === 'VERIFIED';
+                            const isActionRejected = (act as any).verificationStatus === 'Rejected' || linkedDoc?.verificationStatus?.toUpperCase() === 'REJECTED';
+                            const isActionCancelled = act.status === 'Cancelled';
+                            // Only client-owned, unfinished evidence tasks wait on the portal; staff tasks are done in the workspace.
+                            const isStaffTask = (act.assignedToRole ?? act.assignedRole) === 'Staff';
+                            // Any task whose type maps to a document type (incl. ProofOfAddress), plus generic uploads.
+                            const isDocAction = act.type === 'DocumentUpload' || act.type in ACTION_TYPE_TO_DOCUMENT_TYPE || act.title.toLowerCase().includes('document') || act.title.toLowerCase().includes('kyc') || act.title.toLowerCase().includes('agreement');
+                            const isAwaitingClientUpload = isDocAction && !isStaffTask && !isActionCancelled && !act.isCompleted && act.status !== 'Completed';
 
-                                {displayActions.length === 0 ? (
-                                    <div className="p-5 rounded-xl bg-slate-50 text-center space-y-2 border border-slate-200">
-                                        <CheckCircle2 className="w-7 h-7 text-indigo-600 mx-auto" />
-                                        <div className="text-xs font-bold text-slate-900">
-                                            {stageFilterMode === 'stage'
-                                                ? `No Tasks Configured for Stage ${selectedStageDef.order}`
-                                                : 'All Stage Actions Up-To-Date'}
+                            return (
+                                <div
+                                    key={act.actionId}
+                                    className={`p-3.5 rounded-xl border transition space-y-2.5 ${
+                                        isActionCancelled
+                                            ? 'bg-slate-100/60 border-slate-200 opacity-60'
+                                            : isActionVerified
+                                            ? 'bg-emerald-50/40 border-emerald-200/80'
+                                            : isActionRejected
+                                            ? 'bg-rose-50/40 border-rose-200/80'
+                                            : 'bg-slate-50/80 border-slate-200'
+                                    }`}
+                                >
+                                    {/* Action Header */}
+                                    <div className="flex items-start justify-between gap-2">
+                                        <div>
+                                            <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white text-indigo-700 border border-indigo-100 shadow-xs">
+                                                    {taskTypeLabel(act.type)}
+                                                </span>
+                                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-50/80 text-indigo-600 border border-indigo-100">
+                                                    {taskSourceLabel(act.sourceType)}
+                                                </span>
+                                            </div>
+                                            <span className={`text-xs font-bold block leading-tight ${isActionCancelled ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
+                                                {act.title}
+                                            </span>
                                         </div>
-                                        <p className="text-[11px] text-slate-500 max-w-xs mx-auto">
-                                            {stageFilterMode === 'stage'
-                                                ? `Add deliverables for Stage ${selectedStageDef.order} (${selectedStageDef.name}), or apply the standard checklist. With no tasks, only required documents and conditions gate this stage.`
-                                                : 'No tasks yet. Add tasks per stage, or apply the standard checklist.'}
-                                        </p>
-                                        {selectedStageDef.order >= currentStageOrder && !isTerminalStatus && (
-                                        <div className="pt-2">
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setNewTaskStage(selectedStageDef.order);
-                                                    setIsAddTaskOpen(true);
-                                                }}
-                                                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-xs"
-                                            >
-                                                <Plus className="w-3.5 h-3.5" />
-                                                <span>Configure Task for Stage {selectedStageDef.order}</span>
-                                            </button>
+
+                                        {/* Verification or Completion Status Badge */}
+                                        <div>
+                                            {isActionCancelled ? (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full border border-slate-300">
+                                                    🚫 No longer required
+                                                </span>
+                                            ) : isActionVerified ? (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/90 px-2 py-0.5 rounded-full border border-emerald-300">
+                                                    <CheckCircle2 className="w-3 h-3" />
+                                                    Verified
+                                                </span>
+                                            ) : isActionRejected ? (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-100/90 px-2 py-0.5 rounded-full border border-rose-300">
+                                                    <X className="w-3 h-3" />
+                                                    Rejected
+                                                </span>
+                                            ) : act.status === 'Uploaded' ? (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-200">
+                                                    <Clock className="w-3 h-3" />
+                                                    Uploaded
+                                                </span>
+                                            ) : act.isCompleted || act.status === 'Completed' ? (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                                    <Check className="w-3 h-3" />
+                                                    Done
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                                                    <Clock className="w-3 h-3" />
+                                                    Pending
+                                                </span>
+                                            )}
                                         </div>
-                                        )}
                                     </div>
-                                ) : (
-                                    <div className="space-y-3">
-                                        {displayActions.map((act) => {
-                                    const linkedDoc = findLinkedDoc(act);
-                                    const isActionVerified = (act as any).verificationStatus === 'Verified' || linkedDoc?.verificationStatus?.toUpperCase() === 'VERIFIED';
-                                    const isActionRejected = (act as any).verificationStatus === 'Rejected' || linkedDoc?.verificationStatus?.toUpperCase() === 'REJECTED';
-                                    const isActionCancelled = act.status === 'Cancelled';
-                                    // Only client-owned, unfinished evidence tasks wait on the portal; staff tasks are done in the workspace.
-                                    const isStaffTask = (act.assignedToRole ?? act.assignedRole) === 'Staff';
-                                    const isDocAction = act.type === 'DocumentUpload' || act.type === 'KycDocument' || act.type === 'SignAgreement' || act.title.toLowerCase().includes('document') || act.title.toLowerCase().includes('kyc') || act.title.toLowerCase().includes('agreement');
-                                    const isAwaitingClientUpload = isDocAction && !isStaffTask && !isActionCancelled && !act.isCompleted && act.status !== 'Completed';
 
-                                    const canEditTask = isStaffManagedTask(act) && !isTerminalStatus && !isActionCancelled && act.status === 'Pending';
-                                    const canCancelTask = isStaffManagedTask(act) && !isTerminalStatus && !isActionCancelled && act.status !== 'Completed' && !act.isCompleted;
-                                    const canEditQuestion = Boolean(act.linkedRequirementId && act.status === 'Pending' && !isTerminalStatus &&
-                                        requirements.find((r) => r.requirementId === act.linkedRequirementId)?.status === 'Requested');
-                                    const hasMenuActions = canEditTask || canCancelTask || canEditQuestion;
-                                    const isMenuOpen = openActionMenuId === act.actionId;
-
-                                    return (
-                                        <div
-                                            key={act.actionId}
-                                            className={`p-4 rounded-xl border transition space-y-3 ${
-                                                isActionCancelled
-                                                    ? 'bg-slate-100/60 border-slate-200 opacity-60'
-                                                    : isActionVerified
-                                                    ? 'bg-emerald-50/40 border-emerald-200/80'
-                                                    : isActionRejected
-                                                    ? 'bg-rose-50/40 border-rose-200/80'
-                                                    : 'bg-slate-50/80 border-slate-200'
-                                            }`}
-                                        >
-                                            {/* Row 1: Badges + Status + Ellipsis Menu */}
-                                            <div className="flex items-center justify-between gap-2 mb-2.5">
-                                                <div className="flex items-center gap-1.5 flex-wrap">
-                                                    <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-white text-indigo-700 border border-indigo-100 shadow-xs">
-                                                        {act.type}
+                                    {/* CSTD-16: the client's answer to a staff question, with review */}
+                                    {act.linkedRequirementId && (() => {
+                                        const req = requirements.find((r) => r.requirementId === act.linkedRequirementId);
+                                        if (!req) return null;
+                                        return (
+                                            <div className="bg-white p-2.5 rounded-lg border border-slate-200/80 space-y-2 text-xs">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <span className="flex items-center gap-1.5 font-semibold text-slate-700">
+                                                        <MessageSquare className="w-3.5 h-3.5 text-indigo-600" />
+                                                        Client answer
                                                     </span>
-                                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-50/80 text-indigo-600 border border-indigo-100">
-                                                        {act.sourceType || 'Manual'}
+                                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                                        req.status === 'Approved'
+                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                            : req.status === 'Rejected'
+                                                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                                            : req.status === 'Submitted'
+                                                            ? 'bg-sky-50 text-sky-700 border-sky-200'
+                                                            : 'bg-slate-50 text-slate-600 border-slate-200'
+                                                    }`}>
+                                                        {req.status === 'Requested' ? 'Awaiting client' : req.status}
                                                     </span>
                                                     {isDocAction && (
                                                         <span className="text-[10px] font-medium text-slate-400">• Evidence Action</span>
                                                     )}
                                                 </div>
-
-                                                <div className="flex items-center gap-1.5 shrink-0">
-                                                    <div>
-                                                        {isActionCancelled ? (
-                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full border border-slate-300">
-                                                                🚫 No longer required
-                                                            </span>
-                                                        ) : isActionVerified ? (
-                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/90 px-2 py-0.5 rounded-full border border-emerald-300">
-                                                                <CheckCircle2 className="w-3 h-3" />
-                                                                Verified
-                                                            </span>
-                                                        ) : isActionRejected ? (
-                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-100/90 px-2 py-0.5 rounded-full border border-rose-300">
-                                                                <X className="w-3 h-3" />
-                                                                Rejected
-                                                            </span>
-                                                        ) : act.status === 'Uploaded' ? (
-                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-200">
-                                                                <Clock className="w-3 h-3" />
-                                                                Uploaded
-                                                            </span>
-                                                        ) : act.isCompleted || act.status === 'Completed' ? (
-                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                                                                <Check className="w-3 h-3" />
-                                                                Done
-                                                            </span>
-                                                        ) : (
-                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                                                                <Clock className="w-3 h-3" />
-                                                                Pending
-                                                            </span>
-                                                        )}
+                                                {req.value ? (
+                                                    <p className="text-slate-800 whitespace-pre-wrap break-words">{req.value}</p>
+                                                ) : (
+                                                    <p className="text-slate-400 italic">No answer yet.</p>
+                                                )}
+                                                {req.status === 'Rejected' && req.rejectionReason && (
+                                                    <p className="text-[11px] text-rose-700">Returned to client: {req.rejectionReason}</p>
+                                                )}
+                                                {req.status === 'Submitted' && (
+                                                    <div className="flex items-center gap-2 pt-1">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleReviewRequirement(req, true)}
+                                                            disabled={reviewingRequirementId === req.requirementId}
+                                                            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold transition disabled:opacity-50"
+                                                        >
+                                                            Approve
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleReviewRequirement(req, false)}
+                                                            disabled={reviewingRequirementId === req.requirementId}
+                                                            className="px-2.5 py-1 rounded-lg bg-white hover:bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-bold transition disabled:opacity-50"
+                                                        >
+                                                            Reject…
+                                                        </button>
                                                     </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
 
-                                                    {hasMenuActions && (
-                                                        <div className="relative" data-action-menu={act.actionId}>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setOpenActionMenuId(isMenuOpen ? null : act.actionId)}
-                                                                className="w-7 h-7 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 border border-slate-200/70 transition"
-                                                                title="Task actions"
-                                                                aria-label="Task actions"
-                                                                aria-expanded={isMenuOpen}
-                                                            >
-                                                                <MoreHorizontal className="w-4 h-4" />
-                                                            </button>
-                                                            {isMenuOpen && (
-                                                                <div className="absolute right-0 top-full mt-1 z-20 w-36 bg-white rounded-lg border border-slate-200 shadow-lg py-1 text-xs">
-                                                                    {canEditTask && (
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => {
-                                                                                setOpenActionMenuId(null);
-                                                                                setTaskToEdit(act);
-                                                                            }}
-                                                                            className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-slate-50 text-slate-700 hover:text-indigo-600 transition"
-                                                                        >
-                                                                            <Edit3 className="w-3.5 h-3.5" />
-                                                                            Edit
-                                                                        </button>
-                                                                    )}
-                                                                    {canEditQuestion && (
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => {
-                                                                                setOpenActionMenuId(null);
-                                                                                setTaskToEdit(act);
-                                                                            }}
-                                                                            className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-slate-50 text-slate-700 hover:text-indigo-600 transition"
-                                                                        >
-                                                                            <Edit3 className="w-3.5 h-3.5" />
-                                                                            Edit question
-                                                                        </button>
-                                                                    )}
-                                                                    {canCancelTask && (
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => {
-                                                                                setOpenActionMenuId(null);
-                                                                                setTaskToCancel(act);
-                                                                            }}
-                                                                            className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-rose-50 text-rose-600 transition"
-                                                                        >
-                                                                            <Ban className="w-3.5 h-3.5" />
-                                                                            Cancel Task
-                                                                        </button>
-                                                                    )}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    )}
+                                    {/* Linked Evidence Document Display */}
+                                    {linkedDoc ? (
+                                        <div className="bg-white p-2.5 rounded-lg border border-slate-200/80 space-y-2 text-xs">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <FileText className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                                                    <span className="font-semibold text-slate-800 truncate text-[11px]" title={linkedDoc.fileName || undefined}>
+                                                        {documentTypeLabel(linkedDoc.type)}
+                                                    </span>
                                                 </div>
+
+                                                {/* Continuous Staff Download */}
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        DocumentsApi.downloadDocument(
+                                                            engagementId,
+                                                            linkedDoc.documentId,
+                                                            linkedDoc.fileName || `${linkedDoc.type}.pdf`,
+                                                            tenantId,
+                                                            linkedDoc.isDeleted
+                                                        ).catch((err: any) => alert('Download failed: ' + (err.message || 'Server error')))
+                                                    }
+                                                    title="Download Evidence PDF"
+                                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50/70 hover:bg-indigo-100 px-2 py-0.5 rounded border border-indigo-100 transition flex-shrink-0"
+                                                >
+                                                    <Download className="w-3 h-3" />
+                                                    PDF
+                                                </button>
                                             </div>
 
-                                            {/* Row 2: Title */}
-                                            <div className="mb-3">
-                                                <span className={`text-xs font-bold block leading-tight ${isActionCancelled ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
-                                                    {act.title}
+                                            {/* Compliance & Verification details */}
+                                            <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100 text-[10px]">
+                                                {linkedDoc.complianceStatus === 'Compliant' ? (
+                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
+                                                        <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                                                        Compliant
+                                                    </span>
+                                                ) : linkedDoc.complianceStatus === 'NonCompliant' ? (
+                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 font-semibold border border-rose-200" title={linkedDoc.rejectionReason}>
+                                                        <ShieldAlert className="w-3 h-3 text-rose-600" />
+                                                        Non-Compliant
+                                                    </span>
+                                                ) : (
+                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-semibold border border-amber-200">
+                                                        <Clock className="w-3 h-3" />
+                                                        Check Pending
+                                                    </span>
+                                                )}
+
+                                                <span className="text-slate-300">•</span>
+                                                <span className="text-slate-500">
+                                                    Exp: <strong className={linkedDoc.expiryDate && new Date(linkedDoc.expiryDate) < new Date() ? 'text-rose-600 font-bold' : 'text-slate-700'}>{linkedDoc.expiryDate ? formatDate(linkedDoc.expiryDate) : 'N/A'}</strong>
                                                 </span>
                                             </div>
 
-                                            {/* CSTD-16: the client's answer to a staff question, with review */}
-                                            {act.linkedRequirementId && (() => {
-                                                const req = requirements.find((r) => r.requirementId === act.linkedRequirementId);
-                                                if (!req) return null;
-                                                return (
-                                                    <div className="bg-white p-2.5 rounded-lg border border-slate-200/80 space-y-2 text-xs">
-                                                        <div className="flex items-center justify-between gap-2">
-                                                            <span className="flex items-center gap-1.5 font-semibold text-slate-700">
-                                                                <MessageSquare className="w-3.5 h-3.5 text-indigo-600" />
-                                                                Client answer
-                                                            </span>
-                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                                                                req.status === 'Approved'
-                                                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                                                    : req.status === 'Rejected'
-                                                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                                                    : req.status === 'Submitted'
-                                                                    ? 'bg-sky-50 text-sky-700 border-sky-200'
-                                                                    : 'bg-slate-50 text-slate-600 border-slate-200'
-                                                            }`}>
-                                                                {req.status === 'Requested' ? 'Awaiting client' : req.status}
-                                                            </span>
-                                                        </div>
-                                                        {req.value ? (
-                                                            <p className="text-slate-800 whitespace-pre-wrap break-words">{req.value}</p>
-                                                        ) : (
-                                                            <p className="text-slate-400 italic">No answer yet.</p>
-                                                        )}
-                                                        {req.status === 'Rejected' && req.rejectionReason && (
-                                                            <p className="text-[11px] text-rose-700">Returned to client: {req.rejectionReason}</p>
-                                                        )}
-                                                        {req.status === 'Submitted' && (
-                                                            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-100">
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleReviewRequirement(req, true)}
-                                                                    disabled={reviewingRequirementId === req.requirementId}
-                                                                    className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold transition disabled:opacity-50"
-                                                                >
-                                                                    Approve
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleReviewRequirement(req, false)}
-                                                                    disabled={reviewingRequirementId === req.requirementId}
-                                                                    className="px-2.5 py-1 rounded-lg bg-white hover:bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-bold transition disabled:opacity-50"
-                                                                >
-                                                                    Reject…
-                                                                </button>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })()}
-
-                                            {/* Linked Evidence Document Display */}
-                                            {linkedDoc ? (
-                                                <div className="bg-slate-50/70 rounded-lg border border-slate-200/90 p-2.5 space-y-2 text-xs">
-                                                    <div className="flex items-center justify-between gap-2">
-                                                        <div className="flex items-center gap-1.5 min-w-0">
-                                                            <FileText className="w-3.5 h-3.5 text-indigo-600 flex-shrink-0" />
-                                                            <span className="font-semibold text-slate-800 truncate text-[11px]">
-                                                                {linkedDoc.type}
-                                                            </span>
-                                                            <span className="text-[10px] font-mono text-slate-400 truncate">
-                                                                ({linkedDoc.documentId.slice(0, 8)}...)
-                                                            </span>
-                                                        </div>
-
-                                                        {/* Continuous Staff Download */}
-                                                        <button
-                                                            type="button"
-                                                            onClick={() =>
-                                                                DocumentsApi.downloadDocument(
-                                                                    engagementId,
-                                                                    linkedDoc.documentId,
-                                                                    linkedDoc.fileName || `${linkedDoc.type}.pdf`,
-                                                                    tenantId,
-                                                                    linkedDoc.isDeleted
-                                                                ).catch((err: any) => alert('Download failed: ' + (err.message || 'Server error')))
-                                                            }
-                                                            title="Download Evidence PDF"
-                                                            aria-label="Download Evidence PDF"
-                                                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 bg-white hover:bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200/70 shadow-2xs transition flex-shrink-0"
-                                                        >
-                                                            <Download className="w-3 h-3" />
-                                                            PDF
-                                                        </button>
-                                                    </div>
-
-                                                    {/* Compliance & Verification details */}
-                                                    <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-slate-200/60 text-[10px]">
-                                                        {linkedDoc.complianceStatus === 'Compliant' ? (
-                                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
-                                                                <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                                                                Compliant
-                                                            </span>
-                                                        ) : linkedDoc.complianceStatus === 'NonCompliant' ? (
-                                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 font-semibold border border-rose-200" title={linkedDoc.rejectionReason}>
-                                                                <ShieldAlert className="w-3 h-3 text-rose-600" />
-                                                                Non-Compliant
-                                                            </span>
-                                                        ) : (
-                                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-semibold border border-amber-200">
-                                                                <Clock className="w-3 h-3" />
-                                                                Check Pending
-                                                            </span>
-                                                        )}
-
-                                                        <span className="text-slate-300">•</span>
-                                                        <span className="text-slate-500">
-                                                            Exp: <strong className={linkedDoc.expiryDate && new Date(linkedDoc.expiryDate) < new Date() ? 'text-rose-600 font-bold' : 'text-slate-700'}>{linkedDoc.expiryDate || 'N/A'}</strong>
-                                                        </span>
-                                                    </div>
-
-                                                    {/* If rejected, show rejection note */}
-                                                    {linkedDoc.verificationReason && isActionRejected && (
-                                                        <div className="text-[10px] text-rose-600 bg-rose-50 p-1.5 rounded border border-rose-100 font-medium">
-                                                            Reason: {linkedDoc.verificationReason}
-                                                        </div>
-                                                    )}
-
-                                                    {/* Staff Verification & Rejection Controls */}
-                                                    {!isActionVerified && !isActionCancelled && (
-                                                        <div className="flex items-center gap-2 pt-1.5 border-t border-slate-200/60">
-                                                            <button
-                                                                type="button"
-                                                                disabled={linkedDoc.complianceStatus !== 'Compliant'}
-                                                                onClick={() => {
-                                                                    setActionToVerify({ action: act, doc: linkedDoc });
-                                                                    setVerifyNotes('');
-                                                                }}
-                                                                title={
-                                                                    linkedDoc.complianceStatus === 'Compliant'
-                                                                        ? 'Verify this evidence document'
-                                                                        : 'Document must pass deterministic compliance check before staff verification'
-                                                                }
-                                                                className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-emerald-700 bg-white hover:bg-emerald-50 border border-emerald-200 flex items-center justify-center gap-1 transition shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed"
-                                                            >
-                                                                <Check className="w-3 h-3" />
-                                                                Verify Evidence
-                                                            </button>
-
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => {
-                                                                    setActionToReject({ action: act, doc: linkedDoc });
-                                                                    setRejectReason('');
-                                                                }}
-                                                                title="Reject evidence document"
-                                                                className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-rose-700 bg-white hover:bg-rose-50 border border-rose-200 flex items-center justify-center gap-1 transition shadow-2xs"
-                                                            >
-                                                                <X className="w-3 h-3" />
-                                                                Reject
-                                                            </button>
-                                                        </div>
-                                                    )}
+                                            {/* If rejected, show rejection note */}
+                                            {linkedDoc.verificationReason && isActionRejected && (
+                                                <div className="text-[10px] text-rose-600 bg-rose-50 p-1.5 rounded border border-rose-100 font-medium">
+                                                    Reason: {linkedDoc.verificationReason}
                                                 </div>
-                                            ) : isAwaitingClientUpload ? (
-                                                <div className="p-2 rounded-lg bg-amber-50/60 border border-amber-200/60 text-[11px] text-amber-800 flex items-center gap-1.5">
-                                                    <Clock className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
-                                                    <span>Awaiting client PDF upload in Client Portal</span>
-                                                </div>
-                                            ) : null}
+                                            )}
 
-                                            {/* General Task: Mark Complete button (a question completes when the client answers and staff approve) */}
-                                            {!act.isCompleted && act.status !== 'Completed' && !isActionCancelled && !linkedDoc && !act.linkedRequirementId && (
-                                                <div className="mt-3 pt-3 border-t border-slate-100">
+                                            {/* Staff Verification & Rejection Controls */}
+                                            {!isActionVerified && !isActionCancelled && (
+                                                <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
                                                     <button
-                                                        onClick={() => handleCompleteAction(act.actionId)}
-                                                        disabled={completingActionId === act.actionId}
-                                                        className="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition flex items-center justify-center gap-1"
+                                                        type="button"
+                                                        disabled={linkedDoc.complianceStatus !== 'Compliant'}
+                                                        onClick={() => {
+                                                            setActionToVerify({ action: act, doc: linkedDoc });
+                                                            setVerifyNotes('');
+                                                        }}
+                                                        title={
+                                                            linkedDoc.complianceStatus === 'Compliant'
+                                                                ? 'Verify this evidence document'
+                                                                : 'Document must pass deterministic compliance check before staff verification'
+                                                        }
+                                                        className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 flex items-center justify-center gap-1 transition disabled:opacity-40 disabled:cursor-not-allowed"
                                                     >
-                                                        {completingActionId === act.actionId ? (
-                                                            <>
-                                                                <Loader2 className="w-3 h-3 animate-spin" />
-                                                                Completing...
-                                                            </>
-                                                        ) : (
-                                                            'Mark Complete'
-                                                        )}
+                                                        <Check className="w-3 h-3" />
+                                                        Verify Evidence
+                                                    </button>
+
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setActionToReject({ action: act, doc: linkedDoc });
+                                                            setRejectReason('');
+                                                        }}
+                                                        title="Reject evidence document"
+                                                        className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 flex items-center justify-center gap-1 transition"
+                                                    >
+                                                        <X className="w-3 h-3" />
+                                                        Reject
                                                     </button>
                                                 </div>
                                             )}
                                         </div>
-                                    );
-                                })}
-                            </div>
-                        )}
+                                    ) : isAwaitingClientUpload ? (
+                                        <div className="p-2 rounded-lg bg-amber-50/60 border border-amber-200/60 text-[11px] text-amber-800 flex items-center gap-1.5">
+                                            <Clock className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+                                            <span>Awaiting client PDF upload in Client Portal</span>
+                                        </div>
+                                    ) : null}
+
+                                    {/* Staff-defined task management: edit while Pending, cancel while not finished */}
+                                    {isStaffManagedTask(act) && !isTerminalStatus && !isActionCancelled && act.status !== 'Completed' && !act.isCompleted && (
+                                        <div className="flex items-center gap-2">
+                                            {act.status === 'Pending' && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setTaskToEdit(act)}
+                                                    className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 flex items-center justify-center gap-1 transition"
+                                                >
+                                                    <Edit3 className="w-3 h-3" />
+                                                    Edit
+                                                </button>
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={() => setTaskToCancel(act)}
+                                                className="flex-1 py-1 px-2 rounded-lg text-[11px] font-semibold text-rose-700 bg-white hover:bg-rose-50 border border-rose-200 flex items-center justify-center gap-1 transition"
+                                            >
+                                                <Ban className="w-3 h-3" />
+                                                Cancel Task
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {/* Request Information: the question can be edited until the client answers */}
+                                    {act.linkedRequirementId && act.status === 'Pending' && !isTerminalStatus &&
+                                        requirements.find((r) => r.requirementId === act.linkedRequirementId)?.status === 'Requested' && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setTaskToEdit(act)}
+                                            className="w-full py-1 px-2 rounded-lg text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 flex items-center justify-center gap-1 transition"
+                                        >
+                                            <Edit3 className="w-3 h-3" />
+                                            Edit question
+                                        </button>
+                                    )}
+
+                                    {/* General Task: Mark Complete button. Not shown for a question (completes when the client answers
+                                        and staff approve) or for a client upload task (completes through the upload and staff
+                                        verification), so neither can be closed without its evidence. */}
+                                    {!act.isCompleted && act.status !== 'Completed' && !isActionCancelled && !linkedDoc && !act.linkedRequirementId && !isAwaitingClientUpload && (
+                                        <button
+                                            onClick={() => handleCompleteAction(act.actionId)}
+                                            disabled={completingActionId === act.actionId}
+                                            className="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition flex items-center justify-center gap-1"
+                                        >
+                                            {completingActionId === act.actionId ? (
+                                                <>
+                                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                                    Completing...
+                                                </>
+                                            ) : (
+                                                'Mark Complete'
+                                            )}
+                                        </button>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
                     </div>
                 );
             })()}
-                    {/* CSTD-32: Meetings for this engagement */}
-                    {tenantId && (
-                        <MeetingList
-                            engagementId={engagementId}
-                            tenantId={tenantId}
-                        />
-                    )}
-
-                    {/* Integrated Artifact Launchers */}
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                            WORKSPACE ARTIFACTS & EVIDENCE
-                        </span>
-
-                        <button
-                            onClick={() => navigate('/documents')}
-                            className="w-full p-3.5 rounded-xl border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/40 text-left flex items-center justify-between transition group"
-                        >
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 rounded-lg bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition">
-                                    <FileText className="w-4 h-4" />
-                                </div>
-                                <div>
-                                    <div className="text-xs font-bold text-slate-800">
-                                        Compliance Document Vault
-                                    </div>
-                                    <div className="text-[11px] text-slate-500">
-                                        KYC/AML verification & contracts
-                                    </div>
-                                </div>
-                            </div>
-                            <ExternalLink className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 transition" />
-                        </button>
-
-                        <button
-                            onClick={() => navigate('/audit')}
-                            className="w-full p-3.5 rounded-xl border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/40 text-left flex items-center justify-between transition group"
-                        >
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 rounded-lg bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition">
-                                    <Shield className="w-4 h-4" />
-                                </div>
-                                <div>
-                                    <div className="text-xs font-bold text-slate-800">
-                                        Immutable Audit Ledger
-                                    </div>
-                                    <div className="text-[11px] text-slate-500">
-                                        Cryptographic proof chain & hashes
-                                    </div>
-                                </div>
-                            </div>
-                            <ExternalLink className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 transition" />
-                        </button>
-                    </div>
-                </div>
+              </div>
             </div>
 
             {/* Modal: Verify Stage Action & Linked Document */}
@@ -2163,9 +2105,9 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-1">
                             <div><span className="font-semibold text-slate-700">Action:</span> {actionToVerify.action.title}</div>
                             {actionToVerify.doc && (
-                                <div><span className="font-semibold text-slate-700">Document Type:</span> {actionToVerify.doc.type}</div>
+                                <div><span className="font-semibold text-slate-700">Document Type:</span> {documentTypeLabel(actionToVerify.doc.type)}</div>
                             )}
-                            <div><span className="font-semibold text-slate-700">Staff Verifier:</span> {userId || 'staff-lead'}</div>
+                            <div><span className="font-semibold text-slate-700">Staff Verifier:</span> {email || 'You'}</div>
                         </div>
 
                         <div>
@@ -2233,7 +2175,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-1">
                             <div><span className="font-semibold text-slate-700">Action:</span> {actionToReject.action.title}</div>
                             {actionToReject.doc && (
-                                <div><span className="font-semibold text-slate-700">Document Type:</span> {actionToReject.doc.type}</div>
+                                <div><span className="font-semibold text-slate-700">Document Type:</span> {documentTypeLabel(actionToReject.doc.type)}</div>
                             )}
                         </div>
 

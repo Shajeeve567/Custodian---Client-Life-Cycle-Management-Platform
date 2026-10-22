@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { WorkflowApi } from '../services/api';
 import { ClientAction, UpdateClientActionRequest } from '../types';
 import { ENGAGEMENT_STAGES } from '../constants/engagementStages';
+import { taskTypeLabel } from '../utils/displayLabels';
 import { AlertTriangle, Ban, CheckSquare, Edit3, Loader2, X } from 'lucide-react';
 
 /**
@@ -171,7 +172,7 @@ export const EditTaskModal: React.FC<EditTaskModalProps> = ({ action, engagement
                         className={inputClass}
                     >
                         {!isQuestion && !TASK_TYPE_OPTIONS.some((o) => o.value === action.type) && (
-                            <option value={action.type}>{action.type}</option>
+                            <option value={action.type}>{taskTypeLabel(action.type)}</option>
                         )}
                         {TASK_TYPE_OPTIONS.map((o) => (
                             <option key={o.value} value={o.value}>{o.label}</option>
@@ -387,7 +388,7 @@ export const ApplyChecklistModal: React.FC<ApplyChecklistModalProps> = ({ engage
                                         <li key={t.actionId} className="p-2 rounded-lg bg-slate-50 border border-slate-200 text-[11px] flex items-start justify-between gap-2">
                                             <span className="font-semibold text-slate-800">{t.title}</span>
                                             <span className="text-slate-500 shrink-0">
-                                                {resolveRole(t)} · {t.type}
+                                                {resolveRole(t)} · {taskTypeLabel(t.type)}
                                                 {t.deadlineUtc ? ` · due ${new Date(t.deadlineUtc).toLocaleDateString()}` : ''}
                                             </span>
                                         </li>

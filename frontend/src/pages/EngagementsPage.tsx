@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { IdentityApi, WorkflowApi, ApiError } from '../services/api';
 import { Engagement, ClientProfile, UserAccountResponse } from '../types';
 import { getStageDefinition } from '../constants/engagementStages';
+import { engagementStatusClasses, engagementStatusLabel } from '../utils/displayLabels';
 import { DashboardLayout } from '../components/DashboardLayout';
 import { TeamManagementModal } from '../components/TeamManagementModal';
 import { EngagementInspectionModal } from '../components/EngagementInspectionModal';
@@ -29,19 +30,18 @@ import {
     Eye,
     EyeOff,
     Copy,
-    Sparkles
+    Sparkles,
+    AlertTriangle
 } from 'lucide-react';
 
 interface DisplayWorkspaceItem {
     id: string;
     clientName: string;
-    code: string;
     title: string;
     initials: string;
     status: string;
     nextAction: string;
     custodians: string;
-    slaScore: string;
     stageOrder: number;
     stageName: string;
     stageProgressPercentage: number;
@@ -102,6 +102,8 @@ export const EngagementsPage: React.FC = () => {
     };
 
     // Load API Data
+    const [stalledCount, setStalledCount] = useState<number | null>(null);
+
     const loadAllData = useCallback(async () => {
         if (!tenantId) return;
         setIsLoadingData(true);
@@ -110,16 +112,22 @@ export const EngagementsPage: React.FC = () => {
             const clientsPromise = IdentityApi.getClients(token || undefined).catch(() => [] as ClientProfile[]);
             const engagementsPromise = WorkflowApi.getEngagements(tenantId).catch(() => [] as Engagement[]);
             const teamPromise = token ? IdentityApi.getUsers(token).catch(() => [] as UserAccountResponse[]) : Promise.resolve([]);
+            // Same source as the Stall Queue page, so the two numbers always agree. null = couldn't load.
+            const stalledPromise = WorkflowApi.getStallQueue(tenantId, { pageSize: 1 })
+                .then((r) => r.totalCount)
+                .catch(() => null);
 
-            const [fetchedClients, fetchedEngagements, fetchedTeam] = await Promise.all([
+            const [fetchedClients, fetchedEngagements, fetchedTeam, fetchedStalled] = await Promise.all([
                 clientsPromise,
                 engagementsPromise,
-                teamPromise
+                teamPromise,
+                stalledPromise
             ]);
 
             setClients(fetchedClients);
             setEngagements(fetchedEngagements);
             setTeamMembers(fetchedTeam);
+            setStalledCount(fetchedStalled);
         } catch (err) {
             console.error('Data load error:', err);
         } finally {
@@ -223,7 +231,7 @@ export const EngagementsPage: React.FC = () => {
     // Transform real backend engagements into display format
     const allWorkspaces: DisplayWorkspaceItem[] = engagements.map((eng) => {
         const client = clients.find((c) => c.id === eng.clientId);
-        const name = client?.name || `Client ${eng.clientId.slice(0, 8)}`;
+        const name = client?.name || 'Unnamed client';
         const initials = name
             .split(' ')
             .map((n) => n[0])
@@ -231,22 +239,20 @@ export const EngagementsPage: React.FC = () => {
             .join('')
             .slice(0, 2)
             .toUpperCase() || 'CL';
-        const code = `ENG-${eng.engagementId.slice(0, 6).toUpperCase()}`;
 
         const staffHandler = teamMembers.find((m) => m.id === eng.staffId);
-        const custodianLabel = staffHandler?.email ? staffHandler.email.split('@')[0] : (eng.staffId ? `${eng.staffId.slice(0, 10)}...` : 'Unassigned');
+        const custodianLabel = staffHandler?.email ? staffHandler.email.split('@')[0] : (eng.staffId ? (eng.staffId === userId ? 'You' : 'Assigned staff') : 'Unassigned');
         const stageDef = getStageDefinition(eng.stage);
 
         return {
             id: eng.engagementId,
             clientName: name,
-            code,
-            title: 'Client Onboarding & Compliance Architecture',
+            // The client's contact email; empty when the client record has none.
+            title: client?.email || '',
             initials,
             status: eng.status,
             nextAction: eng.status === 'Closed' ? 'COMPLETED' : `STAGE: ${stageDef.name.toUpperCase()}`,
             custodians: custodianLabel,
-            slaScore: '98.5%',
             stageOrder: stageDef.order,
             stageName: stageDef.name,
             stageProgressPercentage: eng.stageProgressPercentage,
@@ -259,7 +265,6 @@ export const EngagementsPage: React.FC = () => {
         const query = searchQuery.toLowerCase();
         const matchesQuery =
             w.clientName.toLowerCase().includes(query) ||
-            w.code.toLowerCase().includes(query) ||
             w.title.toLowerCase().includes(query) ||
             w.custodians.toLowerCase().includes(query);
 
@@ -352,16 +357,29 @@ export const EngagementsPage: React.FC = () => {
                         <p className="text-xs text-slate-500">Active assigned handlers</p>
                     </div>
 
-                    <div className="bg-white/85 backdrop-blur-md p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+                    {/* Live from the Stall Queue (overdue client-facing actions), replacing a hard-coded SLA figure */}
+                    <Link
+                        to="/stall-queue"
+                        className="group bg-white/85 backdrop-blur-md p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2 hover:border-indigo-300 transition"
+                    >
                         <div className="flex items-center justify-between text-slate-500">
-                            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">SLA Assurance</span>
-                            <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
-                                <CheckCircle2 className="w-4 h-4" />
+                            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Stalled Engagements</span>
+                            <div className={`p-2 rounded-xl ${stalledCount ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                                {stalledCount ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
                             </div>
                         </div>
-                        <div className="text-2xl font-bold text-emerald-600">98.8%</div>
-                        <p className="text-xs text-slate-500">Optimal turnaround index</p>
-                    </div>
+                        <div className={`text-2xl font-bold ${stalledCount ? 'text-rose-600' : stalledCount === 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
+                            {isLoadingData ? '—' : stalledCount ?? '—'}
+                        </div>
+                        <p className="text-xs text-slate-500 flex items-center gap-1">
+                            {stalledCount === null
+                                ? 'Stall queue unavailable'
+                                : stalledCount > 0
+                                ? 'Need intervention'
+                                : 'All engagements on track'}
+                            <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition" />
+                        </p>
+                    </Link>
                 </div>
 
                 {/* 3. Search & Filter Bar */}
@@ -370,7 +388,7 @@ export const EngagementsPage: React.FC = () => {
                         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                         <input
                             type="text"
-                            placeholder="Search by client, engagement ID, or custodian..."
+                            placeholder="Search by client or custodian..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
@@ -388,7 +406,7 @@ export const EngagementsPage: React.FC = () => {
                                         : 'text-slate-600 hover:bg-slate-50 border border-transparent'
                                 }`}
                             >
-                                {tab === 'All' ? 'All Engagements' : tab}
+                                {tab === 'All' ? 'All Engagements' : engagementStatusLabel(tab)}
                             </button>
                         ))}
                     </div>
@@ -439,21 +457,23 @@ export const EngagementsPage: React.FC = () => {
                                                 <h3 className="text-base font-bold text-slate-900 group-hover:text-indigo-600 transition truncate max-w-[170px]">
                                                     {ws.clientName}
                                                 </h3>
-                                                <span className="text-xs font-mono font-medium text-slate-400">
-                                                    {ws.code}
+                                                <span className="text-xs font-medium text-slate-500">
+                                                    {ws.stageName}
                                                 </span>
                                             </div>
                                         </div>
 
-                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                            {ws.status}
+                                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border shrink-0 ${engagementStatusClasses(ws.status).pill}`}>
+                                            <span className={`w-1.5 h-1.5 rounded-full ${engagementStatusClasses(ws.status).dot}`} />
+                                            {engagementStatusLabel(ws.status)}
                                         </span>
                                     </div>
 
-                                    <p className="text-xs text-slate-500 line-clamp-2">
-                                        {ws.title}
-                                    </p>
+                                    {ws.title && (
+                                        <p className="text-xs text-slate-500 truncate" title={ws.title}>
+                                            {ws.title}
+                                        </p>
+                                    )}
                                 </div>
 
                                 {/* Card Body: Stage Progress */}
