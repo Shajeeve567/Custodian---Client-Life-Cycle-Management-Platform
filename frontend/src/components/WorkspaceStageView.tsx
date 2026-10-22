@@ -564,8 +564,8 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
             }
 
             await WorkflowApi.attachCondition(engagementId, req, tenantId);
-            await loadWorkspaceData();
             setIsAddConditionOpen(false);
+            await loadWorkspaceData();
         } catch (err: any) {
             console.error('Failed to attach condition:', err);
             setCreateConditionError(err.message || 'Failed to attach condition.');
