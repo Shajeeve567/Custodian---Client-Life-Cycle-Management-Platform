@@ -92,7 +92,7 @@ public class ReadinessHandoffReportBuilderTests
         Assert.Equal(GeneratedAt, metadata.GeneratedAtUtc);
         Assert.Equal("Workflow service live database", metadata.DataSource);
         Assert.Equal(
-            [new("Engagement", "ENG-ABCDEF"), new KeyValuePair<string, string>("Generated at (UTC)", "2026-10-17 09:30:00Z")],
+            [new("Engagement", "ENG-ABCDEF"), new KeyValuePair<string, string>("Generated at (UTC)", "2026-10-17T09:30:00Z")],
             metadata.AppliedFilters);
     }
 
@@ -114,14 +114,39 @@ public class ReadinessHandoffReportBuilderTests
         var summary = Section<KeyValueSection>(Build(Data()), "Engagement");
 
         Assert.Equal(
-            ["Engagement", "Client", "Responsible staff", "Stage", "Status", "Created"],
+            ["Engagement", "Client", "Responsible staff", "Stage", "Status", "Created (UTC)"],
             summary.Pairs.Select(p => p.Label));
         Assert.Equal("ENG-ABCDEF", Value(summary, "Engagement"));
         Assert.Equal("client-1", Value(summary, "Client"));
         Assert.Equal("staff-1", Value(summary, "Responsible staff"));
         Assert.Equal("Closure", Value(summary, "Stage"));
         Assert.Equal("Started", Value(summary, "Status"));
-        Assert.Equal("2026-09-01 08:00:00Z", Value(summary, "Created"));
+        Assert.Equal("2026-09-01T08:00:00Z", Value(summary, "Created (UTC)"));
+    }
+
+    [Fact]
+    public void ViewerTimeZone_ShiftsTimesAndLabelsEverySection()
+    {
+        // The browser sends ?tz=...; every time and heading follows it (Colombo is UTC+05:30, no DST).
+        using var _ = ReportTimeZone.Use("Asia/Colombo");
+        var report = Build(Data(
+            approvals: [Condition("Sign-off", satisfiedAt: new DateTime(2026, 10, 5, 12, 0, 0, DateTimeKind.Utc))],
+            payments: [Condition("Retainer", amount: 1m, currency: "LKR", satisfiedAt: new DateTime(2026, 10, 6, 0, 0, 0, DateTimeKind.Utc))],
+            handoff: new ReadinessHandoffContext("Pack", "staff-1", new DateTime(2026, 10, 10, 15, 0, 0, DateTimeKind.Utc)),
+            closure: new ReadinessClosureContext("Done", "owner-1", new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc))));
+
+        Assert.Equal("2026-10-17 15:00:00", report.Metadata.AppliedFilters["Generated at (UTC+05:30)"]);
+        Assert.Equal("2026-09-01 13:30:00", Value(Section<KeyValueSection>(report, "Engagement"), "Created (UTC+05:30)"));
+        Assert.Equal("2026-10-17 14:59:00", Value(Section<KeyValueSection>(report, "Readiness (generation time)"), "Evaluated at (UTC+05:30)"));
+        var approvals = Section<TableSection>(report, "Approval conditions");
+        Assert.Equal("Satisfied at (UTC+05:30)", approvals.Columns[3].Header);
+        Assert.Equal("2026-10-05 17:30:00", approvals.Rows[0][3]);
+        var payments = Section<TableSection>(report, "Payment conditions");
+        Assert.Equal("Satisfied at (UTC+05:30)", payments.Columns[4].Header);
+        Assert.Equal("2026-10-06 05:30:00", payments.Rows[0][4]);
+        Assert.Equal("2026-10-10 20:30:00", Value(Section<KeyValueSection>(report, "Handoff (persisted)"), "Handed off at (UTC+05:30)"));
+        Assert.Equal("2026-10-12 14:30:00", Value(Section<KeyValueSection>(report, "Closure (persisted)"), "Closed at (UTC+05:30)"));
+        Assert.Equal("All timestamps are Asia/Colombo time (UTC+05:30).", Section<TextSection>(report, "Definitions").Paragraphs[^1]);
     }
 
     [Fact]
@@ -143,7 +168,7 @@ public class ReadinessHandoffReportBuilderTests
 
         Assert.Equal("Ready for handoff and closure", Value(verdict, "Verdict"));
         Assert.Equal("Ready", Value(verdict, "State"));
-        Assert.Equal("2026-10-17 09:29:00Z", Value(verdict, "Evaluated at (UTC)"));
+        Assert.Equal("2026-10-17T09:29:00Z", Value(verdict, "Evaluated at (UTC)"));
         Assert.Equal("1 document(s) on record", Value(verdict, "Documents evidence"));
     }
 
@@ -286,7 +311,7 @@ public class ReadinessHandoffReportBuilderTests
             approvals.Columns.Select(c => c.Header));
         Assert.Equal(
             [
-                ["Partner sign-off", "Satisfied", "Approved", "2026-10-05 12:00:00Z", ""],
+                ["Partner sign-off", "Satisfied", "Approved", "2026-10-05T12:00:00Z", ""],
                 ["Old gate", "Pending (inactive)", "n/a", "n/a", "Superseded"]
             ],
             approvals.Rows.Select(r => r.ToArray()));
@@ -314,7 +339,7 @@ public class ReadinessHandoffReportBuilderTests
         Assert.Equal(["Title", "Amount", "Currency", "Status", "Satisfied at (UTC)"], payments.Columns.Select(c => c.Header));
         Assert.Equal(
             [
-                ["Retainer", "2500.00", "LKR", "Satisfied", "2026-10-06 00:00:00Z"],
+                ["Retainer", "2500.00", "LKR", "Satisfied", "2026-10-06T00:00:00Z"],
                 ["Deposit", "n/a", "n/a", "Pending (inactive)", "n/a"]
             ],
             payments.Rows.Select(r => r.ToArray()));
@@ -338,7 +363,7 @@ public class ReadinessHandoffReportBuilderTests
         var handoff = Section<KeyValueSection>(Build(Data(handoff: context)), "Handoff (persisted)");
 
         Assert.Equal("staff-1", Value(handoff, "Handed off by"));
-        Assert.Equal("2026-10-10 15:00:00Z", Value(handoff, "Handed off at (UTC)"));
+        Assert.Equal("2026-10-10T15:00:00Z", Value(handoff, "Handed off at (UTC)"));
         Assert.Equal("Delivered pack", Value(handoff, "Summary"));
     }
 
@@ -370,7 +395,7 @@ public class ReadinessHandoffReportBuilderTests
         var closure = Section<KeyValueSection>(Build(Data(closure: context)), "Closure (persisted)");
 
         Assert.Equal("owner-1", Value(closure, "Closed by"));
-        Assert.Equal("2026-10-12 09:00:00Z", Value(closure, "Closed at (UTC)"));
+        Assert.Equal("2026-10-12T09:00:00Z", Value(closure, "Closed at (UTC)"));
         Assert.Equal("All done", Value(closure, "Summary"));
     }
 
