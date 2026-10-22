@@ -335,10 +335,49 @@ public class NotificationRepositoryTests
             CreatedAt = DateTimeOffset.UtcNow
         });
 
+        // Unread notification for a different client in the same tenant must not be counted
+        await repo.CreateAsync(new Notification
+        {
+            NotificationId = Guid.NewGuid(),
+            TenantId = tenantId,
+            ClientId = Guid.NewGuid(),
+            Message = "Someone else's",
+            SourceEventType = "e3",
+            IsRead = false,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+
         // Act
         var unreadCount = await repo.GetUnreadCountAsync(clientId, tenantId);
 
         // Assert
         Assert.Equal(1, unreadCount);
+    }
+
+    [Fact]
+    public async Task MarkAllAsReadAsync_ShouldReturnZero_WhenNothingIsUnread()
+    {
+        // Arrange
+        var tenantId = Guid.NewGuid();
+        var clientId = Guid.NewGuid();
+        using var db = CreateDbContext(tenantId, Guid.NewGuid().ToString());
+        var repo = new NotificationRepository(db);
+
+        await repo.CreateAsync(new Notification
+        {
+            NotificationId = Guid.NewGuid(),
+            TenantId = tenantId,
+            ClientId = clientId,
+            Message = "Already read",
+            SourceEventType = "e1",
+            IsRead = true,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+
+        // Act
+        var count = await repo.MarkAllAsReadAsync(clientId, tenantId);
+
+        // Assert
+        Assert.Equal(0, count);
     }
 }

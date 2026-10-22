@@ -85,7 +85,9 @@ public class AuthController(IUserAccountRepository userRepo, IConfiguration conf
 
         // Verify they actually belong to this tenant
         var membership = user.Memberships.FirstOrDefault(m => m.TenantId == tenantId);
-        if (membership is null) return Forbid("You do not have access to this workspace.");
+        // User does not have access to this workspace. Forbid() takes authentication scheme names,
+        // not a message, so it is called without arguments to use the default (JWT) scheme.
+        if (membership is null) return Forbid();
 
         var jwtOptions = configuration.GetSection("Jwt").Get<JwtTokenOptions>();
         
