@@ -46,11 +46,8 @@ import {
     XCircle,
     Handshake,
     Flag,
-    MoreHorizontal,
 } from 'lucide-react';
 import { MeetingList } from './MeetingList';
-import { SatisfyPaymentModal } from './SatisfyPaymentModal';
-import { formatDate } from '../utils/formatDate';
 import { ACTION_TYPE_TO_DOCUMENT_TYPE } from '../constants/documentTypes';
 import { documentTypeLabel, readableServerText, engagementOpenedLabel, engagementStatusLabel, formatDate, personLabel, taskSourceLabel, taskTypeLabel } from '../utils/displayLabels';
 
@@ -133,19 +130,6 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [taskToCancel, setTaskToCancel] = useState<ClientAction | null>(null);
     const [isChecklistModalOpen, setIsChecklistModalOpen] = useState(false);
     const [checklistMessage, setChecklistMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
-    const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
-
-    useEffect(() => {
-        if (!openActionMenuId) return;
-        const handleClickOutside = (e: MouseEvent) => {
-            const target = e.target as HTMLElement | null;
-            if (!target?.closest(`[data-action-menu="${openActionMenuId}"]`)) {
-                setOpenActionMenuId(null);
-            }
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [openActionMenuId]);
 
     // CSTD-24: Conditions Modals State
     const [isAddConditionOpen, setIsAddConditionOpen] = useState(false);
@@ -178,7 +162,7 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     const [deactivateConditionError, setDeactivateConditionError] = useState<string | null>(null);
 
     // CSTD-26: mark a pending Payment condition as satisfied (clears the gate).
-    const [conditionToSatisfy, setConditionToSatisfy] = useState<EngagementCondition | null>(null);
+    const [satisfyingConditionId, setSatisfyingConditionId] = useState<string | null>(null);
 
     // Stage Action Verification Modals State
     const [actionToVerify, setActionToVerify] = useState<{ action: ClientAction; doc?: DocumentMetadata } | null>(null);
@@ -726,8 +710,28 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
     // CSTD-26: mark a pending Payment condition as satisfied — clears the gate
     // blocking the stage the condition was gated on. Publishes PaymentStatusChanged
     // server-side, which triggers a client-safe notification via Identity.
-    const handleSatisfyCondition = (cond: EngagementCondition) => {
-        setConditionToSatisfy(cond);
+    const handleSatisfyCondition = async (cond: EngagementCondition) => {
+        if (!tenantId || !engagementId) return;
+
+        const amountText = cond.amount != null
+            ? `${cond.amount.toLocaleString()} ${cond.currency ?? ''}`.trim()
+            : '';
+        const label = amountText ? `${cond.title} (${amountText})` : cond.title;
+
+        if (!window.confirm(
+            `Mark '${label}' as satisfied?\n\n` +
+            'This clears the gate blocking the next stage. The client will be notified.'
+        )) return;
+
+        setSatisfyingConditionId(cond.conditionId);
+        try {
+            await WorkflowApi.satisfyCondition(engagementId, cond.conditionId, tenantId);
+            await loadWorkspaceData();
+        } catch (err: any) {
+            alert(err?.message || 'Failed to mark the payment satisfied.');
+        } finally {
+            setSatisfyingConditionId(null);
+        }
     };
 
     // Opt-in standard checklist: reviewed in ApplyChecklistModal (preview + explicit confirmation) before
@@ -1875,9 +1879,6 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                                                     }`}>
                                                         {req.status === 'Requested' ? 'Awaiting client' : req.status}
                                                     </span>
-                                                    {isDocAction && (
-                                                        <span className="text-[10px] font-medium text-slate-400">• Evidence Action</span>
-                                                    )}
                                                 </div>
                                                 {req.value ? (
                                                     <p className="text-slate-800 whitespace-pre-wrap break-words">{req.value}</p>
@@ -2858,20 +2859,6 @@ export const WorkspaceStageView: React.FC<WorkspaceStageViewProps> = ({
                         </form>
                     </div>
                 </div>
-            )}
-
-            {/* CSTD-26: Satisfy Payment Condition Modal */}
-            {conditionToSatisfy && tenantId && (
-                <SatisfyPaymentModal
-                    condition={conditionToSatisfy}
-                    engagementId={engagementId}
-                    tenantId={tenantId}
-                    onClose={() => setConditionToSatisfy(null)}
-                    onSatisfied={async () => {
-                        setConditionToSatisfy(null);
-                        await loadWorkspaceData();
-                    }}
-                />
             )}
 
             {/* CSTD-20: Handoff Modal */}

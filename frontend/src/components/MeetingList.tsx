@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { WorkflowApi, ApiError } from '../services/api';
 import { Meeting, CreateMeetingRequest } from '../types';
-import { formatDateTime, formatDuration } from '../utils/formatDate';
-import { RescheduleMeetingModal } from './RescheduleMeetingModal';
 import { Calendar, Clock, Plus, RefreshCw, Loader2, X, AlertTriangle, Link2, Users } from 'lucide-react';
 
 interface MeetingListProps {
@@ -29,7 +27,6 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
     const [modalMode, setModalMode] = useState<ModalMode>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [formError, setFormError] = useState<string | null>(null);
-    const [meetingToReschedule, setMeetingToReschedule] = useState<Meeting | null>(null);
 
     // Create form fields
     const [purpose, setPurpose] = useState('');
@@ -201,9 +198,6 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
             : 'bg-indigo-50 text-indigo-700 border-indigo-200';
         return <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border ${cls}`}>{status}</span>;
     };
-
-    const activeMeetings = meetings.filter(m => m.status !== 'Rescheduled');
-    const rescheduledMeetings = meetings.filter(m => m.status === 'Rescheduled');
 
     return (
         <div className="bg-white/85 backdrop-blur-md rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-4">
@@ -437,19 +431,6 @@ export const MeetingList: React.FC<MeetingListProps> = ({ engagementId, tenantId
                         </form>
                     </div>
                 </div>
-            )}
-
-            {meetingToReschedule && tenantId && (
-                <RescheduleMeetingModal
-                    meeting={meetingToReschedule}
-                    engagementId={engagementId}
-                    tenantId={tenantId}
-                    onClose={() => setMeetingToReschedule(null)}
-                    onRescheduled={async () => {
-                        setMeetingToReschedule(null);
-                        await load();
-                    }}
-                />
             )}
         </div>
     );
