@@ -80,13 +80,18 @@ public class EngagementLifecycleTests : TestBase
 
             // 5. Assign existing QA Staff account
             // Wait for team members API to load and the configured QA Staff option to be present in the dropdown
+            var targetStaffEmail = TestEnvironment.StaffEmail.Trim();
+            IWebElement? matchedStaffOption = null;
             try
             {
                 Wait.Until(d =>
                 {
                     var selectEl = d.FindElement(By.XPath("//label[contains(text(), 'ASSIGNED STAFF CUSTODIAN')]/following::select[1]"));
                     var select = new SelectElement(selectEl);
-                    return select.Options.Any(opt => string.Equals(opt.Text.Trim(), TestEnvironment.StaffEmail, StringComparison.OrdinalIgnoreCase));
+                    matchedStaffOption = select.Options.FirstOrDefault(opt =>
+                        string.Equals(opt.Text.Trim(), targetStaffEmail, StringComparison.OrdinalIgnoreCase) ||
+                        opt.Text.Trim().Contains(targetStaffEmail, StringComparison.OrdinalIgnoreCase));
+                    return matchedStaffOption != null;
                 });
             }
             catch (WebDriverTimeoutException)
@@ -101,7 +106,15 @@ public class EngagementLifecycleTests : TestBase
             }
 
             var staffDropdown = new SelectElement(Driver.FindElement(By.XPath("//label[contains(text(), 'ASSIGNED STAFF CUSTODIAN')]/following::select[1]")));
-            staffDropdown.SelectByText(TestEnvironment.StaffEmail);
+            var optionVal = matchedStaffOption!.GetAttribute("value");
+            if (!string.IsNullOrEmpty(optionVal))
+            {
+                staffDropdown.SelectByValue(optionVal);
+            }
+            else
+            {
+                staffDropdown.SelectByText(matchedStaffOption.Text);
+            }
             TestEnvironment.DemoPause(300);
 
             // 6. Initialize workspace

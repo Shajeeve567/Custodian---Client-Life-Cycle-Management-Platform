@@ -16,8 +16,8 @@ public static class TestEnvironment
     private static bool _initialized;
     private static readonly object _lock = new();
 
-    public static string BaseUrl => Environment.GetEnvironmentVariable("E2E_BASE_URL") ?? "http://localhost:3000";
-    public static string TenantName => Environment.GetEnvironmentVariable("E2E_TENANT_NAME") ?? "SE3112 E2E Testing Agency";
+    public static string BaseUrl => (Environment.GetEnvironmentVariable("E2E_BASE_URL") ?? "http://localhost:3000").Trim();
+    public static string TenantName => (Environment.GetEnvironmentVariable("E2E_TENANT_NAME") ?? "SE3112 E2E Testing Agency").Trim();
 
     public static string OwnerEmail => GetRequiredCredential("E2E_OWNER_EMAIL");
     public static string OwnerPassword => GetRequiredCredential("E2E_OWNER_PASSWORD");
@@ -28,10 +28,10 @@ public static class TestEnvironment
     public static string Stage2ClientEmail => GetRequiredCredential("E2E_STAGE2_CLIENT_EMAIL");
     public static string Stage2ClientPassword => GetRequiredCredential("E2E_STAGE2_CLIENT_PASSWORD");
 
-    public static string IdentityApiUrl => Environment.GetEnvironmentVariable("E2E_IDENTITY_URL") ?? "http://localhost:5281";
-    public static string WorkflowApiUrl => Environment.GetEnvironmentVariable("E2E_WORKFLOW_URL") ?? "http://localhost:5225";
-    public static string DocumentsApiUrl => Environment.GetEnvironmentVariable("E2E_DOCUMENTS_URL") ?? "http://localhost:5171";
-    public static string AuditApiUrl => Environment.GetEnvironmentVariable("E2E_AUDIT_URL") ?? "http://localhost:5051";
+    public static string IdentityApiUrl => (Environment.GetEnvironmentVariable("E2E_IDENTITY_URL") ?? "http://localhost:5281").Trim();
+    public static string WorkflowApiUrl => (Environment.GetEnvironmentVariable("E2E_WORKFLOW_URL") ?? "http://localhost:5225").Trim();
+    public static string DocumentsApiUrl => (Environment.GetEnvironmentVariable("E2E_DOCUMENTS_URL") ?? "http://localhost:5171").Trim();
+    public static string AuditApiUrl => (Environment.GetEnvironmentVariable("E2E_AUDIT_URL") ?? "http://localhost:5051").Trim();
 
     /// <summary>
     /// Retrieves a required E2E credential from the environment.
@@ -48,7 +48,13 @@ public static class TestEnvironment
                 "Please configure it in 'tests/selenium/.env.e2e.local' for local execution, " +
                 "or as a GitHub Actions repository secret.");
         }
-        return value;
+        var cleaned = value.Trim();
+        if ((cleaned.StartsWith('"') && cleaned.EndsWith('"')) ||
+            (cleaned.StartsWith('\'') && cleaned.EndsWith('\'')))
+        {
+            cleaned = cleaned.Substring(1, cleaned.Length - 2).Trim();
+        }
+        return cleaned;
     }
 
     /// <summary>

@@ -240,6 +240,13 @@ public class DocumentComplianceTests : TestBase
                 if (btn != null) return btn;
             }
 
+            // 4. Fallback: direct button following the task title
+            var followingButtons = d.FindElements(By.XPath($"//*[contains(text(), '{taskTitle}')]/following::button[contains(., 'Upload') or contains(., 'Evidence')][1]"));
+            if (followingButtons.Count > 0 && followingButtons[0].Enabled)
+            {
+                return followingButtons[0];
+            }
+
             return null;
         });
 
@@ -345,18 +352,41 @@ public class DocumentComplianceTests : TestBase
         {
             TestEnvironment.Initialize();
             using var client = new HttpClient();
-            var authBody = JsonSerializer.Serialize(new
-            {
-                email = TestEnvironment.StaffEmail,
-                password = TestEnvironment.StaffPassword
-            });
-            var loginContent = new StringContent(authBody, Encoding.UTF8, "application/json");
-            var loginResp = client.PostAsync($"{TestEnvironment.IdentityApiUrl}/api/auth/login", loginContent).GetAwaiter().GetResult();
-            Console.WriteLine($"[EnsureTask] Login: {loginResp.StatusCode}");
-            if (!loginResp.IsSuccessStatusCode) return;
 
-            var loginJson = JsonDocument.Parse(loginResp.Content.ReadAsStringAsync().GetAwaiter().GetResult());
-            var globalToken = loginJson.RootElement.GetProperty("token").GetString();
+            string? globalToken = null;
+
+            // 1. Try authenticate as Staff (trimmed)
+            var staffAuthBody = JsonSerializer.Serialize(new
+            {
+                email = TestEnvironment.StaffEmail.Trim(),
+                password = TestEnvironment.StaffPassword.Trim()
+            });
+            var loginResp = client.PostAsync($"{TestEnvironment.IdentityApiUrl}/api/auth/login", new StringContent(staffAuthBody, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Console.WriteLine($"[EnsureTask] Staff Login: {loginResp.StatusCode}");
+
+            if (loginResp.IsSuccessStatusCode)
+            {
+                var loginJson = JsonDocument.Parse(loginResp.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                globalToken = loginJson.RootElement.GetProperty("token").GetString();
+            }
+            else
+            {
+                // Fallback: Owner also has full staff-level rights to reset verification
+                var ownerAuthBody = JsonSerializer.Serialize(new
+                {
+                    email = TestEnvironment.OwnerEmail.Trim(),
+                    password = TestEnvironment.OwnerPassword.Trim()
+                });
+                var ownerLoginResp = client.PostAsync($"{TestEnvironment.IdentityApiUrl}/api/auth/login", new StringContent(ownerAuthBody, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+                Console.WriteLine($"[EnsureTask] Owner Login Fallback: {ownerLoginResp.StatusCode}");
+                if (ownerLoginResp.IsSuccessStatusCode)
+                {
+                    var ownerJson = JsonDocument.Parse(ownerLoginResp.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                    globalToken = ownerJson.RootElement.GetProperty("token").GetString();
+                }
+            }
+
+            if (string.IsNullOrEmpty(globalToken)) return;
 
             using var tenantReq = new HttpRequestMessage(HttpMethod.Get, $"{TestEnvironment.IdentityApiUrl}/api/tenant/mine");
             tenantReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", globalToken);
@@ -372,12 +402,14 @@ public class DocumentComplianceTests : TestBase
                 {
                     if (t.TryGetProperty("tenantId", out var tp))
                     {
-                        tenantId = tp.GetString();
+                        var tid = tp.GetString();
                         if (t.TryGetProperty("name", out var np) &&
-                            string.Equals(np.GetString(), TestEnvironment.TenantName, StringComparison.OrdinalIgnoreCase))
+                            string.Equals(np.GetString()?.Trim(), TestEnvironment.TenantName.Trim(), StringComparison.OrdinalIgnoreCase))
                         {
+                            tenantId = tid;
                             break;
                         }
+                        tenantId ??= tid;
                     }
                 }
             }
@@ -400,6 +432,7 @@ public class DocumentComplianceTests : TestBase
 
             using var actionsReq = new HttpRequestMessage(HttpMethod.Get, $"{TestEnvironment.WorkflowApiUrl}/api/engagements/{Stage2EngagementId}/actions?tenantId={tenantId}");
             actionsReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", wsToken);
+            actionsReq.Headers.Add("X-Tenant-ID", tenantId);
             var actionsResp = client.SendAsync(actionsReq).GetAwaiter().GetResult();
             Console.WriteLine($"[EnsureTask] GetActions: {actionsResp.StatusCode}");
             if (!actionsResp.IsSuccessStatusCode) return;
@@ -408,11 +441,12 @@ public class DocumentComplianceTests : TestBase
             foreach (var element in actionsJson.RootElement.EnumerateArray())
             {
                 if (element.TryGetProperty("title", out var titleProp) &&
-                    string.Equals(titleProp.GetString(), taskTitle, StringComparison.OrdinalIgnoreCase))
+                    string.Equals(titleProp.GetString()?.Trim(), taskTitle.Trim(), StringComparison.OrdinalIgnoreCase))
                 {
                     string status = element.TryGetProperty("status", out var s) ? s.GetString() ?? "" : "";
                     Console.WriteLine($"[EnsureTask] Task '{taskTitle}' current status: {status}");
-                    if (string.Equals(status, "Completed", StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(status, "Pending", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(status, "Rejected", StringComparison.OrdinalIgnoreCase))
                     {
                         var actionId = element.GetProperty("actionId").GetString();
                         var verifyBody = JsonSerializer.Serialize(new
@@ -423,6 +457,7 @@ public class DocumentComplianceTests : TestBase
                         });
                         using var putReq = new HttpRequestMessage(HttpMethod.Put, $"{TestEnvironment.WorkflowApiUrl}/api/engagements/{Stage2EngagementId}/actions/{actionId}/verification?tenantId={tenantId}");
                         putReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", wsToken);
+                        putReq.Headers.Add("X-Tenant-ID", tenantId);
                         putReq.Content = new StringContent(verifyBody, Encoding.UTF8, "application/json");
                         var putResp = client.SendAsync(putReq).GetAwaiter().GetResult();
                         Console.WriteLine($"[EnsureTask] Reset action status: {putResp.StatusCode}");
