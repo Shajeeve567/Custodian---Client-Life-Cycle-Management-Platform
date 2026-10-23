@@ -61,6 +61,10 @@ appsettings*.Staging.json
 *.env.local
 *.env.production
 *.properties
+# JMeter staging base URLs and result settings (no secrets)
+!tests/jmeter/staging.properties
+!tests/jmeter/qa.properties
+!tests/jmeter/report.properties
 
 # Keep base config templates
 !appsettings.json
