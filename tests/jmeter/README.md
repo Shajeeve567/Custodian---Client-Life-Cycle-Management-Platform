@@ -53,6 +53,7 @@ The weights are Throughput Controllers and can be changed with `-JpctDocuments`,
 | `qa.properties` | Base URLs of the QA target (see below) |
 | `report.properties` | Dashboard settings (title, APDEX, filters) and the extra `spikePhase` result column |
 | `data/accounts.example.csv` | Template for `data/accounts.csv` (the QA login, **git-ignored**) |
+| `CHANGELOG.md` | Every change made to the tests, the rules and the targets after the first real runs, and why |
 | `results/`, `reports/` | Output of each run (git-ignored) |
 
 ## Setup
@@ -198,6 +199,23 @@ request or a schedule. In GitHub: **Actions → Load Test — JMeter (manual) �
 - **Run the JMeter load test after the deploy**: ticked = deploy, then test. Unticked = only rebuild, unit-test
   and redeploy the four services.
 - **Load-test profile**: smoke, load, stress or spike.
+
+The same run from a terminal with the GitHub CLI (then follow it live):
+
+```bash
+gh workflow run load-test.yml --ref main -f run_load_test=true -f profile=smoke
+```
+
+```bash
+gh run watch
+```
+
+GitHub lists a manual workflow, and accepts it from the CLI, only once the file is on the default branch (`main`).
+
+**Why manual only.** Unit, mutation and E2E tests run automatically on push and pull request; load tests do not:
+they measure the deployed environment, so a pull-request run would test the code already deployed rather than the
+pull request's code; they would overlap the E2E tests and deployments that run on every push and skew each other's
+results; and they put real load on shared QA apps and databases. They run when someone asks for them.
 
 What happens: the four existing `deploy-*.yml` workflows run in parallel (build, unit tests, deploy). Only when
 all four succeed, the JMeter job installs JMeter 5.6.3 (checksum verified), writes `data/accounts.csv` from

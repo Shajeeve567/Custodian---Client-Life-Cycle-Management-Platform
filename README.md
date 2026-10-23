@@ -171,7 +171,13 @@ Deployment secrets are GitHub Secrets (`AZURE_<SERVICE>_APP_NAME` / `_PUBLISH_PR
 `load-test.yml` runs only from **Actions → Load Test — JMeter (manual) → Run workflow**. It always rebuilds,
 unit-tests and redeploys the four services (reusing `deploy-*.yml`), and runs the JMeter load test only when its
 checkbox is ticked, with a choice of profile: smoke, load, stress or spike. The SLA result appears on the run's
-summary page and the HTML dashboard is kept as an artifact. Locally:
+summary page and the HTML dashboard is kept as an artifact. From a terminal (GitHub CLI):
+
+```bash
+gh workflow run load-test.yml --ref main -f run_load_test=true -f profile=smoke
+```
+
+Locally, the same script CI runs:
 
 ```bash
 cd tests/jmeter && ./run.sh smoke --props qa.properties
