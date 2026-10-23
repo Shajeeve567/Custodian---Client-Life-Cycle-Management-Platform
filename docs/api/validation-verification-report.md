@@ -47,7 +47,7 @@ Local base URL: `http://localhost:5171`.
   - `Content-Disposition`: `attachment; filename="custodian-validation_verification-{yyyyMMdd-HHmm}Z.csv"`
   - Structure: Deterministic aggregate-detail table with columns `Category,Metric,Count`.
 
-### Error Contract (RFC 7807 ProblemDetails)
+### Error Contract (RFC 7807 Problem Details table)
 
 | Status | Title | Cause |
 |---|---|---|

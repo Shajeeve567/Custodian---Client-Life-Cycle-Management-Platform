@@ -141,4 +141,68 @@ public class HashChainServiceTests
     {
         Assert.False(Sv.VerifyEventHash(Input(), string.Empty));
     }
+
+    // Known-answer tests. The tests above only compare hashes with each other, so a change to the
+    // canonical form (a renamed key, a different key order, indentation, a dropped array item) would
+    // still pass them while silently invalidating every hash already stored. These pin the exact
+    // canonical JSON and its SHA-256, computed independently of this code.
+
+    private const string CanonicalJson =
+        "{\"eventId\":\"11111111-1111-1111-1111-111111111111\"," +
+        "\"engagementId\":\"22222222-2222-2222-2222-222222222222\"," +
+        "\"tenantId\":\"33333333-3333-3333-3333-333333333333\"," +
+        "\"actor\":\"tester\",\"type\":\"Genesis\"," +
+        "\"timestamp\":\"2026-01-01T00:00:00.0000000Z\"," +
+        "\"payload\":{\"a\":[3,null,{\"x\":null,\"y\":2}],\"b\":\"two\"}," +
+        "\"previousHash\":\"abc\"}";
+
+    [Fact]
+    public void ComputeEventHash_MatchesTheKnownAnswer()
+    {
+        // Payload keys deliberately out of order, with nulls in an object and in an array.
+        var input = Input(payload: "{ \"b\": \"two\", \"a\": [3, null, { \"y\": 2, \"x\": null }] }", previousHash: "abc");
+
+        var hash = Sv.ComputeEventHash(input);
+
+        Assert.Equal(
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(CanonicalJson))).ToLowerInvariant(),
+            hash);
+        Assert.Equal("66e9ba777d272026650025cba999ab54b9cb911c6655cdf675f667621fa8ff4b", hash);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("{}")]
+    public void ComputeEventHash_EmptyPayload_HashesAsAnEmptyObject(string payload)
+    {
+        Assert.Equal("e982e1ef9e30857b2ae2ace418d20ac4253df80a2b68134d6823178c68eb152c", Sv.ComputeEventHash(Input(payload: payload)));
+    }
+
+    [Fact]
+    public void ComputeEventHash_ArrayOrderIsSignificant()
+    {
+        var a = Sv.ComputeEventHash(Input(payload: "{\"items\":[1,2]}"));
+        var b = Sv.ComputeEventHash(Input(payload: "{\"items\":[2,1]}"));
+        Assert.NotEqual(a, b);
+    }
+
+    [Fact]
+    public void ComputeEventHash_ChangedType_ReturnsDifferentHash()
+    {
+        Assert.NotEqual(Sv.ComputeEventHash(Input(type: "Genesis")), Sv.ComputeEventHash(Input(type: "StatusChange")));
+    }
+
+    [Fact]
+    public void VerifyEventHash_WhitespaceHash_ReturnsFalse()
+    {
+        Assert.False(Sv.VerifyEventHash(Input(), "   "));
+    }
+
+    [Fact]
+    public void GenesisHash_IsTheSameAsTheConstant()
+    {
+        Assert.Equal(HashChainService.Genesis, Sv.GenesisHash);
+        Assert.Equal(new string('0', 64), HashChainService.Genesis);
+    }
 }

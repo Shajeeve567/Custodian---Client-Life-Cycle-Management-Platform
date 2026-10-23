@@ -1,0 +1,15 @@
+{
+  "stryker-config": {
+    "project": "Identity.csproj",
+    "reporters": ["html", "progress", "cleartext"],
+    "mutate": [
+      "**/*.cs",
+      "!**/Migrations/**/*.cs",
+      "!**/Program.cs",
+      "!**/Data/IdentityDbContext.cs"
+    ],
+    "test-case-filter": "FullyQualifiedName!~.Integration.",
+    "ignore-methods": ["*Log*", "ToString", "*Exception.ctor"],
+    "thresholds": { "high": 80, "low": 60, "break": 0 }
+  }
+}
