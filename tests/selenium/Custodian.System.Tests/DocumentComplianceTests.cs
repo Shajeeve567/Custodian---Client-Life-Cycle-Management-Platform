@@ -22,8 +22,6 @@ public class DocumentComplianceTests : TestBase
     private readonly List<string> _tempFiles = new();
 
     private const string Stage2EngagementId = "4ca380d3-04e0-4be5-8e6a-6f8a760803b6";
-    private const string Stage2ClientEmail = "se3112.e2e.gp.da244274@example.com";
-    private const string Stage2ClientPassword = "P@ssw0rd123!";
 
     [Fact]
     [Trait("Category", "CI")]
@@ -32,7 +30,7 @@ public class DocumentComplianceTests : TestBase
         try
         {
             // 1. Authenticate as QA Client into Client Portal
-            LoginViaUi(Stage2ClientEmail, Stage2ClientPassword, TestEnvironment.TenantName);
+            LoginViaUi(TestEnvironment.Stage2ClientEmail, TestEnvironment.Stage2ClientPassword, TestEnvironment.TenantName);
             Wait.Until(d => d.Url.Contains("/portal"));
             Wait.Until(d => d.FindElements(By.XPath("//h1[contains(., 'Client Onboarding Portal')] | //h3[contains(., 'Compliance Document Vault')]")).Count > 0);
             TestEnvironment.DemoPause(400);
@@ -111,7 +109,7 @@ public class DocumentComplianceTests : TestBase
             EnsureTaskIsReadyForTesting(taskTitle);
 
             // 1. Client uploads initial compliant synthetic evidence
-            LoginViaUi(Stage2ClientEmail, Stage2ClientPassword, TestEnvironment.TenantName);
+            LoginViaUi(TestEnvironment.Stage2ClientEmail, TestEnvironment.Stage2ClientPassword, TestEnvironment.TenantName);
             Wait.Until(d => d.Url.Contains("/portal"));
             Wait.Until(d => d.FindElements(By.CssSelector(".animate-spin")).Count == 0);
             TestEnvironment.DemoPause(400);
@@ -150,7 +148,7 @@ public class DocumentComplianceTests : TestBase
 
             // 3. Client views rejection feedback alert and resubmits corrected PDF
             SwitchToFreshIndependentBrowserSession();
-            LoginViaUi(Stage2ClientEmail, Stage2ClientPassword, TestEnvironment.TenantName);
+            LoginViaUi(TestEnvironment.Stage2ClientEmail, TestEnvironment.Stage2ClientPassword, TestEnvironment.TenantName);
             Wait.Until(d => d.Url.Contains("/portal"));
             Wait.Until(d => d.FindElements(By.CssSelector(".animate-spin")).Count == 0);
             TestEnvironment.DemoPause(400);
