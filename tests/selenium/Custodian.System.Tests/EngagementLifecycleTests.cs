@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Support.UI;
 using Xunit;
@@ -78,8 +79,28 @@ public class EngagementLifecycleTests : TestBase
             Assert.True(provisionSuccessBanner.Displayed);
 
             // 5. Assign existing QA Staff account
-            var staffSelectEl = Wait.Until(d => d.FindElement(By.XPath("//label[contains(text(), 'ASSIGNED STAFF CUSTODIAN')]/following::select[1]")));
-            var staffDropdown = new SelectElement(staffSelectEl);
+            // Wait for team members API to load and the configured QA Staff option to be present in the dropdown
+            try
+            {
+                Wait.Until(d =>
+                {
+                    var selectEl = d.FindElement(By.XPath("//label[contains(text(), 'ASSIGNED STAFF CUSTODIAN')]/following::select[1]"));
+                    var select = new SelectElement(selectEl);
+                    return select.Options.Any(opt => string.Equals(opt.Text.Trim(), TestEnvironment.StaffEmail, StringComparison.OrdinalIgnoreCase));
+                });
+            }
+            catch (WebDriverTimeoutException)
+            {
+                var selectEl = Driver.FindElement(By.XPath("//label[contains(text(), 'ASSIGNED STAFF CUSTODIAN')]/following::select[1]"));
+                var select = new SelectElement(selectEl);
+                var loadedOptionCount = select.Options.Count;
+                var loadedOptionsDiagnostics = loadedOptionCount == 1 && select.Options[0].Text.Contains("Lead Custodian")
+                    ? "Team members list failed to load from API (only default 'Me (Lead Custodian)' option present)."
+                    : $"Team members list loaded ({loadedOptionCount} options), but configured QA Staff account was not found among options.";
+                throw new InvalidOperationException($"Failed to locate configured QA Staff option in Assigned Staff dropdown: {loadedOptionsDiagnostics}");
+            }
+
+            var staffDropdown = new SelectElement(Driver.FindElement(By.XPath("//label[contains(text(), 'ASSIGNED STAFF CUSTODIAN')]/following::select[1]")));
             staffDropdown.SelectByText(TestEnvironment.StaffEmail);
             TestEnvironment.DemoPause(300);
 
