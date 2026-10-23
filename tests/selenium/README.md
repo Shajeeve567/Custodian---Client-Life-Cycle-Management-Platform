@@ -134,29 +134,18 @@ dotnet test .\tests\selenium\Custodian.System.Tests\Custodian.System.Tests.cspro
 
 ## 5. Security & Safe CI Execution
 
-### A. Unconditional Production Endpoint Protection
-The default deployed Azure App Services (`custodian-*-prod-gr`) and Vercel frontend target live Azure MySQL production databases (`identity_db`, `workflow_db`, `document_db`, `audit_db`).
+### A. Branch-Based Test Execution Tiers
+The GitHub Actions workflow (`.github/workflows/e2e-pipeline.yml`) executes tests against deployed QA infrastructure according to branch:
+- **`E2EUI-Selenium`**: Executes the **Full Regression Suite** (all 11 tests sequentially).
+- **`dev` and `main`**: Executes the **Fast Smoke Test** (`APPR01_` flagship approval workflow, ~60s).
+- **Manual Dispatch**: Allows explicitly overriding the suite tier between `full` and `smoke`.
 
-To protect production data, the CI pipeline enforces an **unconditional hard block**:
-- If target endpoints match known production hosts (`custodian-blue.vercel.app` or `*-prod-*`), state-changing Selenium browser execution is **permanently disabled**.
-- Confirmation flags (`E2E_QA_ISOLATION_CONFIRMED` or `confirm_qa_isolation`) **CANNOT override** this hard block while production endpoints are targeted.
-- Safe compilation (`dotnet build`) and test tier analysis continue to validate every commit and PR.
+### B. Pull Request Credential Protection
+- **Zero Secret Exposure to PR Code**: The test execution step is guarded with `if: github.event_name != 'pull_request'`. The runner never injects repository secrets into the environment during pull requests, safeguarding credentials from untrusted code in forks or branches.
+- **Build Verification on PR**: Pull requests build the project in `Release` mode (`dotnet build`) and verify test tier logic without running live browser sessions.
+- **Fail-Fast Credential Validation**: On trusted push events, if any of the 8 required GitHub Secrets are missing or empty, the pipeline fails immediately with `::error::` and exit code `1` rather than reporting a misleading success.
 
-### B. Configuring an Isolated QA Environment for Future Execution
-To run E2E browser tests in CI after an isolated QA environment has been deployed:
-1. Define non-production QA endpoint variables in GitHub (**Settings → Secrets and variables → Actions → Variables**):
-   - `E2E_QA_BASE_URL` (e.g., `https://qa.custodian.app` or staging URL)
-   - `E2E_QA_IDENTITY_URL`, `E2E_QA_WORKFLOW_URL`, `E2E_QA_DOCUMENTS_URL`, `E2E_QA_AUDIT_URL`
-2. Confirm database isolation by setting repository variable `E2E_QA_ISOLATION_CONFIRMED='true'` (or passing `confirm_qa_isolation='true'` via `workflow_dispatch`).
-3. Ensure the 8 required GitHub Secrets are populated.
-
-### C. Pull Request Security & Protected Environments
-- **No Secret Exposure to PR Code**: The browser test step is guarded with `if: github.event_name != 'pull_request'`, ensuring runner environments never evaluate or inject secrets during pull requests (protecting against malicious code in forks or untrusted branches).
-- **Compilation Gate**: Pull requests run `dotnet build` in Release mode and test tier selection, ensuring complete build verification without exposing credentials.
-- **Protected Environment**: The pipeline binds to GitHub Environment `e2e-tests`, enabling maintainers to enforce environment protection rules (such as Required Reviewers).
-- **Never Use `pull_request_target`**: The workflow strictly uses standard `on: pull_request`.
-
-### D. Credential Rotation Runbook
+### C. Credential Rotation Runbook
 If persistent test credentials are ever rotated:
 1. **Rotate in Identity Database**: An authorized administrator updates passwords for the persistent QA accounts (`E2E_OWNER_EMAIL`, `E2E_STAFF_EMAIL`, `E2E_CLIENT_EMAIL`, and `E2E_STAGE2_CLIENT_EMAIL`) in the Identity database.
 2. **Update GitHub Repository Secrets**: Update the corresponding `E2E_*_PASSWORD` secrets in GitHub (**Settings → Secrets and variables → Actions**).

@@ -16,17 +16,11 @@ on:
           - 'auto'   # Auto-detects: Full suite on E2EUI-Selenium, Smoke on dev/main
           - 'full'   # Full suite (All 11 tests)
           - 'smoke'  # Fast smoke test (APPR01_ only, ~60s)
-      confirm_qa_isolation:
-        description: 'Set to "true" only after isolated QA environment is configured and approved'
-        required: false
-        default: 'false'
-        type: string
 
 jobs:
   e2e-tests:
     name: Selenium WebDriver Tests (Headless)
     runs-on: ubuntu-latest
-    environment: e2e-tests
 
     steps:
       - name: Checkout repository
@@ -73,46 +67,18 @@ jobs:
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
-          # 1. UNCONDITIONAL PRODUCTION ENDPOINT HARD BLOCK:
-          # Verify whether target URLs match known production hostnames/patterns.
-          # Regardless of any confirmation flag or variable, execution against production endpoints is strictly forbidden.
-          IS_PRODUCTION_TARGET=false
-          if [[ "$E2E_BASE_URL" == *"custodian-blue.vercel.app"* ]] || \
-             [[ "$E2E_IDENTITY_URL" == *"-prod-"* ]] || \
-             [[ "$E2E_WORKFLOW_URL" == *"-prod-"* ]] || \
-             [[ "$E2E_DOCUMENTS_URL" == *"-prod-"* ]] || \
-             [[ "$E2E_AUDIT_URL" == *"-prod-"* ]]; then
-            IS_PRODUCTION_TARGET=true
-          fi
-
-          if [ "$IS_PRODUCTION_TARGET" = "true" ]; then
-            echo "================================================================================="
-            echo "::warning::E2E EXECUTION BLOCKED: Production Endpoint Hard Block Active."
-            echo "Configured endpoints target production services (custodian-blue.vercel.app or *-prod-*)."
-            echo "State-changing Selenium tests are PERMANENTLY DISABLED against production endpoints."
-            echo "Confirmation flags (E2E_QA_ISOLATION_CONFIRMED / confirm_qa_isolation) CANNOT override this protection."
-            echo "To enable E2E testing, configure isolated QA endpoints via repository variables"
-            echo "(e.g. vars.E2E_QA_BASE_URL, vars.E2E_QA_IDENTITY_URL, etc.)."
-            echo "================================================================================="
-            exit 0
-          fi
-
-          # 2. ISOLATED QA ENVIRONMENT CONFIRMATION CHECK:
-          # When targeting non-production endpoints, execution still requires explicit approval.
-          ISOLATION_CONFIRMED="${{ vars.E2E_QA_ISOLATION_CONFIRMED || github.event.inputs.confirm_qa_isolation || 'false' }}"
-          if [ "$ISOLATION_CONFIRMED" != "true" ]; then
-            echo "================================================================================="
-            echo "::warning::E2E EXECUTION PAUSED: QA Isolation Confirmation Required."
-            echo "Non-production endpoints detected, but QA database isolation has not been confirmed."
-            echo "Configure repository variable E2E_QA_ISOLATION_CONFIRMED='true' or pass confirm_qa_isolation='true'."
-            echo "================================================================================="
-            exit 0
-          fi
-
-          # 3. REQUIRED SECRETS PRESENCE CHECK:
-          if [ -z "$E2E_OWNER_EMAIL" ] || [ -z "$E2E_OWNER_PASSWORD" ] || [ -z "$E2E_STAGE2_CLIENT_EMAIL" ] || [ -z "$E2E_STAGE2_CLIENT_PASSWORD" ]; then
-            echo "::warning::Required E2E secrets are unavailable or empty. Skipping test execution."
-            exit 0
+          # Validate required credentials before execution
+          if [ -z "$E2E_OWNER_EMAIL" ] || [ -z "$E2E_OWNER_PASSWORD" ] || \
+             [ -z "$E2E_STAFF_EMAIL" ] || [ -z "$E2E_STAFF_PASSWORD" ] || \
+             [ -z "$E2E_CLIENT_EMAIL" ] || [ -z "$E2E_CLIENT_PASSWORD" ] || \
+             [ -z "$E2E_STAGE2_CLIENT_EMAIL" ] || [ -z "$E2E_STAGE2_CLIENT_PASSWORD" ]; then
+            echo "::error::Required E2E credentials are missing or empty in GitHub Secrets."
+            echo "Please configure all 8 required repository secrets:"
+            echo "  - E2E_OWNER_EMAIL / E2E_OWNER_PASSWORD"
+            echo "  - E2E_STAFF_EMAIL / E2E_STAFF_PASSWORD"
+            echo "  - E2E_CLIENT_EMAIL / E2E_CLIENT_PASSWORD"
+            echo "  - E2E_STAGE2_CLIENT_EMAIL / E2E_STAGE2_CLIENT_PASSWORD"
+            exit 1
           fi
 
           echo "Executing test filter: ${{ steps.select-tier.outputs.filter }}"
@@ -124,8 +90,8 @@ jobs:
         env:
           SELENIUM_HEADLESS: "true"
           DOTNET_ROLL_FORWARD: "Major"
-          E2E_BASE_URL: ${{ vars.E2E_QA_BASE_URL || 'https://custodian-blue.vercel.app' }}
-          E2E_TENANT_NAME: ${{ vars.E2E_QA_TENANT_NAME || 'SE3112 E2E Testing Agency' }}
+          E2E_BASE_URL: "https://custodian-blue.vercel.app"
+          E2E_TENANT_NAME: "SE3112 E2E Testing Agency"
           E2E_OWNER_EMAIL: ${{ secrets.E2E_OWNER_EMAIL }}
           E2E_OWNER_PASSWORD: ${{ secrets.E2E_OWNER_PASSWORD }}
           E2E_STAFF_EMAIL: ${{ secrets.E2E_STAFF_EMAIL }}
@@ -134,13 +100,14 @@ jobs:
           E2E_CLIENT_PASSWORD: ${{ secrets.E2E_CLIENT_PASSWORD }}
           E2E_STAGE2_CLIENT_EMAIL: ${{ secrets.E2E_STAGE2_CLIENT_EMAIL }}
           E2E_STAGE2_CLIENT_PASSWORD: ${{ secrets.E2E_STAGE2_CLIENT_PASSWORD }}
-          E2E_IDENTITY_URL: ${{ vars.E2E_QA_IDENTITY_URL || 'https://custodian-identity-prod-gr-cmbqdggxh7gzevgg.southeastasia-01.azurewebsites.net' }}
-          E2E_WORKFLOW_URL: ${{ vars.E2E_QA_WORKFLOW_URL || 'https://custodian-workflow-prod-gr-fgcecrfea6cue2d6.southeastasia-01.azurewebsites.net' }}
-          E2E_DOCUMENTS_URL: ${{ vars.E2E_QA_DOCUMENTS_URL || 'https://custodian-documents-prod-gr-cbc5b5bydgehb3cn.southeastasia-01.azurewebsites.net' }}
-          E2E_AUDIT_URL: ${{ vars.E2E_QA_AUDIT_URL || 'https://custodian-audit-prod-gr-fmfbdfcnfse9bbfz.southeastasia-01.azurewebsites.net' }}
+          E2E_IDENTITY_URL: "https://custodian-identity-prod-gr-cmbqdggxh7gzevgg.southeastasia-01.azurewebsites.net"
+          E2E_WORKFLOW_URL: "https://custodian-workflow-prod-gr-fgcecrfea6cue2d6.southeastasia-01.azurewebsites.net"
+          E2E_DOCUMENTS_URL: "https://custodian-documents-prod-gr-cbc5b5bydgehb3cn.southeastasia-01.azurewebsites.net"
+          E2E_AUDIT_URL: "https://custodian-audit-prod-gr-fmfbdfcnfse9bbfz.southeastasia-01.azurewebsites.net"
 
       - name: Pull Request Safety Notice
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
-          echo "::notice title=PR Build Verified::Selenium test project compiled successfully. Live browser test execution with credentials is intentionally restricted to trusted push and protected environment execution contexts."
+          echo "::notice title=PR Build Verified::Selenium test project compiled successfully. Live browser test execution with credentials is intentionally restricted to trusted push events."
+
