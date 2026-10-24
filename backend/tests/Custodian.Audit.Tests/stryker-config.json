@@ -12,6 +12,6 @@
     ],
     "test-case-filter": "FullyQualifiedName!~.Integration.",
     "ignore-methods": ["*Log*", "ToString", "*Exception.ctor"],
-    "thresholds": { "high": 80, "low": 60, "break": 0 }
+    "thresholds": { "high": 85, "low": 75, "break": 0 }
   }
 }

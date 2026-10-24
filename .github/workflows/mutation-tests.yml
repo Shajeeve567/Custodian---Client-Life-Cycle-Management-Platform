@@ -21,8 +21,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Fail below this score. Must not be above the "low" threshold (60) in stryker-config.json.
-  BREAK_AT: 60
+  # Fail below this score: set just under the lowest current score (Documents, 76%) so quality
+  # cannot slip. Must not be above the "low" threshold (75) in stryker-config.json.
+  BREAK_AT: 75
 
 jobs:
   stryker:
