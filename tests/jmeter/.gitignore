@@ -1,0 +1,6 @@
+# Real QA logins (contain passwords) - only the .example template is committed
+data/*.csv
+!data/*.example.csv
+# Raw run output: .jtl files, JMeter logs and HTML dashboards
+results/
+reports/

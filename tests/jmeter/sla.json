@@ -1,0 +1,35 @@
+{
+  "_about": "Performance targets checked by sla-gate.js after a run. p95Ms: 95th-percentile response time per sampler label (ms); 'default' applies to every label not listed. Per-sample hard ceilings live in the .jmx (Duration Assertions: maxResponseMs / maxReportMs).",
+  "p95Ms": {
+    "default": 800,
+    "Identity: GET /api/Notifications/unread-count": 500,
+    "Workflow: GET /api/stall-queue": 1500,
+    "Workflow: GET /api/reports/sla-performance (PDF)": 3000
+  },
+  "profiles": {
+    "smoke": {
+      "_about": "Functional sanity: every request must succeed. Latency is not judged (1 user, possible cold start).",
+      "maxErrorPct": 0,
+      "checkP95": false
+    },
+    "load": {
+      "_about": "The SLA run: at expected concurrency every label must meet its p95 and the error rate must stay under 1 %.",
+      "maxErrorPct": 1,
+      "checkP95": true
+    },
+    "stress": {
+      "_about": "Informational: finds the breaking point (the first time window from which every later window is over p95Ms or maxErrorPct) and the peak sustainable throughput before it. Never fails the build. p95Ms covers all requests together, so it is looser than the per-request load targets.",
+      "bucketSeconds": 10,
+      "maxErrorPct": 5,
+      "p95Ms": 2000
+    },
+    "spike": {
+      "_about": "Survive and recover: limited errors during the burst, and after it the system must be back to normal (every later 10 s window with p95 <= maxRecoveryP95Ratio x baseline p95 and errors <= maxErrorPctRecovery) within maxRecoverySeconds.",
+      "maxErrorPctSpike": 5,
+      "maxErrorPctRecovery": 1,
+      "maxRecoveryP95Ratio": 1.5,
+      "maxRecoverySeconds": 30,
+      "bucketSeconds": 10
+    }
+  }
+}

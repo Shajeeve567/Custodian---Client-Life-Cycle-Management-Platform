@@ -54,7 +54,7 @@ Custodian/
 │   └── src/                # React frontend source
 │
 ├── tests/
-│   ├── jmeter/             # Performance testing
+│   ├── jmeter/             # Load & performance testing (JMeter)
 │   └── selenium/           # End-to-end testing
 │
 └── docs/                   # Project documentation
@@ -166,6 +166,25 @@ Production runs in its own Azure subscription with two App Service plans (Workfl
 
 Deployment secrets are GitHub Secrets (`AZURE_<SERVICE>_APP_NAME` / `_PUBLISH_PROFILE`, and `AZURE_<SERVICE>_STAGING_*` for staging). Application configuration lives in each App Service's settings. See [GitHub Actions CI/CD](docs/ci-cd/github-actions.md).
 
+### Load Testing (manual)
+
+`load-test.yml` runs only from **Actions → Load Test — JMeter (manual) → Run workflow**. It always rebuilds,
+unit-tests and redeploys the four services (reusing `deploy-*.yml`), and runs the JMeter load test only when its
+checkbox is ticked, with a choice of profile: smoke, load, stress or spike. The SLA result appears on the run's
+summary page and the HTML dashboard is kept as an artifact. From a terminal (GitHub CLI):
+
+```bash
+gh workflow run load-test.yml --ref main -f run_load_test=true -f profile=smoke
+```
+
+Locally, the same script CI runs:
+
+```bash
+cd tests/jmeter && ./run.sh smoke --props qa.properties
+```
+
+Setup, profiles, targets and safety rules: [Load & Performance Testing](tests/jmeter/README.md).
+
 The frontend is deployed through Vercel.
 
 ```text
@@ -233,6 +252,7 @@ Detailed project documentation is available in the [`docs/`](docs/) directory.
 | [Vercel Frontend Deployment](docs/deployment/vercel-frontend.md)        | Frontend deployment and configuration       |
 | [GitHub Actions CI/CD](docs/ci-cd/github-actions.md)                    | CI/CD workflows and deployment automation   |
 | [Monitoring](monitoring/README.md)                                      | Prometheus + Grafana setup and `/metrics` protection |
+| [Load & Performance Testing](tests/jmeter/README.md)                    | JMeter smoke / load / stress / spike tests, SLA gate, manual CI workflow (owner: Gunitha Rathnayake) |
 | [Troubleshooting](docs/troubleshooting.md)                              | Common development and deployment issues    |
 
 ## Security

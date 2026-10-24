@@ -35,7 +35,7 @@ public class SlaPerformanceReportBuilderTests
     private static SlaPerformanceReport Build(SlaPerformanceData data) =>
         SlaPerformanceReportBuilder.Build(data, "tenant-a", "owner@example.com");
 
-    private static SlaPerformanceData FourActions() => Data(Totals,
+    internal static SlaPerformanceData FourActions() => Data(Totals,
     [
         Row("A", SlaOutcome.CompletedOnTime),
         Row("B", SlaOutcome.CompletedLate),

@@ -1,0 +1,1586 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Custodian load &amp; performance (staging)">
+      <stringProp name="TestPlan.comments">SE3112 load &amp; performance tests for the Custodian microservices (Identity, Workflow, Documents, Audit) on STAGING only.
+Run headless: jmeter -n -t custodian-load.jmx -q staging.properties -Jprofile=smoke -l results/smoke.jtl -e -o reports/smoke
+Profiles (-Jprofile=): smoke, load, stress, spike.</stringProp>
+      <boolProp name="TestPlan.functional_mode">false</boolProp>
+      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
+      <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+        <collectionProp name="Arguments.arguments">
+          <elementProp name="IDENTITY_URL" elementType="Argument">
+            <stringProp name="Argument.name">IDENTITY_URL</stringProp>
+            <stringProp name="Argument.value">${__P(identityUrl)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="WORKFLOW_URL" elementType="Argument">
+            <stringProp name="Argument.name">WORKFLOW_URL</stringProp>
+            <stringProp name="Argument.value">${__P(workflowUrl)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="DOCUMENTS_URL" elementType="Argument">
+            <stringProp name="Argument.name">DOCUMENTS_URL</stringProp>
+            <stringProp name="Argument.value">${__P(documentsUrl)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="AUDIT_URL" elementType="Argument">
+            <stringProp name="Argument.name">AUDIT_URL</stringProp>
+            <stringProp name="Argument.value">${__P(auditUrl)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="DATA_DIR" elementType="Argument">
+            <stringProp name="Argument.name">DATA_DIR</stringProp>
+            <stringProp name="Argument.value">${__P(dataDir,data)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+        </collectionProp>
+      </elementProp>
+    </TestPlan>
+    <hashTree>
+      <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Request Defaults (client, encoding, timeouts)">
+        <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+          <collectionProp name="Arguments.arguments"/>
+        </elementProp>
+        <stringProp name="HTTPSampler.implementation">HttpClient4</stringProp>
+        <stringProp name="HTTPSampler.contentEncoding">UTF-8</stringProp>
+        <stringProp name="HTTPSampler.connect_timeout">${__P(connectTimeout,10000)}</stringProp>
+        <stringProp name="HTTPSampler.response_timeout">${__P(responseTimeout,30000)}</stringProp>
+      </ConfigTestElement>
+      <hashTree/>
+      <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Headers: Accept JSON (every request)">
+        <collectionProp name="HeaderManager.headers">
+          <elementProp name="" elementType="Header">
+            <stringProp name="Header.name">Accept</stringProp>
+            <stringProp name="Header.value">application/json</stringProp>
+          </elementProp>
+        </collectionProp>
+      </HeaderManager>
+      <hashTree/>
+      <SetupThreadGroup guiclass="SetupThreadGroupGui" testclass="SetupThreadGroup" testname="setUp: staging guard + sign in QA accounts">
+        <stringProp name="TestPlan.comments">Runs before every other thread group. Any failure here (guard, login, workspace) stops the whole test, because load results without a valid token would be meaningless.</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">stoptestnow</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <intProp name="LoopController.loops">-1</intProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">1</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">1</stringProp>
+        <boolProp name="ThreadGroup.scheduler">false</boolProp>
+        <stringProp name="ThreadGroup.duration"/>
+        <stringProp name="ThreadGroup.delay"/>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+      </SetupThreadGroup>
+      <hashTree>
+        <CSVDataSet guiclass="TestBeanGUI" testclass="CSVDataSet" testname="QA accounts (data/accounts.csv, git-ignored)">
+          <stringProp name="filename">${DATA_DIR}/accounts.csv</stringProp>
+          <stringProp name="fileEncoding">UTF-8</stringProp>
+          <stringProp name="variableNames"/>
+          <boolProp name="ignoreFirstLine">false</boolProp>
+          <stringProp name="delimiter">,</stringProp>
+          <boolProp name="quotedData">false</boolProp>
+          <boolProp name="recycle">false</boolProp>
+          <boolProp name="stopThread">true</boolProp>
+          <stringProp name="shareMode">shareMode.all</stringProp>
+        </CSVDataSet>
+        <hashTree/>
+        <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController" testname="Once per test"/>
+        <hashTree>
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Guard: refuse non-staging targets">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="parameters"/>
+            <stringProp name="filename"/>
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="script">// Safety guard. Load tests may only hit Custodian STAGING, the QA target (the four B1 apps re-pointed at QA
+// databases, allowed by exact URL only), or a loopback server (local stack / mock).
+// It runs before any HTTP request; a failure stops the test (setUp: "Stop Test Now" on error).
+// The QA hosts cannot prove which database they use: the QA login (data/accounts.csv) must exist ONLY in the
+// QA databases, so if they are ever pointed back at the real ones, setUp's login fails and nothing is loaded.
+def names = ['identityUrl', 'workflowUrl', 'documentsUrl', 'auditUrl']
+def urls = names.collect { props.getProperty(it, '') }
+def staging = /^https:\/\/staging-[a-z]+-service-[a-z0-9]+\.centralindia-01\.azurewebsites\.net$/
+def loopback = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/
+def qa = [identityUrl : 'https://custodian-identity-prod-gr-cmbqdggxh7gzevgg.southeastasia-01.azurewebsites.net',
+          workflowUrl : 'https://custodian-workflow-prod-gr-fgcecrfea6cue2d6.southeastasia-01.azurewebsites.net',
+          documentsUrl: 'https://custodian-documents-prod-gr-cbc5b5bydgehb3cn.southeastasia-01.azurewebsites.net',
+          auditUrl    : 'https://custodian-audit-prod-gr-fmfbdfcnfse9bbfz.southeastasia-01.azurewebsites.net']
+boolean allowed = urls.every { it ==~ staging } || urls.every { it ==~ loopback } ||
+                  names.every { props.getProperty(it, '') == qa[it] }
+
+props.put('qaAccountCount', '0')   // reset the token slots (properties outlive a run in GUI mode)
+// Every HTTP request in the plan is behind a check of this property, so the plan fails closed:
+// if the guard refuses, or never runs (e.g. missing accounts.csv), nothing is sent.
+props.put('stagingGuard', allowed ? 'passed' : 'refused')
+SampleResult.setResponseData([names, urls].transpose().collect { it.join('=') }.join('\n'), 'UTF-8')
+if (allowed) {
+    SampleResult.setResponseCodeOK()
+    SampleResult.setResponseMessage('All targets are staging, the QA target, or loopback')
+} else {
+    SampleResult.setSuccessful(false)
+    SampleResult.setResponseCode('GUARD')
+    SampleResult.setResponseMessage('Refused: all URLs must be Custodian staging, exactly the QA target, or all loopback')
+    log.error('Staging guard refused the targets: ' + urls)
+}</stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="setUp: build the open-model schedules">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="parameters"/>
+            <stringProp name="filename"/>
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="script">// Builds the Open Model Thread Group schedule from simple properties, so a run is tuned with -J flags
+// instead of hand-writing the schedule language. Stress = a staircase of arrival rates (journeys per second):
+//   -JstressLevels=1,2,4,6,8   -JstressStep=60 (s held at each level)   -JstressRamp=10 (s to climb to it)
+// gives: rate(0/sec) random_arrivals(10 sec) rate(1/sec) random_arrivals(60 sec) rate(1/sec) random_arrivals(10 sec) rate(2/sec) ...
+// Spike = steady baseline, a sudden jump, then back to baseline to watch recovery:
+//   -JspikeBaseRate=1 -JspikePeakRate=8 (journeys/s)  -JspikeBase=60 -JspikeRise=2 -JspikeHold=30 -JspikeRecover=60 (s)
+// A profile that is not selected gets a schedule with rate 0, so its thread group starts no threads.
+// Both schedules end with pause(drain): no new arrivals for -Jdrain s (default 15), so journeys still in flight
+// can finish. Without it JMeter shuts the thread pool when the schedule ends and cuts them off (Socket closed).
+int drain = props.getProperty('drain', '15') as int
+def staircase = { String levelsProp, String levelsDefault, String holdProp, String rampProp -&gt;
+    def levels = props.getProperty(levelsProp, levelsDefault).split(',')*.trim()*.toBigDecimal()
+    int hold = props.getProperty(holdProp, '60') as int
+    int ramp = props.getProperty(rampProp, '10') as int
+    def parts = ['rate(0/sec)']
+    levels.each { l -&gt; parts &lt;&lt; "random_arrivals(${ramp} sec)" &lt;&lt; "rate(${l}/sec)" &lt;&lt; "random_arrivals(${hold} sec)" &lt;&lt; "rate(${l}/sec)" }
+    parts &lt;&lt; "pause(${drain} sec)"
+    parts.join(' ')
+}
+def off = 'rate(0/sec) random_arrivals(1 sec)'
+def profile = props.getProperty('profile', 'smoke')
+def stress = profile == 'stress' ? staircase('stressLevels', '1,2,4,6,8', 'stressStep', 'stressRamp') : off
+props.put('stressSchedule', stress)
+
+def p = { String name, String dflt -&gt; props.getProperty(name, dflt) }
+def base = p('spikeBase', '60') as int, rise = p('spikeRise', '2') as int
+def hold = p('spikeHold', '30') as int, recover = p('spikeRecover', '60') as int
+def b = p('spikeBaseRate', '1'), peak = p('spikePeakRate', '8')
+def spike = profile != 'spike' ? off : [
+    "rate(${b}/sec) random_arrivals(${base} sec)",                       // baseline
+    "rate(${b}/sec) random_arrivals(${rise} sec) rate(${peak}/sec)",     // sudden jump
+    "random_arrivals(${hold} sec) rate(${peak}/sec)",                    // hold the peak
+    "random_arrivals(${rise} sec) rate(${b}/sec)",                       // drop back
+    "random_arrivals(${recover} sec) rate(${b}/sec)",                    // recovery
+    "pause(${drain} sec)"].join(' ')                                     // drain
+props.put('spikeSchedule', spike)
+// Phase boundaries in seconds from the end of setUp: [0, base) baseline, [base, base+2*rise+hold) spike, then recovery
+props.put('spikePhaseEnds', "${base},${base + 2 * rise + hold}" as String)
+
+['stressBreaker', 'spikeBreaker', 'loadStartMs'].each { props.remove(it) }   // leftovers from a previous run (GUI mode)
+SampleResult.setResponseData("stressSchedule=${stress}\nspikeSchedule=${spike}", 'UTF-8')
+log.info('Stress schedule: ' + stress)
+log.info('Spike schedule: ' + spike)</stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+        </hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="Only if the staging guard passed">
+          <stringProp name="IfController.condition">${__jexl3("${__P(stagingGuard,none)}" == "passed")}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="setUp: POST /api/Auth/login">
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{"email":"${email}","password":"${password}"}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${IDENTITY_URL}/api/Auth/login</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Content-Type: JSON">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract loginToken">
+              <stringProp name="JSONPostProcessor.referenceNames">loginToken</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$.token</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert HTTP 200">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="49586">200</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message">Login failed: check data/accounts.csv</stringProp>
+              <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">8</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert $.token present">
+              <stringProp name="JSON_PATH">$.token</stringProp>
+              <stringProp name="EXPECTED_VALUE"/>
+              <boolProp name="JSONVALIDATION">false</boolProp>
+              <boolProp name="EXPECT_NULL">false</boolProp>
+              <boolProp name="INVERT">false</boolProp>
+              <boolProp name="ISREGEX">false</boolProp>
+            </JSONPathAssertion>
+            <hashTree/>
+          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="setUp: GET /api/Tenant/mine">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${IDENTITY_URL}/api/Tenant/mine</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Authorization: login token">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${loginToken}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract tenantId (first workspace)">
+              <stringProp name="JSONPostProcessor.referenceNames">tenantId</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$[0].tenantId</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert HTTP 200">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="49586">200</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">8</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert the account has a workspace">
+              <stringProp name="JSON_PATH">$[0].tenantId</stringProp>
+              <stringProp name="EXPECTED_VALUE"/>
+              <boolProp name="JSONVALIDATION">false</boolProp>
+              <boolProp name="EXPECT_NULL">false</boolProp>
+              <boolProp name="INVERT">false</boolProp>
+              <boolProp name="ISREGEX">false</boolProp>
+            </JSONPathAssertion>
+            <hashTree/>
+          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="setUp: POST /api/Auth/select-workspace/{tenantId}">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${IDENTITY_URL}/api/Auth/select-workspace/${tenantId}</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Authorization: login token">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${loginToken}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract workspaceToken">
+              <stringProp name="JSONPostProcessor.referenceNames">workspaceToken</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$.token</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert HTTP 200">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="49586">200</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">8</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert $.token present">
+              <stringProp name="JSON_PATH">$.token</stringProp>
+              <stringProp name="EXPECTED_VALUE"/>
+              <boolProp name="JSONVALIDATION">false</boolProp>
+              <boolProp name="EXPECT_NULL">false</boolProp>
+              <boolProp name="INVERT">false</boolProp>
+              <boolProp name="ISREGEX">false</boolProp>
+            </JSONPathAssertion>
+            <hashTree/>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Share the workspace token with all thread groups">
+              <stringProp name="scriptLanguage">groovy</stringProp>
+              <stringProp name="parameters"/>
+              <stringProp name="filename"/>
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="script">// Variables (vars) belong to one thread and die with it; the setUp thread ends before the load starts.
+// Properties (props) are global to the JMeter process, so the token is copied into slot qaToken_N.
+def token = vars.get('workspaceToken')
+if (!prev.isSuccessful() || token == null || token == 'NOT_FOUND') {
+    return   // the assertions above already failed this sample, which stops the test
+}
+int n = (props.getProperty('qaAccountCount', '0') as int) + 1
+props.put('qaToken_' + n, token)
+props.put('qaTenant_' + n, vars.get('tenantId'))
+props.put('qaAccountCount', n as String)
+// The last account signed in = the end of setUp = the moment JMeter starts every other thread group.
+// The spike phase clock counts from here (the schedule starts now, not at the first random arrival).
+props.put('loadStartMs', System.currentTimeMillis() as String)
+log.info('Signed in QA account ' + n + ' (tenant ' + vars.get('tenantId') + ')')</stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Smoke - every key endpoint (few users)">
+        <stringProp name="TestPlan.comments">Profile "smoke": does the script and the deployment work at all? Every request runs once per loop. 1 user x 3 loops by default (-JsmokeUsers, -JsmokeLoops). 0 threads (skipped) for any other profile.</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">${__P(smokeLoops,3)}</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${__jexl3("${__P(profile,smoke)}" == "smoke" ? ${__P(smokeUsers,1)} : 0)}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__P(smokeRampUp,1)}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">false</boolProp>
+        <stringProp name="ThreadGroup.duration"/>
+        <stringProp name="ThreadGroup.delay"/>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+      </ThreadGroup>
+      <hashTree>
+        <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="Use a signed-in QA account">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="parameters"/>
+          <stringProp name="filename"/>
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="script">// Runs before every sampler in this group, but only does work once per virtual user:
+// it picks a token slot from setUp (round-robin on the thread number) and keeps it in this thread's vars.
+if (vars.get('token') == null) {
+    int count = props.getProperty('qaAccountCount', '0') as int
+    if (count == 0) {
+        log.error('No signed-in QA account (did setUp fail?)')
+        return
+    }
+    int slot = (ctx.getThreadNum() % count) + 1
+    vars.put('token', props.getProperty('qaToken_' + slot))
+    vars.put('tenantId', props.getProperty('qaTenant_' + slot))
+}</stringProp>
+        </JSR223PreProcessor>
+        <hashTree/>
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Authorization: workspace token">
+          <collectionProp name="HeaderManager.headers">
+            <elementProp name="" elementType="Header">
+              <stringProp name="Header.name">Authorization</stringProp>
+              <stringProp name="Header.value">Bearer ${token}</stringProp>
+            </elementProp>
+          </collectionProp>
+        </HeaderManager>
+        <hashTree/>
+        <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="Think time 0.5-1.5 s">
+          <stringProp name="ConstantTimer.delay">${__P(smokeThinkMin,500)}</stringProp>
+          <stringProp name="RandomTimer.range">${__P(smokeThinkRand,1000)}</stringProp>
+        </UniformRandomTimer>
+        <hashTree/>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If setUp did not pass (guard refused, or no account signed in)">
+          <stringProp name="IfController.condition">${__jexl3("${__P(stagingGuard,none)}" != "passed" || ${__P(qaAccountCount,0)} == 0)}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <TestAction guiclass="TestActionGui" testclass="TestAction" testname="Stop the whole test now (send nothing)">
+            <intProp name="ActionProcessor.action">2</intProp>
+            <intProp name="ActionProcessor.target">2</intProp>
+            <stringProp name="ActionProcessor.duration">0</stringProp>
+          </TestAction>
+          <hashTree/>
+        </hashTree>
+        <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Health checks">
+          <collectionProp name="ModuleController.node_path">
+            <stringProp name="0">Test Plan</stringProp>
+            <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+            <stringProp name="2">Requests (shared by every profile)</stringProp>
+            <stringProp name="3">REQ Health checks</stringProp>
+          </collectionProp>
+        </ModuleController>
+        <hashTree/>
+        <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Engagements list">
+          <collectionProp name="ModuleController.node_path">
+            <stringProp name="0">Test Plan</stringProp>
+            <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+            <stringProp name="2">Requests (shared by every profile)</stringProp>
+            <stringProp name="3">REQ Engagements list</stringProp>
+          </collectionProp>
+        </ModuleController>
+        <hashTree/>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If an engagement was found">
+          <stringProp name="IfController.condition">${__jexl3("${engagementId}" != "NOT_FOUND")}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Engagement detail">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Engagement detail</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Next action">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Next action</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Documents tab">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Documents tab</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Audit trail tab">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Audit trail tab</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+        </hashTree>
+        <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Unread notifications">
+          <collectionProp name="ModuleController.node_path">
+            <stringProp name="0">Test Plan</stringProp>
+            <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+            <stringProp name="2">Requests (shared by every profile)</stringProp>
+            <stringProp name="3">REQ Unread notifications</stringProp>
+          </collectionProp>
+        </ModuleController>
+        <hashTree/>
+        <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Stall queue">
+          <collectionProp name="ModuleController.node_path">
+            <stringProp name="0">Test Plan</stringProp>
+            <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+            <stringProp name="2">Requests (shared by every profile)</stringProp>
+            <stringProp name="3">REQ Stall queue</stringProp>
+          </collectionProp>
+        </ModuleController>
+        <hashTree/>
+        <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ SLA report PDF">
+          <collectionProp name="ModuleController.node_path">
+            <stringProp name="0">Test Plan</stringProp>
+            <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+            <stringProp name="2">Requests (shared by every profile)</stringProp>
+            <stringProp name="3">REQ SLA report PDF</stringProp>
+          </collectionProp>
+        </ModuleController>
+        <hashTree/>
+        <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Negative cases">
+          <collectionProp name="ModuleController.node_path">
+            <stringProp name="0">Test Plan</stringProp>
+            <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+            <stringProp name="2">Requests (shared by every profile)</stringProp>
+            <stringProp name="3">REQ Negative cases</stringProp>
+          </collectionProp>
+        </ModuleController>
+        <hashTree/>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Load - expected concurrency (weighted staff journey)">
+        <stringProp name="TestPlan.comments">Profile "load": can staging meet its targets at the expected number of concurrent staff? Closed model: loadUsers virtual users (default 20) start over loadRampUp s (60), then hold for loadHold s (180). Duration = ramp-up + hold. Each iteration is one staff journey; Throughput Controllers set the mix.</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">-1</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${__jexl3("${__P(profile,smoke)}" == "load" ? ${__P(loadUsers,20)} : 0)}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__P(loadRampUp,60)}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${__jexl3(${__P(loadRampUp,60)} + ${__P(loadHold,180)})}</stringProp>
+        <stringProp name="ThreadGroup.delay"/>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+      </ThreadGroup>
+      <hashTree>
+        <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="Use a signed-in QA account">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="parameters"/>
+          <stringProp name="filename"/>
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="script">// Runs before every sampler in this group, but only does work once per virtual user:
+// it picks a token slot from setUp (round-robin on the thread number) and keeps it in this thread's vars.
+if (vars.get('token') == null) {
+    int count = props.getProperty('qaAccountCount', '0') as int
+    if (count == 0) {
+        log.error('No signed-in QA account (did setUp fail?)')
+        return
+    }
+    int slot = (ctx.getThreadNum() % count) + 1
+    vars.put('token', props.getProperty('qaToken_' + slot))
+    vars.put('tenantId', props.getProperty('qaTenant_' + slot))
+}</stringProp>
+        </JSR223PreProcessor>
+        <hashTree/>
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Authorization: workspace token">
+          <collectionProp name="HeaderManager.headers">
+            <elementProp name="" elementType="Header">
+              <stringProp name="Header.name">Authorization</stringProp>
+              <stringProp name="Header.value">Bearer ${token}</stringProp>
+            </elementProp>
+          </collectionProp>
+        </HeaderManager>
+        <hashTree/>
+        <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="Think time 1-3 s (thinkMin + 0..thinkRand ms)">
+          <stringProp name="ConstantTimer.delay">${__P(thinkMin,1000)}</stringProp>
+          <stringProp name="RandomTimer.range">${__P(thinkRand,2000)}</stringProp>
+        </UniformRandomTimer>
+        <hashTree/>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If setUp did not pass (guard refused, or no account signed in)">
+          <stringProp name="IfController.condition">${__jexl3("${__P(stagingGuard,none)}" != "passed" || ${__P(qaAccountCount,0)} == 0)}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <TestAction guiclass="TestActionGui" testclass="TestAction" testname="Stop the whole test now (send nothing)">
+            <intProp name="ActionProcessor.action">2</intProp>
+            <intProp name="ActionProcessor.target">2</intProp>
+            <stringProp name="ActionProcessor.duration">0</stringProp>
+          </TestAction>
+          <hashTree/>
+        </hashTree>
+        <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Engagements list">
+          <collectionProp name="ModuleController.node_path">
+            <stringProp name="0">Test Plan</stringProp>
+            <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+            <stringProp name="2">Requests (shared by every profile)</stringProp>
+            <stringProp name="3">REQ Engagements list</stringProp>
+          </collectionProp>
+        </ModuleController>
+        <hashTree/>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If an engagement was found">
+          <stringProp name="IfController.condition">${__jexl3("${engagementId}" != "NOT_FOUND")}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Engagement detail">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Engagement detail</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Next action">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Next action</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+          <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="50% of journeys: Documents tab">
+            <intProp name="ThroughputController.style">1</intProp>
+            <boolProp name="ThroughputController.perThread">false</boolProp>
+            <intProp name="ThroughputController.maxThroughput">1</intProp>
+            <stringProp name="ThroughputController.percentThroughput">${__P(pctDocuments,50)}</stringProp>
+          </ThroughputController>
+          <hashTree>
+            <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Documents tab">
+              <collectionProp name="ModuleController.node_path">
+                <stringProp name="0">Test Plan</stringProp>
+                <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+                <stringProp name="2">Requests (shared by every profile)</stringProp>
+                <stringProp name="3">REQ Documents tab</stringProp>
+              </collectionProp>
+            </ModuleController>
+            <hashTree/>
+          </hashTree>
+          <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="30% of journeys: Audit trail tab">
+            <intProp name="ThroughputController.style">1</intProp>
+            <boolProp name="ThroughputController.perThread">false</boolProp>
+            <intProp name="ThroughputController.maxThroughput">1</intProp>
+            <stringProp name="ThroughputController.percentThroughput">${__P(pctAudit,30)}</stringProp>
+          </ThroughputController>
+          <hashTree>
+            <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Audit trail tab">
+              <collectionProp name="ModuleController.node_path">
+                <stringProp name="0">Test Plan</stringProp>
+                <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+                <stringProp name="2">Requests (shared by every profile)</stringProp>
+                <stringProp name="3">REQ Audit trail tab</stringProp>
+              </collectionProp>
+            </ModuleController>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Unread notifications">
+          <collectionProp name="ModuleController.node_path">
+            <stringProp name="0">Test Plan</stringProp>
+            <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+            <stringProp name="2">Requests (shared by every profile)</stringProp>
+            <stringProp name="3">REQ Unread notifications</stringProp>
+          </collectionProp>
+        </ModuleController>
+        <hashTree/>
+        <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="20% of journeys: Stall queue">
+          <intProp name="ThroughputController.style">1</intProp>
+          <boolProp name="ThroughputController.perThread">false</boolProp>
+          <intProp name="ThroughputController.maxThroughput">1</intProp>
+          <stringProp name="ThroughputController.percentThroughput">${__P(pctStall,20)}</stringProp>
+        </ThroughputController>
+        <hashTree>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Stall queue">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Stall queue</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+        </hashTree>
+        <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="5% of journeys: SLA report PDF">
+          <intProp name="ThroughputController.style">1</intProp>
+          <boolProp name="ThroughputController.perThread">false</boolProp>
+          <intProp name="ThroughputController.maxThroughput">1</intProp>
+          <stringProp name="ThroughputController.percentThroughput">${__P(pctReport,5)}</stringProp>
+        </ThroughputController>
+        <hashTree>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ SLA report PDF">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ SLA report PDF</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+        </hashTree>
+        <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="5% of journeys: negative cases">
+          <intProp name="ThroughputController.style">1</intProp>
+          <boolProp name="ThroughputController.perThread">false</boolProp>
+          <intProp name="ThroughputController.maxThroughput">1</intProp>
+          <stringProp name="ThroughputController.percentThroughput">${__P(pctNegative,5)}</stringProp>
+        </ThroughputController>
+        <hashTree>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Negative cases">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Negative cases</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+        </hashTree>
+      </hashTree>
+      <OpenModelThreadGroup guiclass="OpenModelThreadGroupGui" testclass="OpenModelThreadGroup" testname="Stress - staircase of arrival rates (open model)">
+        <stringProp name="TestPlan.comments">Profile "stress": where does staging break, and what fails first? Open model: new journeys ARRIVE at a set rate whether or not the server keeps up. The rate climbs in steps (setUp builds the schedule from -JstressLevels, -JstressStep, -JstressRamp). A circuit breaker stops the run when errors pass -JstressAbortErrorPct.</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="OpenModelThreadGroupController"/>
+        <stringProp name="OpenModelThreadGroup.schedule">${__P(stressSchedule,rate(0/sec) random_arrivals(1 sec))}</stringProp>
+        <stringProp name="OpenModelThreadGroup.random_seed">${__P(randomSeed,0)}</stringProp>
+      </OpenModelThreadGroup>
+      <hashTree>
+        <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="Use a signed-in QA account">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="parameters"/>
+          <stringProp name="filename"/>
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="script">// Runs before every sampler in this group, but only does work once per virtual user:
+// it picks a token slot from setUp (round-robin on the thread number) and keeps it in this thread's vars.
+if (vars.get('token') == null) {
+    int count = props.getProperty('qaAccountCount', '0') as int
+    if (count == 0) {
+        log.error('No signed-in QA account (did setUp fail?)')
+        return
+    }
+    int slot = (ctx.getThreadNum() % count) + 1
+    vars.put('token', props.getProperty('qaToken_' + slot))
+    vars.put('tenantId', props.getProperty('qaTenant_' + slot))
+}</stringProp>
+        </JSR223PreProcessor>
+        <hashTree/>
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Authorization: workspace token">
+          <collectionProp name="HeaderManager.headers">
+            <elementProp name="" elementType="Header">
+              <stringProp name="Header.name">Authorization</stringProp>
+              <stringProp name="Header.value">Bearer ${token}</stringProp>
+            </elementProp>
+          </collectionProp>
+        </HeaderManager>
+        <hashTree/>
+        <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="Think time 0.5-1.5 s">
+          <stringProp name="ConstantTimer.delay">${__P(stressThinkMin,500)}</stringProp>
+          <stringProp name="RandomTimer.range">${__P(stressThinkRand,1000)}</stringProp>
+        </UniformRandomTimer>
+        <hashTree/>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If setUp did not pass (guard refused, or no account signed in)">
+          <stringProp name="IfController.condition">${__jexl3("${__P(stagingGuard,none)}" != "passed" || ${__P(qaAccountCount,0)} == 0)}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <TestAction guiclass="TestActionGui" testclass="TestAction" testname="Stop the whole test now (send nothing)">
+            <intProp name="ActionProcessor.action">2</intProp>
+            <intProp name="ActionProcessor.target">2</intProp>
+            <stringProp name="ActionProcessor.duration">0</stringProp>
+          </TestAction>
+          <hashTree/>
+        </hashTree>
+        <JSR223Listener guiclass="TestBeanGUI" testclass="JSR223Listener" testname="Circuit breaker (stop when the error rate is too high)">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="parameters">stress 20</stringProp>
+          <stringProp name="filename"/>
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="script">// Circuit breaker, shared by Stress and Spike. Parameters: &lt;prefix&gt; &lt;default max error %&gt;, e.g. "stress 20".
+// Every &lt;prefix&gt;AbortWindow samples (default 100) it logs the error rate and active threads; if the window's
+// error rate is above &lt;prefix&gt;AbortErrorPct, it stops the test immediately (Stop Now):
+// a graceful stop does not end the Open Model arrival scheduler, so JMeter would never exit.
+// Counters live in a property (shared by all threads) as an AtomicLongArray [samples, errors] for thread safety.
+import java.util.concurrent.atomic.AtomicLongArray
+import org.apache.jmeter.threads.JMeterContextService
+String prefix = args[0]
+int window = props.getProperty(prefix + 'AbortWindow', '100') as int
+double maxErrPct = props.getProperty(prefix + 'AbortErrorPct', args[1]) as double
+def c = props.computeIfAbsent(prefix + 'Breaker', { k -&gt; new AtomicLongArray(2) })
+long n = c.incrementAndGet(0)
+long errors = sampleResult.isSuccessful() ? c.get(1) : c.incrementAndGet(1)
+if (n == window) {
+    c.set(0, 0); c.set(1, 0)
+    double pct = 100.0 * errors / n
+    int active = JMeterContextService.getNumberOfThreads()
+    String phase = vars.get('spikePhase') ? ' [' + vars.get('spikePhase') + ']' : ''
+    log.info(String.format('%s window%s: %d samples, %.1f%% errors, %d active threads', prefix, phase, n, pct, active))
+    if (pct &gt; maxErrPct) {
+        log.error(String.format('Circuit breaker OPEN (%s): %.1f%% errors &gt; %.1f%% with %d active threads - stopping the test', prefix, pct, maxErrPct, active))
+        props.put(prefix + 'BreakerTripped', String.format('%.1f%% errors at %d active threads', pct, active))
+        ctx.getEngine().stopTest(true)
+    }
+}</stringProp>
+        </JSR223Listener>
+        <hashTree/>
+        <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Engagements list">
+          <collectionProp name="ModuleController.node_path">
+            <stringProp name="0">Test Plan</stringProp>
+            <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+            <stringProp name="2">Requests (shared by every profile)</stringProp>
+            <stringProp name="3">REQ Engagements list</stringProp>
+          </collectionProp>
+        </ModuleController>
+        <hashTree/>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If an engagement was found">
+          <stringProp name="IfController.condition">${__jexl3("${engagementId}" != "NOT_FOUND")}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Engagement detail">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Engagement detail</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Next action">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Next action</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+          <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="50% of journeys: Documents tab">
+            <intProp name="ThroughputController.style">1</intProp>
+            <boolProp name="ThroughputController.perThread">false</boolProp>
+            <intProp name="ThroughputController.maxThroughput">1</intProp>
+            <stringProp name="ThroughputController.percentThroughput">${__P(pctDocuments,50)}</stringProp>
+          </ThroughputController>
+          <hashTree>
+            <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Documents tab">
+              <collectionProp name="ModuleController.node_path">
+                <stringProp name="0">Test Plan</stringProp>
+                <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+                <stringProp name="2">Requests (shared by every profile)</stringProp>
+                <stringProp name="3">REQ Documents tab</stringProp>
+              </collectionProp>
+            </ModuleController>
+            <hashTree/>
+          </hashTree>
+          <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="30% of journeys: Audit trail tab">
+            <intProp name="ThroughputController.style">1</intProp>
+            <boolProp name="ThroughputController.perThread">false</boolProp>
+            <intProp name="ThroughputController.maxThroughput">1</intProp>
+            <stringProp name="ThroughputController.percentThroughput">${__P(pctAudit,30)}</stringProp>
+          </ThroughputController>
+          <hashTree>
+            <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Audit trail tab">
+              <collectionProp name="ModuleController.node_path">
+                <stringProp name="0">Test Plan</stringProp>
+                <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+                <stringProp name="2">Requests (shared by every profile)</stringProp>
+                <stringProp name="3">REQ Audit trail tab</stringProp>
+              </collectionProp>
+            </ModuleController>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Unread notifications">
+          <collectionProp name="ModuleController.node_path">
+            <stringProp name="0">Test Plan</stringProp>
+            <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+            <stringProp name="2">Requests (shared by every profile)</stringProp>
+            <stringProp name="3">REQ Unread notifications</stringProp>
+          </collectionProp>
+        </ModuleController>
+        <hashTree/>
+        <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="20% of journeys: Stall queue">
+          <intProp name="ThroughputController.style">1</intProp>
+          <boolProp name="ThroughputController.perThread">false</boolProp>
+          <intProp name="ThroughputController.maxThroughput">1</intProp>
+          <stringProp name="ThroughputController.percentThroughput">${__P(pctStall,20)}</stringProp>
+        </ThroughputController>
+        <hashTree>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Stall queue">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Stall queue</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+        </hashTree>
+        <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="5% of journeys: SLA report PDF">
+          <intProp name="ThroughputController.style">1</intProp>
+          <boolProp name="ThroughputController.perThread">false</boolProp>
+          <intProp name="ThroughputController.maxThroughput">1</intProp>
+          <stringProp name="ThroughputController.percentThroughput">${__P(pctReport,5)}</stringProp>
+        </ThroughputController>
+        <hashTree>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ SLA report PDF">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ SLA report PDF</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+        </hashTree>
+      </hashTree>
+      <OpenModelThreadGroup guiclass="OpenModelThreadGroupGui" testclass="OpenModelThreadGroup" testname="Spike - sudden burst, then recovery (open model)">
+        <stringProp name="TestPlan.comments">Profile "spike": does staging survive a sudden burst and recover afterwards? Open model: baseline -JspikeBaseRate journeys/s for -JspikeBase s, jump to -JspikePeakRate within -JspikeRise s, hold -JspikeHold s, drop back and watch -JspikeRecover s. Samples are tagged baseline / spike / recovery (column spikePhase).</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="OpenModelThreadGroupController"/>
+        <stringProp name="OpenModelThreadGroup.schedule">${__P(spikeSchedule,rate(0/sec) random_arrivals(1 sec))}</stringProp>
+        <stringProp name="OpenModelThreadGroup.random_seed">${__P(randomSeed,0)}</stringProp>
+      </OpenModelThreadGroup>
+      <hashTree>
+        <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="Tag the spike phase (baseline / spike / recovery)">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="parameters"/>
+          <stringProp name="filename"/>
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="script">// Tags every spike sample with its phase in the variable spikePhase: baseline, spike or recovery.
+// With sample_variables=spikePhase (report.properties) JMeter writes it as an extra .jtl column, so the
+// analysis can compare response times before, during and after the spike (did the system recover?).
+// The clock starts when setUp finished (property loadStartMs), which is when the spike schedule starts.
+long start = props.getProperty('loadStartMs', System.currentTimeMillis() as String) as long
+def ends = props.getProperty('spikePhaseEnds', '60,94').split(',')*.toInteger()
+long sec = (System.currentTimeMillis() - start).intdiv(1000)
+vars.put('spikePhase', sec &lt; ends[0] ? 'baseline' : sec &lt; ends[1] ? 'spike' : 'recovery')</stringProp>
+        </JSR223PreProcessor>
+        <hashTree/>
+        <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="Use a signed-in QA account">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="parameters"/>
+          <stringProp name="filename"/>
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="script">// Runs before every sampler in this group, but only does work once per virtual user:
+// it picks a token slot from setUp (round-robin on the thread number) and keeps it in this thread's vars.
+if (vars.get('token') == null) {
+    int count = props.getProperty('qaAccountCount', '0') as int
+    if (count == 0) {
+        log.error('No signed-in QA account (did setUp fail?)')
+        return
+    }
+    int slot = (ctx.getThreadNum() % count) + 1
+    vars.put('token', props.getProperty('qaToken_' + slot))
+    vars.put('tenantId', props.getProperty('qaTenant_' + slot))
+}</stringProp>
+        </JSR223PreProcessor>
+        <hashTree/>
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Authorization: workspace token">
+          <collectionProp name="HeaderManager.headers">
+            <elementProp name="" elementType="Header">
+              <stringProp name="Header.name">Authorization</stringProp>
+              <stringProp name="Header.value">Bearer ${token}</stringProp>
+            </elementProp>
+          </collectionProp>
+        </HeaderManager>
+        <hashTree/>
+        <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="Think time 0.5-1.5 s">
+          <stringProp name="ConstantTimer.delay">${__P(spikeThinkMin,500)}</stringProp>
+          <stringProp name="RandomTimer.range">${__P(spikeThinkRand,1000)}</stringProp>
+        </UniformRandomTimer>
+        <hashTree/>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If setUp did not pass (guard refused, or no account signed in)">
+          <stringProp name="IfController.condition">${__jexl3("${__P(stagingGuard,none)}" != "passed" || ${__P(qaAccountCount,0)} == 0)}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <TestAction guiclass="TestActionGui" testclass="TestAction" testname="Stop the whole test now (send nothing)">
+            <intProp name="ActionProcessor.action">2</intProp>
+            <intProp name="ActionProcessor.target">2</intProp>
+            <stringProp name="ActionProcessor.duration">0</stringProp>
+          </TestAction>
+          <hashTree/>
+        </hashTree>
+        <JSR223Listener guiclass="TestBeanGUI" testclass="JSR223Listener" testname="Circuit breaker (stop when the error rate is too high)">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="parameters">spike 50</stringProp>
+          <stringProp name="filename"/>
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="script">// Circuit breaker, shared by Stress and Spike. Parameters: &lt;prefix&gt; &lt;default max error %&gt;, e.g. "stress 20".
+// Every &lt;prefix&gt;AbortWindow samples (default 100) it logs the error rate and active threads; if the window's
+// error rate is above &lt;prefix&gt;AbortErrorPct, it stops the test immediately (Stop Now):
+// a graceful stop does not end the Open Model arrival scheduler, so JMeter would never exit.
+// Counters live in a property (shared by all threads) as an AtomicLongArray [samples, errors] for thread safety.
+import java.util.concurrent.atomic.AtomicLongArray
+import org.apache.jmeter.threads.JMeterContextService
+String prefix = args[0]
+int window = props.getProperty(prefix + 'AbortWindow', '100') as int
+double maxErrPct = props.getProperty(prefix + 'AbortErrorPct', args[1]) as double
+def c = props.computeIfAbsent(prefix + 'Breaker', { k -&gt; new AtomicLongArray(2) })
+long n = c.incrementAndGet(0)
+long errors = sampleResult.isSuccessful() ? c.get(1) : c.incrementAndGet(1)
+if (n == window) {
+    c.set(0, 0); c.set(1, 0)
+    double pct = 100.0 * errors / n
+    int active = JMeterContextService.getNumberOfThreads()
+    String phase = vars.get('spikePhase') ? ' [' + vars.get('spikePhase') + ']' : ''
+    log.info(String.format('%s window%s: %d samples, %.1f%% errors, %d active threads', prefix, phase, n, pct, active))
+    if (pct &gt; maxErrPct) {
+        log.error(String.format('Circuit breaker OPEN (%s): %.1f%% errors &gt; %.1f%% with %d active threads - stopping the test', prefix, pct, maxErrPct, active))
+        props.put(prefix + 'BreakerTripped', String.format('%.1f%% errors at %d active threads', pct, active))
+        ctx.getEngine().stopTest(true)
+    }
+}</stringProp>
+        </JSR223Listener>
+        <hashTree/>
+        <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Engagements list">
+          <collectionProp name="ModuleController.node_path">
+            <stringProp name="0">Test Plan</stringProp>
+            <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+            <stringProp name="2">Requests (shared by every profile)</stringProp>
+            <stringProp name="3">REQ Engagements list</stringProp>
+          </collectionProp>
+        </ModuleController>
+        <hashTree/>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If an engagement was found">
+          <stringProp name="IfController.condition">${__jexl3("${engagementId}" != "NOT_FOUND")}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Engagement detail">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Engagement detail</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Next action">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Next action</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+          <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="50% of journeys: Documents tab">
+            <intProp name="ThroughputController.style">1</intProp>
+            <boolProp name="ThroughputController.perThread">false</boolProp>
+            <intProp name="ThroughputController.maxThroughput">1</intProp>
+            <stringProp name="ThroughputController.percentThroughput">${__P(pctDocuments,50)}</stringProp>
+          </ThroughputController>
+          <hashTree>
+            <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Documents tab">
+              <collectionProp name="ModuleController.node_path">
+                <stringProp name="0">Test Plan</stringProp>
+                <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+                <stringProp name="2">Requests (shared by every profile)</stringProp>
+                <stringProp name="3">REQ Documents tab</stringProp>
+              </collectionProp>
+            </ModuleController>
+            <hashTree/>
+          </hashTree>
+          <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="30% of journeys: Audit trail tab">
+            <intProp name="ThroughputController.style">1</intProp>
+            <boolProp name="ThroughputController.perThread">false</boolProp>
+            <intProp name="ThroughputController.maxThroughput">1</intProp>
+            <stringProp name="ThroughputController.percentThroughput">${__P(pctAudit,30)}</stringProp>
+          </ThroughputController>
+          <hashTree>
+            <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Audit trail tab">
+              <collectionProp name="ModuleController.node_path">
+                <stringProp name="0">Test Plan</stringProp>
+                <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+                <stringProp name="2">Requests (shared by every profile)</stringProp>
+                <stringProp name="3">REQ Audit trail tab</stringProp>
+              </collectionProp>
+            </ModuleController>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Unread notifications">
+          <collectionProp name="ModuleController.node_path">
+            <stringProp name="0">Test Plan</stringProp>
+            <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+            <stringProp name="2">Requests (shared by every profile)</stringProp>
+            <stringProp name="3">REQ Unread notifications</stringProp>
+          </collectionProp>
+        </ModuleController>
+        <hashTree/>
+        <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="20% of journeys: Stall queue">
+          <intProp name="ThroughputController.style">1</intProp>
+          <boolProp name="ThroughputController.perThread">false</boolProp>
+          <intProp name="ThroughputController.maxThroughput">1</intProp>
+          <stringProp name="ThroughputController.percentThroughput">${__P(pctStall,20)}</stringProp>
+        </ThroughputController>
+        <hashTree>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ Stall queue">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ Stall queue</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+        </hashTree>
+        <ThroughputController guiclass="ThroughputControllerGui" testclass="ThroughputController" testname="5% of journeys: SLA report PDF">
+          <intProp name="ThroughputController.style">1</intProp>
+          <boolProp name="ThroughputController.perThread">false</boolProp>
+          <intProp name="ThroughputController.maxThroughput">1</intProp>
+          <stringProp name="ThroughputController.percentThroughput">${__P(pctReport,5)}</stringProp>
+        </ThroughputController>
+        <hashTree>
+          <ModuleController guiclass="ModuleControllerGui" testclass="ModuleController" testname="Run: REQ SLA report PDF">
+            <collectionProp name="ModuleController.node_path">
+              <stringProp name="0">Test Plan</stringProp>
+              <stringProp name="1">Custodian load &amp; performance (staging)</stringProp>
+              <stringProp name="2">Requests (shared by every profile)</stringProp>
+              <stringProp name="3">REQ SLA report PDF</stringProp>
+            </collectionProp>
+          </ModuleController>
+          <hashTree/>
+        </hashTree>
+      </hashTree>
+      <TestFragmentController guiclass="TestFragmentControllerGui" testclass="TestFragmentController" testname="Requests (shared by every profile)"/>
+      <hashTree>
+        <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ Health checks"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Workflow: GET / (health)">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${WORKFLOW_URL}/</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert body says Healthy">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">Healthy</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">16</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Documents: GET / (health)">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${DOCUMENTS_URL}/</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert body says Healthy">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">Healthy</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">16</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Audit: GET / (health)">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${AUDIT_URL}/</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert body says Healthy">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">Healthy</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">16</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ Engagements list"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Workflow: GET /api/Engagements">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${WORKFLOW_URL}/api/Engagements</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract a random engagementId">
+              <stringProp name="JSONPostProcessor.referenceNames">engagementId</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$[*].engagementId</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">0</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert HTTP 200">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">200</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">8</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+            <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert the tenant has an engagement">
+              <stringProp name="JSON_PATH">$[0].engagementId</stringProp>
+              <stringProp name="EXPECTED_VALUE"/>
+              <boolProp name="JSONVALIDATION">false</boolProp>
+              <boolProp name="EXPECT_NULL">false</boolProp>
+              <boolProp name="INVERT">false</boolProp>
+              <boolProp name="ISREGEX">false</boolProp>
+            </JSONPathAssertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ Engagement detail"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Workflow: GET /api/Engagements/{id}">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${WORKFLOW_URL}/api/Engagements/${engagementId}</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert HTTP 200">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">200</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">8</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+            <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert $.engagementId is the requested id">
+              <stringProp name="JSON_PATH">$.engagementId</stringProp>
+              <stringProp name="EXPECTED_VALUE">${engagementId}</stringProp>
+              <boolProp name="JSONVALIDATION">true</boolProp>
+              <boolProp name="EXPECT_NULL">false</boolProp>
+              <boolProp name="INVERT">false</boolProp>
+              <boolProp name="ISREGEX">false</boolProp>
+            </JSONPathAssertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ Next action"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Workflow: GET /api/Engagements/{id}/next-action">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${WORKFLOW_URL}/api/Engagements/${engagementId}/next-action</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert HTTP 200">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">200</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">8</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+            <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert $.engagementId is the requested id">
+              <stringProp name="JSON_PATH">$.engagementId</stringProp>
+              <stringProp name="EXPECTED_VALUE">${engagementId}</stringProp>
+              <boolProp name="JSONVALIDATION">true</boolProp>
+              <boolProp name="EXPECT_NULL">false</boolProp>
+              <boolProp name="INVERT">false</boolProp>
+              <boolProp name="ISREGEX">false</boolProp>
+            </JSONPathAssertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ Documents tab"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Documents: GET /api/engagements/{id}/documents">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${DOCUMENTS_URL}/api/engagements/${engagementId}/documents</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert HTTP 200">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">200</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">8</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+            <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert body is JSON">
+              <stringProp name="JSON_PATH">$</stringProp>
+              <stringProp name="EXPECTED_VALUE"/>
+              <boolProp name="JSONVALIDATION">false</boolProp>
+              <boolProp name="EXPECT_NULL">false</boolProp>
+              <boolProp name="INVERT">false</boolProp>
+              <boolProp name="ISREGEX">false</boolProp>
+            </JSONPathAssertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ Audit trail tab"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Audit: GET /api/audit-events/engagement/{id}">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${AUDIT_URL}/api/audit-events/engagement/${engagementId}</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert HTTP 200">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">200</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">8</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+            <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert body is JSON">
+              <stringProp name="JSON_PATH">$</stringProp>
+              <stringProp name="EXPECTED_VALUE"/>
+              <boolProp name="JSONVALIDATION">false</boolProp>
+              <boolProp name="EXPECT_NULL">false</boolProp>
+              <boolProp name="INVERT">false</boolProp>
+              <boolProp name="ISREGEX">false</boolProp>
+            </JSONPathAssertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ Unread notifications"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Identity: GET /api/Notifications/unread-count">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${IDENTITY_URL}/api/Notifications/unread-count</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert HTTP 200">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">200</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">8</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+            <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert $.unreadCount present">
+              <stringProp name="JSON_PATH">$.unreadCount</stringProp>
+              <stringProp name="EXPECTED_VALUE"/>
+              <boolProp name="JSONVALIDATION">false</boolProp>
+              <boolProp name="EXPECT_NULL">false</boolProp>
+              <boolProp name="INVERT">false</boolProp>
+              <boolProp name="ISREGEX">false</boolProp>
+            </JSONPathAssertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ Stall queue"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Workflow: GET /api/stall-queue">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${WORKFLOW_URL}/api/stall-queue</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert HTTP 200">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">200</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">8</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+            <JSONPathAssertion guiclass="JSONPathAssertionGui" testclass="JSONPathAssertion" testname="Assert body is JSON">
+              <stringProp name="JSON_PATH">$</stringProp>
+              <stringProp name="EXPECTED_VALUE"/>
+              <boolProp name="JSONVALIDATION">false</boolProp>
+              <boolProp name="EXPECT_NULL">false</boolProp>
+              <boolProp name="INVERT">false</boolProp>
+              <boolProp name="ISREGEX">false</boolProp>
+            </JSONPathAssertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ SLA report PDF"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Workflow: GET /api/reports/sla-performance (PDF)">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${WORKFLOW_URL}/api/reports/sla-performance?format=pdf</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Accept: PDF">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Accept</stringProp>
+                  <stringProp name="Header.value">application/pdf</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert HTTP 200">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">200</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">8</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxReportMs (default 10 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxReportMs,10000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert Content-Type is application/pdf">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">application/pdf</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_headers</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">16</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert body starts like a PDF (%PDF)">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">%PDF</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">16</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <SizeAssertion guiclass="SizeAssertionGui" testclass="SizeAssertion" testname="Assert PDF is bigger than 1 KB">
+              <stringProp name="Assertion.test_field">SizeAssertion.response_data</stringProp>
+              <stringProp name="SizeAssertion.size">1024</stringProp>
+              <intProp name="SizeAssertion.operator">3</intProp>
+            </SizeAssertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="REQ Negative cases"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Negative: GET /api/Engagements/{unknown id} -&gt; 404">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${WORKFLOW_URL}/api/Engagements/${__UUID()}</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert HTTP 404">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">404</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+              <boolProp name="Assertion.assume_success">true</boolProp>
+              <intProp name="Assertion.test_type">8</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Negative: GET /api/Engagements with an invalid token -&gt; 401">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${WORKFLOW_URL}/api/Engagements</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Authorization: invalid token (overrides the group header)">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer not-a-valid-jwt</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert HTTP 401">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">401</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"/>
+              <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+              <boolProp name="Assertion.assume_success">true</boolProp>
+              <intProp name="Assertion.test_type">8</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Fail if slower than maxResponseMs (default 3 s)">
+              <stringProp name="DurationAssertion.duration">${__P(maxResponseMs,3000)}</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+      </hashTree>
+    </hashTree>
+  </hashTree>
+</jmeterTestPlan>

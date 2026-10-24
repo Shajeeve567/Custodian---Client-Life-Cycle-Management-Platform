@@ -2,6 +2,8 @@ name: Deploy — Document Service
 
 on:
   workflow_dispatch:
+  # Lets load-test.yml reuse this job (deploy, then optionally load-test) instead of copying it.
+  workflow_call:
   push:
     branches: [main]
     paths:

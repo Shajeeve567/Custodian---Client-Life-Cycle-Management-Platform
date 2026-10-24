@@ -418,4 +418,336 @@ public class EventToClientSafeMessageMapperTests
     }
 
     #endregion
+
+    #region Event name aliases
+
+    // Every spelling listed in a case label must route to that case, not fall through to "not sent".
+    [Theory]
+    [InlineData("engagement.created", "Welcome! Your onboarding engagement has started")]
+    [InlineData("  ENGAGEMENT.STARTED  ", "Welcome! Your onboarding engagement has started")]
+    [InlineData("document.requested", "Document Requested: New Requirement")]
+    [InlineData("requirementrequested", "Document Requested: New Requirement")]
+    [InlineData("approval.attached", "Approval Required: Engagement Step")]
+    [InlineData("approval.requested", "Approval Required: Engagement Step")]
+    [InlineData("conditionattached", "Approval Required: Engagement Step")]
+    [InlineData("engagement.ready", "Engagement Update: Progressing to Next Stage")]
+    public void Map_EventNameAlias_RoutesToClientFacingMessage(string eventType, string expectedSubject)
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope(eventType, new { clientId = Guid.NewGuid() }));
+
+        Assert.NotNull(result);
+        Assert.Equal(expectedSubject, result!.Subject);
+    }
+
+    #endregion
+
+    #region Field fallbacks and defaults
+
+    [Theory]
+    [InlineData("title")]
+    [InlineData("fileName")]
+    public void Map_DocumentVerified_FallsBackToAlternativeNameFields(string field)
+    {
+        var payload = new Dictionary<string, object> { ["clientId"] = Guid.NewGuid(), [field] = "Lease.pdf" };
+
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("document.verified", payload));
+
+        Assert.Equal("Document Verified: Lease.pdf", result!.Subject);
+    }
+
+    [Fact]
+    public void Map_DocumentVerified_WithoutName_UsesDefault()
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("document.verified", new { clientId = Guid.NewGuid() }));
+
+        Assert.Equal("Document Verified: Your document", result!.Subject);
+        Assert.Equal("Great news! Your submitted document 'Your document' has been successfully reviewed and verified.", result.Message);
+    }
+
+    [Fact]
+    public void Map_DocumentVerified_NonStringNameField_IsIgnored()
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("document.verified", new { clientId = Guid.NewGuid(), documentName = 42 }));
+
+        Assert.Equal("Document Verified: Your document", result!.Subject);
+    }
+
+    [Fact]
+    public void Map_DocumentRejected_WithoutNameOrReason_UsesDefaults()
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("document.rejected", new { clientId = Guid.NewGuid() }));
+
+        Assert.Equal("Action Required: Document Update Needed", result!.Subject);
+        Assert.Equal("Your uploaded document 'document' requires revision: Please re-upload a clear copy.", result.Message);
+    }
+
+    // Each keyword on its own must trigger sanitizing - not only all three together.
+    [Theory]
+    [InlineData("NullReferenceException at line 4")]
+    [InlineData("Sql timeout")]
+    [InlineData("Stack overflow")]
+    public void Map_DocumentRejected_AnySingleTechnicalKeyword_IsSanitized(string reason)
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("document.rejected", new { clientId = Guid.NewGuid(), reason }));
+
+        Assert.EndsWith("The document does not meet compliance standards. Please re-upload a clean, valid copy.", result!.Message);
+    }
+
+    [Theory]
+    [InlineData("title")]
+    [InlineData("requirementType")]
+    [InlineData("documentType")]
+    public void Map_RequirementRequested_FallsBackToAlternativeNameFields(string field)
+    {
+        var payload = new Dictionary<string, object> { ["clientId"] = Guid.NewGuid(), [field] = "Tax Form" };
+
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("requirement.requested", payload));
+
+        Assert.Equal("Document Requested: Tax Form", result!.Subject);
+    }
+
+    [Fact]
+    public void Map_RequirementRequested_WithoutName_UsesDefaults()
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("requirement.requested", new { clientId = Guid.NewGuid(), assignedToRole = "client" }));
+
+        Assert.Equal("Document Requested: New Requirement", result!.Subject);
+        Assert.Equal("A required document ('document') has been requested for your engagement. Please log into your portal to upload it.", result.Message);
+    }
+
+    [Fact]
+    public void Map_ApprovalAttached_WithoutTitle_UsesDefaults()
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("ApprovalAttached", new { clientId = Guid.NewGuid() }));
+
+        Assert.Equal("Approval Required: Engagement Step", result!.Subject);
+        Assert.Equal("A new approval item ('approval request') is awaiting your review in the portal to proceed to the next stage.", result.Message);
+    }
+
+    [Fact]
+    public void Map_ConditionAttached_WithoutTitle_UsesConditionType()
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("condition.attached", new { clientId = Guid.NewGuid(), conditionType = "Signoff" }));
+
+        Assert.Equal("Approval Required: Signoff", result!.Subject);
+        Assert.Equal("A new approval item ('Signoff') is awaiting your review on the portal to proceed to the next stage.", result.Message);
+    }
+
+    [Fact]
+    public void Map_ConditionAttached_PaymentConditionType_ReturnsPaymentMessage()
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("condition.attached", new { clientId = Guid.NewGuid(), conditionType = "payment", title = "Deposit" }));
+
+        Assert.Equal("Payment Condition Update: Deposit", result!.Subject);
+    }
+
+    [Fact]
+    public void Map_PaymentConditionAttached_WithoutTitle_UsesDefaults()
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("payment.condition.attached", new { clientId = Guid.NewGuid() }));
+
+        Assert.Equal("Payment Condition Update: Milestone", result!.Subject);
+        Assert.Equal("A payment condition milestone ('milestone') is now active for your engagement.", result.Message);
+    }
+
+    [Fact]
+    public void Map_ActionOverdue_FallsBackToTitle()
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("action.overdue", new { clientId = Guid.NewGuid(), title = "Sign NDA" }));
+
+        Assert.Contains("('Sign NDA')", result!.Message);
+    }
+
+    [Fact]
+    public void Map_ActionOverdue_WithoutTitle_UsesDefault()
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("action.overdue", new { clientId = Guid.NewGuid() }));
+
+        Assert.Equal("Friendly reminder: An action on your engagement ('pending step') is awaiting your input to keep your onboarding moving smoothly.", result!.Message);
+    }
+
+    [Theory]
+    [InlineData("stageName")]
+    [InlineData("stage")]
+    public void Map_StageChange_FallsBackToAlternativeStageFields(string field)
+    {
+        var payload = new Dictionary<string, object> { ["clientId"] = Guid.NewGuid(), [field] = "Review" };
+
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("StageChange", payload));
+
+        Assert.Equal("Great news! Your engagement has been updated and has progressed to the 'Review' stage.", result!.Message);
+    }
+
+    [Fact]
+    public void Map_StageChange_WithoutStage_UsesDefault()
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("StageChange", new { clientId = Guid.NewGuid() }));
+
+        Assert.Equal("Great news! Your engagement has been updated and has progressed to the 'next' stage.", result!.Message);
+    }
+
+    [Fact]
+    public void Map_InterventionRecovered_UsesFixedClientSafeMessage()
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("intervention.recovered", new { clientId = Guid.NewGuid(), outcome = "recovered" }));
+
+        Assert.Equal("Engagement Update: Back on track", result!.Subject);
+        Assert.Equal("Good news! Your onboarding team has resolved a blocker and your engagement is moving forward again. Please check your portal for any next steps", result.Message);
+    }
+
+    [Theory]
+    [InlineData("email")]
+    [InlineData("Email")]
+    public void Map_ClientEmail_FallsBackToAlternativeEmailFields(string field)
+    {
+        var payload = new Dictionary<string, object> { ["clientId"] = Guid.NewGuid(), [field] = "c@example.com" };
+
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("engagement.started", payload));
+
+        Assert.Equal("c@example.com", result!.ClientEmail);
+    }
+
+    #endregion
+
+    #region PaymentStatusChanged
+
+    [Fact]
+    public void Map_PaymentSatisfied_WithAmountAndCurrency_IncludesAmount()
+    {
+        var result = _mapper.MapToClientSafeMessage(Wrapped("PaymentStatusChanged", new
+        {
+            clientId = Guid.NewGuid(),
+            status = "satisfied",
+            amount = "500",
+            currency = "USD",
+            title = "Deposit"
+        }));
+
+        Assert.Equal("Payment confirmed", result!.Subject);
+        Assert.Equal("Payment of 500 USD for 'Deposit' has been confirmed. Your engagement can continue.", result.Message);
+    }
+
+    [Fact]
+    public void Map_PaymentSatisfied_WithAmountOnly_TrimsMissingCurrency()
+    {
+        var result = _mapper.MapToClientSafeMessage(Wrapped("PaymentStatusChanged", new { clientId = Guid.NewGuid(), status = "Satisfied", amount = "500" }));
+
+        Assert.Equal("Payment of 500 for 'payment condition' has been confirmed. Your engagement can continue.", result!.Message);
+    }
+
+    [Fact]
+    public void Map_PaymentSatisfied_WithoutAmount_OmitsAmountText()
+    {
+        var result = _mapper.MapToClientSafeMessage(Wrapped("PaymentStatusChanged", new { clientId = Guid.NewGuid(), status = "Satisfied", title = "Deposit" }));
+
+        Assert.Equal("Payment for 'Deposit' has been confirmed. Your engagement can continue.", result!.Message);
+    }
+
+    [Theory]
+    [InlineData("Pending")]
+    [InlineData("Overdue")]
+    public void Map_PaymentNotSatisfied_IsNotSent(string status)
+    {
+        Assert.Null(_mapper.MapToClientSafeMessage(Wrapped("PaymentStatusChanged", new { clientId = Guid.NewGuid(), status, amount = "500" })));
+    }
+
+    #endregion
+
+    #region Payload shapes and client id extraction
+
+    [Fact]
+    public void Map_PascalCaseClientIdKey_IsRead()
+    {
+        var clientId = Guid.NewGuid();
+
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("engagement.started", new { ClientId = clientId }));
+
+        Assert.Equal(clientId, result!.ClientId);
+    }
+
+    [Fact]
+    public void Map_PascalCaseClientIdKey_AsString_IsParsed()
+    {
+        var clientId = Guid.NewGuid();
+
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("engagement.started", new { ClientId = clientId.ToString("N") }));
+
+        Assert.Equal(clientId, result!.ClientId);
+    }
+
+    // Non-GUID client ids are hashed to a stable GUID so the same client always maps to the same id.
+    [Theory]
+    [InlineData("clientId")]
+    [InlineData("ClientId")]
+    public void Map_NonGuidClientId_MapsToStableHashedGuid(string field)
+    {
+        static KafkaEnvelope Envelope(string field, string value) =>
+            CreateEnvelope("engagement.started", new Dictionary<string, object> { [field] = value });
+
+        var first = _mapper.MapToClientSafeMessage(Envelope(field, "client-42"))!.ClientId;
+        var again = _mapper.MapToClientSafeMessage(Envelope(field, "client-42"))!.ClientId;
+        var other = _mapper.MapToClientSafeMessage(Envelope(field, "client-43"))!.ClientId;
+
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("client-42"));
+        Assert.Equal(new Guid(hash[..16]), first);
+        Assert.Equal(first, again);
+        Assert.NotEqual(first, other);
+    }
+
+    [Theory]
+    [InlineData("clientId")]
+    [InlineData("ClientId")]
+    public void Map_BlankClientId_ResolvesToEmpty(string field)
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("engagement.started", new Dictionary<string, object> { [field] = "  " }));
+
+        Assert.Equal(Guid.Empty, result!.ClientId);
+    }
+
+    [Fact]
+    public void Map_MissingClientId_ResolvesToEmpty()
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("engagement.started", new { title = "x" }));
+
+        Assert.Equal(Guid.Empty, result!.ClientId);
+    }
+
+    [Fact]
+    public void Map_LowercaseDataWrapper_IsUnwrapped()
+    {
+        var clientId = Guid.NewGuid();
+
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("document.verified", new { data = new { clientId, documentName = "ID.pdf" } }));
+
+        Assert.Equal(clientId, result!.ClientId);
+        Assert.Equal("Document Verified: ID.pdf", result.Subject);
+    }
+
+    // A "Data"/"data" property that is not an object is not a wrapper: fields are read from the top level.
+    [Theory]
+    [InlineData("Data")]
+    [InlineData("data")]
+    public void Map_NonObjectDataProperty_ReadsTopLevelFields(string wrapperName)
+    {
+        var clientId = Guid.NewGuid();
+        var payload = new Dictionary<string, object> { [wrapperName] = "not-an-object", ["clientId"] = clientId, ["documentName"] = "ID.pdf" };
+
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("document.verified", payload));
+
+        Assert.Equal(clientId, result!.ClientId);
+        Assert.Equal("Document Verified: ID.pdf", result.Subject);
+    }
+
+    [Fact]
+    public void Map_NonObjectPayload_UsesDefaultsWithoutThrowing()
+    {
+        var result = _mapper.MapToClientSafeMessage(CreateEnvelope("document.verified", new[] { 1, 2, 3 }));
+
+        Assert.NotNull(result);
+        Assert.Equal(Guid.Empty, result!.ClientId);
+        Assert.Null(result.ClientEmail);
+        Assert.Equal("Document Verified: Your document", result.Subject);
+    }
+
+    #endregion
 }

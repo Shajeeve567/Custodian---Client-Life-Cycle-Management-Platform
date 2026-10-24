@@ -1,0 +1,17 @@
+{
+  "stryker-config": {
+    "project": "Audit.csproj",
+    "reporters": ["html", "progress", "cleartext"],
+    "mutate": [
+      "**/*.cs",
+      "!**/Migrations/**/*.cs",
+      "!**/Program.cs",
+      "!**/Data/AuditDbContext.cs",
+      "!**/Data/AuditDbContextFactory.cs",
+      "!**/Data/AuditDatabaseInitializer.cs"
+    ],
+    "test-case-filter": "FullyQualifiedName!~.Integration.",
+    "ignore-methods": ["*Log*", "ToString", "*Exception.ctor"],
+    "thresholds": { "high": 80, "low": 60, "break": 0 }
+  }
+}
