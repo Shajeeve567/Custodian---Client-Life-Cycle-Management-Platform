@@ -64,7 +64,23 @@ jobs:
           fi
 
       - name: Execute Headless CI Test Suite
+        if: github.event_name != 'pull_request'
+        shell: bash
         run: |
+          # Validate required credentials before execution
+          if [ -z "$E2E_OWNER_EMAIL" ] || [ -z "$E2E_OWNER_PASSWORD" ] || \
+             [ -z "$E2E_STAFF_EMAIL" ] || [ -z "$E2E_STAFF_PASSWORD" ] || \
+             [ -z "$E2E_CLIENT_EMAIL" ] || [ -z "$E2E_CLIENT_PASSWORD" ] || \
+             [ -z "$E2E_STAGE2_CLIENT_EMAIL" ] || [ -z "$E2E_STAGE2_CLIENT_PASSWORD" ]; then
+            echo "::error::Required E2E credentials are missing or empty in GitHub Secrets."
+            echo "Please configure all 8 required repository secrets:"
+            echo "  - E2E_OWNER_EMAIL / E2E_OWNER_PASSWORD"
+            echo "  - E2E_STAFF_EMAIL / E2E_STAFF_PASSWORD"
+            echo "  - E2E_CLIENT_EMAIL / E2E_CLIENT_PASSWORD"
+            echo "  - E2E_STAGE2_CLIENT_EMAIL / E2E_STAGE2_CLIENT_PASSWORD"
+            exit 1
+          fi
+
           echo "Executing test filter: ${{ steps.select-tier.outputs.filter }}"
           dotnet test tests/selenium/Custodian.System.Tests/Custodian.System.Tests.csproj \
             --no-build \
@@ -76,13 +92,22 @@ jobs:
           DOTNET_ROLL_FORWARD: "Major"
           E2E_BASE_URL: "https://custodian-blue.vercel.app"
           E2E_TENANT_NAME: "SE3112 E2E Testing Agency"
-          E2E_OWNER_EMAIL: "se3112.e2e.owner.261017@example.com"
-          E2E_OWNER_PASSWORD: "W7@rQ2!pL9#vT5$zN8"
-          E2E_STAFF_EMAIL: "se3112.e2e.staff.261017@example.com"
-          E2E_STAFF_PASSWORD: "F6!mK8#qR2@tY9$wH4"
-          E2E_CLIENT_EMAIL: "se3112.e2e.client.261017@example.com"
-          E2E_CLIENT_PASSWORD: "J5#cV9!nP3@xL7$sD2"
+          E2E_OWNER_EMAIL: ${{ secrets.E2E_OWNER_EMAIL }}
+          E2E_OWNER_PASSWORD: ${{ secrets.E2E_OWNER_PASSWORD }}
+          E2E_STAFF_EMAIL: ${{ secrets.E2E_STAFF_EMAIL }}
+          E2E_STAFF_PASSWORD: ${{ secrets.E2E_STAFF_PASSWORD }}
+          E2E_CLIENT_EMAIL: ${{ secrets.E2E_CLIENT_EMAIL }}
+          E2E_CLIENT_PASSWORD: ${{ secrets.E2E_CLIENT_PASSWORD }}
+          E2E_STAGE2_CLIENT_EMAIL: ${{ secrets.E2E_STAGE2_CLIENT_EMAIL }}
+          E2E_STAGE2_CLIENT_PASSWORD: ${{ secrets.E2E_STAGE2_CLIENT_PASSWORD }}
           E2E_IDENTITY_URL: "https://custodian-identity-prod-gr-cmbqdggxh7gzevgg.southeastasia-01.azurewebsites.net"
           E2E_WORKFLOW_URL: "https://custodian-workflow-prod-gr-fgcecrfea6cue2d6.southeastasia-01.azurewebsites.net"
           E2E_DOCUMENTS_URL: "https://custodian-documents-prod-gr-cbc5b5bydgehb3cn.southeastasia-01.azurewebsites.net"
           E2E_AUDIT_URL: "https://custodian-audit-prod-gr-fmfbdfcnfse9bbfz.southeastasia-01.azurewebsites.net"
+
+      - name: Pull Request Safety Notice
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          echo "::notice title=PR Build Verified::Selenium test project compiled successfully. Live browser test execution with credentials is intentionally restricted to trusted push events."
+

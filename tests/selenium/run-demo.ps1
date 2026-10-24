@@ -31,6 +31,7 @@ param(
     [int]$DelayMs = 800,
     [string]$Filter = "",
     [string]$BaseUrl = "",
+    [switch]$Prod,
     [switch]$Headless,
     [switch]$QuickDemo,
     [switch]$IncludeGoldenPath
@@ -39,7 +40,15 @@ param(
 $ErrorActionPreference = "Continue"
 $env:DOTNET_ROLL_FORWARD = "Major"
 
-if ($BaseUrl) {
+if ($Prod -or ($BaseUrl -like "*vercel.app*")) {
+    $env:E2E_BASE_URL = if ($BaseUrl) { $BaseUrl } else { "https://custodian-blue.vercel.app" }
+    $env:E2E_IDENTITY_URL = "https://custodian-identity-prod-gr-cmbqdggxh7gzevgg.southeastasia-01.azurewebsites.net"
+    $env:E2E_WORKFLOW_URL = "https://custodian-workflow-prod-gr-fgcecrfea6cue2d6.southeastasia-01.azurewebsites.net"
+    $env:E2E_DOCUMENTS_URL = "https://custodian-documents-prod-gr-cbc5b5bydgehb3cn.southeastasia-01.azurewebsites.net"
+    $env:E2E_AUDIT_URL = "https://custodian-audit-prod-gr-fmfbdfcnfse9bbfz.southeastasia-01.azurewebsites.net"
+    Write-Host "[TARGET] Target configured for LIVE PRODUCTION (Vercel & Azure Microservices)." -ForegroundColor Green
+    Write-Host "         Base URL: $($env:E2E_BASE_URL)" -ForegroundColor Green
+} elseif ($BaseUrl) {
     $env:E2E_BASE_URL = $BaseUrl
     Write-Host "[TARGET] Target Base URL set to: $BaseUrl" -ForegroundColor Cyan
 }
