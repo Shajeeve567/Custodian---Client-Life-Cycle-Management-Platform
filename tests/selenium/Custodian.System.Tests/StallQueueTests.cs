@@ -62,7 +62,7 @@ public class StallQueueTests : TestBase
                 recordInterventionButtons[0].Click();
                 TestEnvironment.DemoPause(400);
 
-                var interventionModal = Wait.Until(d => d.FindElement(By.XPath("//h3[contains(text(), 'Record Operational Intervention')]/ancestor::div[contains(@class, 'bg-white')]")));
+                var interventionModal = Wait.Until(d => d.FindElement(By.XPath("//*[self::h2 or self::h3][contains(text(), 'Record Intervention')]/ancestor::div[contains(@class, 'bg-white')]")));
                 Assert.True(interventionModal.Displayed);
 
                 var reasonInput = interventionModal.FindElement(By.XPath(".//textarea | .//input[@type='text']"));
@@ -73,7 +73,7 @@ public class StallQueueTests : TestBase
                 cancelBtn.Click();
                 TestEnvironment.DemoPause(300);
 
-                Wait.Until(d => d.FindElements(By.XPath("//h3[contains(text(), 'Record Operational Intervention')]")).Count == 0);
+                Wait.Until(d => d.FindElements(By.XPath("//*[self::h2 or self::h3][contains(text(), 'Record Intervention')]")).Count == 0);
             }
             else
             {
