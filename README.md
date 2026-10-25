@@ -204,83 +204,17 @@ For detailed setup, configuration, and troubleshooting guides, see:
 
 ## Testing Pipeline (SE3112)
 
-Four test layers, each owned by one team member, all run in GitHub Actions. Pull requests run the unit and mutation
-tests; pushes run the unit tests and the E2E smoke test; load tests and full runs are started from the **Run workflow**
-button.
+The platform is tested in four layers, each owned by one team member, and all four run in GitHub Actions:
 
-### Team and roles
+| Layer | Owner | Tool |
+| ----- | ----- | ---- |
+| Unit Testing & Mocking | Rithish | xUnit, Moq, EF Core InMemory |
+| Mutation Testing | Shajeeve | Stryker.NET |
+| UI / E2E Testing | Mohamed Ilzam | Selenium WebDriver |
+| Load & Performance Testing | Gunitha Rathnayake | Apache JMeter |
 
-| Role | Owner | Tools | Where |
-| ---- | ----- | ----- | ----- |
-| Unit Testing & Mocking | Rithish | xUnit, Moq, EF Core InMemory | `backend/tests/` (5 test projects) |
-| Mutation Testing | Shajeeve | Stryker.NET 4.16.0 | `backend/tests/*/stryker-config.json`, `mutation-tests.yml` |
-| UI / E2E Testing | Mohamed Ilzam | Selenium WebDriver 4.48, xUnit, PdfPig | [`tests/selenium/`](tests/selenium/README.md) |
-| Load & Performance Testing | Gunitha Rathnayake | Apache JMeter 5.6.3 | [`tests/jmeter/`](tests/jmeter/README.md) |
-
-### Tool setup
-
-* **Unit and mutation tests:** .NET 9 SDK. `dotnet tool restore` installs Stryker.NET from `.config/dotnet-tools.json`.
-* **E2E tests:** .NET 10 SDK and Google Chrome. Copy `tests/selenium/.env.example` to `tests/selenium/.env.e2e.local` (git-ignored) and fill in the four QA accounts: owner, staff, client and Stage 2 client (see the [E2E README](tests/selenium/README.md)).
-* **Load tests:** Java 17+, Apache JMeter 5.6.3 (`brew install jmeter`) and Node.js 20. The QA login goes in `tests/jmeter/data/accounts.csv`, copied from `accounts.example.csv` (git-ignored).
-
-### Run locally
-
-Unit tests (all five test projects):
-
-```bash
-dotnet test backend/Custodian.sln
-```
-
-Mutation tests for one service (repeat for any test project; the HTML report is written to `StrykerOutput/`):
-
-```bash
-cd backend/tests/Custodian.Workflow.Tests && dotnet tool restore && dotnet stryker
-```
-
-E2E tests, headless:
-
-```bash
-SELENIUM_HEADLESS=true DOTNET_ROLL_FORWARD=Major dotnet test tests/selenium/Custodian.System.Tests/Custodian.System.Tests.csproj --filter "Category=CI"
-```
-
-On Windows, `tests/selenium/run-demo.ps1` runs the same suite with visible Chrome for demos.
-
-Load test (smoke profile; also `load`, `stress` and `spike`):
-
-```bash
-cd tests/jmeter && ./run.sh smoke --props qa.properties
-```
-
-### In GitHub Actions
-
-| Workflow (Actions tab name) | Layer | Pull request to `dev` / `main` | Push to `dev` / `main` | Run workflow button |
-| --------------------------- | ----- | ------------------------------ | ---------------------- | ------------------- |
-| `ci.yml` (CI — Build & Test) | Unit | Yes, backend changes | Yes, backend changes | No |
-| `mutation-tests.yml` (Mutation Tests — Backend) | Mutation | Yes, backend changes: changed code only, fails below `BREAK_AT` (75%) | No | Yes: full run of every project; also Mondays 02:00 UTC |
-| `e2e-pipeline.yml` (CI — E2E Testing Pipeline (Role D)) | E2E | Build check only (browser tests need the account secrets) | Yes: smoke test (APPR01) | Yes: smoke or full suite (11 tests) |
-| `load-test.yml` (Load Test — JMeter (manual)) | Load | No | No | Yes: redeploys the four services, then runs the chosen profile |
-| `deploy-*.yml` (Deploy — *Service*) | Unit, then deploy | No | `main`: build, unit tests, deploy | Yes |
-
-Load tests are manual on purpose: they measure the deployed environment, they would overlap the E2E tests and
-deployments that run on every push, and they put real load on the shared QA apps. A run can also be started from a
-terminal with the GitHub CLI:
-
-```bash
-gh workflow run load-test.yml --ref main -f run_load_test=true -f profile=smoke
-```
-
-**Results:** every workflow writes its verdict to the run's summary page (test totals, mutation score per project,
-SLA table) and keeps its reports as artifacts (Stryker HTML reports, the JMeter dashboard and evidence). A failed
-check fails the job.
-
-**Secrets** (GitHub → Settings → Secrets and variables → Actions):
-
-* `QA_EMAIL` / `QA_PASSWORD`: the QA-only login for the load test.
-* `E2E_OWNER_*`, `E2E_STAFF_*`, `E2E_CLIENT_*`, `E2E_STAGE2_CLIENT_*` (`_EMAIL` and `_PASSWORD` each, 8 in total): the E2E accounts. The E2E job fails straight away if any is missing.
-* The existing `AZURE_*` deployment secrets.
-
-**Mutation score thresholds:** Stryker rates a score of 85% or more as high; pull requests fail below 75%, just under
-the lowest current service score (Documents, 76%).
+Tool setup, the command to run each layer, what triggers each workflow, the manual **Run workflow** buttons, where
+results appear and the latest results are in **[TESTING.md](TESTING.md)**.
 
 ## Sprint 3 Features (16 Sep – 30 Sep 2026)
 
@@ -317,6 +251,7 @@ Detailed project documentation is available in the [`docs/`](docs/) directory.
 | [Monitoring](monitoring/README.md)                                      | Prometheus + Grafana setup and `/metrics` protection |
 | [Load & Performance Testing](tests/jmeter/README.md)                    | JMeter smoke / load / stress / spike tests, SLA gate, manual CI workflow (owner: Gunitha Rathnayake) |
 | [UI / E2E Testing](tests/selenium/README.md)                            | Selenium suite (11 tests), setup and demo runner (owner: Mohamed Ilzam) |
+| [Testing Pipeline (SE3112)](TESTING.md)                                 | All four test layers: roles, setup, commands, CI triggers and results |
 | [Troubleshooting](docs/troubleshooting.md)                              | Common development and deployment issues    |
 
 ## Security
