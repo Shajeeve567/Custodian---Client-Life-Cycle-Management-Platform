@@ -166,24 +166,7 @@ Production runs in its own Azure subscription with two App Service plans (Workfl
 
 Deployment secrets are GitHub Secrets (`AZURE_<SERVICE>_APP_NAME` / `_PUBLISH_PROFILE`, and `AZURE_<SERVICE>_STAGING_*` for staging). Application configuration lives in each App Service's settings. See [GitHub Actions CI/CD](docs/ci-cd/github-actions.md).
 
-### Load Testing (manual)
-
-`load-test.yml` runs only from **Actions → Load Test — JMeter (manual) → Run workflow**. It always rebuilds,
-unit-tests and redeploys the four services (reusing `deploy-*.yml`), and runs the JMeter load test only when its
-checkbox is ticked, with a choice of profile: smoke, load, stress or spike. The SLA result appears on the run's
-summary page and the HTML dashboard is kept as an artifact. From a terminal (GitHub CLI):
-
-```bash
-gh workflow run load-test.yml --ref main -f run_load_test=true -f profile=smoke
-```
-
-Locally, the same script CI runs:
-
-```bash
-cd tests/jmeter && ./run.sh smoke --props qa.properties
-```
-
-Setup, profiles, targets and safety rules: [Load & Performance Testing](tests/jmeter/README.md).
+The test workflows (unit, mutation, E2E and load) are described in [Testing Pipeline (SE3112)](#testing-pipeline-se3112).
 
 The frontend is deployed through Vercel.
 
@@ -219,6 +202,20 @@ For detailed setup, configuration, and troubleshooting guides, see:
 * [Azure Event Hubs Kafka Integration](docs/deployment/event-hubs-kafka.md)
 * [Troubleshooting Guide](docs/troubleshooting.md)
 
+## Testing Pipeline (SE3112)
+
+The platform is tested in four layers, each owned by one team member, and all four run in GitHub Actions:
+
+| Layer | Owner | Tool |
+| ----- | ----- | ---- |
+| Unit Testing & Mocking | Rithish | xUnit, Moq, EF Core InMemory |
+| Mutation Testing | Shajeeve | Stryker.NET |
+| UI / E2E Testing | Mohamed Ilzam | Selenium WebDriver |
+| Load & Performance Testing | Gunitha Rathnayake | Apache JMeter |
+
+Tool setup, the command to run each layer, what triggers each workflow, the manual **Run workflow** buttons, where
+results appear and the latest results are in **[TESTING.md](TESTING.md)**.
+
 ## Sprint 3 Features (16 Sep – 30 Sep 2026)
 
 | Story | Feature |
@@ -253,6 +250,8 @@ Detailed project documentation is available in the [`docs/`](docs/) directory.
 | [GitHub Actions CI/CD](docs/ci-cd/github-actions.md)                    | CI/CD workflows and deployment automation   |
 | [Monitoring](monitoring/README.md)                                      | Prometheus + Grafana setup and `/metrics` protection |
 | [Load & Performance Testing](tests/jmeter/README.md)                    | JMeter smoke / load / stress / spike tests, SLA gate, manual CI workflow (owner: Gunitha Rathnayake) |
+| [UI / E2E Testing](tests/selenium/README.md)                            | Selenium suite (11 tests), setup and demo runner (owner: Mohamed Ilzam) |
+| [Testing Pipeline (SE3112)](TESTING.md)                                 | All four test layers: roles, setup, commands, CI triggers and results |
 | [Troubleshooting](docs/troubleshooting.md)                              | Common development and deployment issues    |
 
 ## Security
