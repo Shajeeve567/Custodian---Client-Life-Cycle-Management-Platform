@@ -58,7 +58,9 @@ public static class WorkflowServiceRegistration
         // stage transition proceeds. 19-N7: bounded timeout/retry on the Documents call.
         services.AddHttpClient<IDocumentComplianceClient, DocumentComplianceClient>(client =>
         {
-            var documentsBaseUrl = configuration["Services:DocumentsUrl"] ?? "http://localhost:5171";
+            var documentsBaseUrl = configuration["Services:DocumentsUrl"]
+                ?? configuration["Services__DocumentsUrl"]
+                ?? "https://staging-document-service-gch7d3duetb8ceby.centralindia-01.azurewebsites.net";
             client.BaseAddress = new Uri(documentsBaseUrl);
         }).AddDocumentComplianceResilience();
         services.AddScoped<IGateEvaluator, GateEvaluator>();

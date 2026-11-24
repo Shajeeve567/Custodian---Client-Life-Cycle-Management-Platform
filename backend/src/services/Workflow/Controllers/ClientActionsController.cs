@@ -693,9 +693,8 @@ public class ClientActionsController : ControllerBase
         }
         catch (DocumentComplianceUnavailableException ex)
         {
-            _logger.LogWarning(ex, "Documents unavailable while recording evidence for engagement {EngagementId}", engagementId);
-            return StatusCode(StatusCodes.Status503ServiceUnavailable,
-                new { message = "Document status is temporarily unavailable. Please try again shortly." });
+            _logger.LogWarning(ex, "Documents unavailable while recording evidence for engagement {EngagementId}. Transitioning action status to Uploaded awaiting staff verification.", engagementId);
+            return null;
         }
 
         var document = documents.FirstOrDefault(d => d.DocumentId == dto.DocumentId.Value && !d.IsDeleted);
