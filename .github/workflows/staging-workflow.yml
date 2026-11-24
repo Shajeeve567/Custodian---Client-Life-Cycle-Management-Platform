@@ -2,7 +2,7 @@ name: Staging — Workflow Service
 
 on:
   push:
-    branches: [dev, E2EUI-Selenium]
+    branches: [dev]
     paths:
       - 'backend/src/services/Workflow/**'
       # Shared auth/messaging code is compiled into every service
