@@ -55,8 +55,10 @@ jobs:
       # --- changed: pin the SDK for this run only (global.json is not committed) ---
       - name: Pin .NET SDK
         working-directory: ${{ github.workspace }}
-        run: echo "{ \"sdk\": { \"version\": \"$DOTNET_SDK_VERSION\", \"rollForward\": \"disable\" } }" > global.json
-
+        run: |
+          cat > global.json <<EOF
+          { "sdk": { "version": "${DOTNET_SDK_VERSION}", "rollForward": "disable" } }
+          EOF
       - name: Setup .NET 9
         uses: actions/setup-dotnet@v4
         with:
