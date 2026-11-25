@@ -96,8 +96,8 @@ public class DocumentComplianceTests : TestBase
         }
     }
 
-    [Fact(Skip = "Temporarily skipped: Requires Azure Workflow App Service configuration (Services__DocumentsUrl) to resolve 503")]
-    [Trait("Category", "CI")]
+    [Fact]
+    [Trait("Category", "OptIn")]
     public void DOC02_MultiRole_DocumentRejection_Resubmission_AndVerification()
     {
         try
