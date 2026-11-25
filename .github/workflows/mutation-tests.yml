@@ -23,6 +23,9 @@ concurrency:
 env:
   # Fail below this score. Must not be above the "low" threshold (60) in stryker-config.json.
   BREAK_AT: 60
+  # Exact SDK for this workflow. Without a pin, `dotnet` uses the newest SDK on the runner
+  # image, and a newer one broke Stryker 4.16.0's test discovery ("0 tests found") from Nov 2026.
+  DOTNET_SDK_VERSION: '9.0.320'
 
 jobs:
   stryker:
@@ -49,12 +52,21 @@ jobs:
         with:
           fetch-depth: 0 # --since compares against the target branch, so full history is needed
 
+      # --- changed: pin the SDK for this run only (global.json is not committed) ---
+      - name: Pin .NET SDK
+        working-directory: ${{ github.workspace }}
+        run: echo "{ \"sdk\": { \"version\": \"$DOTNET_SDK_VERSION\", \"rollForward\": \"disable\" } }" > global.json
+
       - name: Setup .NET 9
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          global-json-file: global.json
           cache: true
           cache-dependency-path: backend/**/*.csproj
+
+      - name: Show SDK in use
+        run: dotnet --version
+      # --- end of change ---
 
       - name: Restore Stryker (pinned in .config/dotnet-tools.json)
         run: dotnet tool restore
