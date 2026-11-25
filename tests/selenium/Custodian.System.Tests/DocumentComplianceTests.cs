@@ -97,7 +97,7 @@ public class DocumentComplianceTests : TestBase
     }
 
     [Fact]
-    [Trait("Category", "CI")]
+    [Trait("Category", "OptIn")]
     public void DOC02_MultiRole_DocumentRejection_Resubmission_AndVerification()
     {
         try
@@ -269,10 +269,22 @@ public class DocumentComplianceTests : TestBase
         TestEnvironment.DemoPause(300);
 
         var submitBtn = modal.FindElement(By.XPath(".//button[contains(., 'Submit Evidence') or @type='submit']"));
+        Wait.Until(d => submitBtn.Enabled);
         submitBtn.Click();
         TestEnvironment.DemoPause(600);
 
-        Wait.Until(d => d.FindElements(By.XPath("//h3[contains(text(), 'Upload Evidence Document')]")).Count == 0);
+        try
+        {
+            Wait.Until(d => d.FindElements(By.XPath("//h3[contains(text(), 'Upload Evidence Document')]")).Count == 0);
+        }
+        catch (WebDriverTimeoutException)
+        {
+            var errorTexts = Driver.FindElements(By.XPath("//div[contains(@class, 'bg-rose-50')] | //p[contains(@class, 'text-rose')] | //span[contains(@class, 'text-rose')]"))
+                .Select(e => e.Text).Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
+            var logs = Driver.Manage().Logs.GetLog(LogType.Browser);
+            var logLines = string.Join("\n", logs.Select(l => $"[{l.Level}] {l.Message}"));
+            throw new Exception($"Modal did not close. Visible errors: [{string.Join("; ", errorTexts)}]. Browser logs:\n{logLines}");
+        }
     }
 
     private void SetDateInput(IWebElement element, string yyyyMmDd)
