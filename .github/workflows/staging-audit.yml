@@ -1,6 +1,8 @@
 name: Staging — Audit Service
 
 on:
+  # Lets load-test.yml reuse this job (deploy to staging, then optionally load-test) instead of copying it.
+  workflow_call:
   push:
     branches: [dev]
     paths:

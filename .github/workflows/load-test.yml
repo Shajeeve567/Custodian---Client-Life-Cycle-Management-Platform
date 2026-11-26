@@ -24,23 +24,25 @@ permissions:
   contents: read
 
 jobs:
-  # 1. Rebuild, unit-test and redeploy every service: the existing deploy workflows, reused unchanged.
+  # 1. Rebuild, unit-test and redeploy every service to staging: the existing staging workflows, reused unchanged.
+  #    (The B1 QA apps used for the 18 Oct runs were retired when their subscription ended.)
   deploy-identity:
-    uses: ./.github/workflows/deploy-identity.yml
+    uses: ./.github/workflows/staging-identity.yml
     secrets: inherit
   deploy-workflow:
-    uses: ./.github/workflows/deploy-workflow.yml
+    uses: ./.github/workflows/staging-workflow.yml
     secrets: inherit
   deploy-documents:
-    uses: ./.github/workflows/deploy-document.yml
+    uses: ./.github/workflows/staging-document.yml
     secrets: inherit
   deploy-audit:
-    uses: ./.github/workflows/deploy-audit.yml
+    uses: ./.github/workflows/staging-audit.yml
     secrets: inherit
 
-  # 2. Optional: load-test the freshly deployed QA target (the B1 apps re-pointed at QA databases).
+  # 2. Optional: load-test the freshly deployed staging apps (they use the QA databases).
+  #    Staging is Free tier with a daily CPU quota: use smoke there; heavier profiles measure the quota, not the code.
   load-test:
-    name: JMeter ${{ inputs.profile }} profile (QA target)
+    name: JMeter ${{ inputs.profile }} profile (staging)
     needs: [deploy-identity, deploy-workflow, deploy-documents, deploy-audit]
     if: ${{ inputs.run_load_test }}
     runs-on: ubuntu-latest
@@ -96,7 +98,7 @@ jobs:
           HEALTH_DELAY: '15'
         run: |
           set +e
-          ./run.sh "$PROFILE" --props qa.properties
+          ./run.sh "$PROFILE" --props staging.properties
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Publish the result to the job summary

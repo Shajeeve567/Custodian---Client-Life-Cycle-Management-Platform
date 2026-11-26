@@ -102,3 +102,15 @@ When a verdict was recomputed, the original `sla-gate.txt` is kept and the new o
 - **Why**: load tests measure the deployed environment, so a pull-request run would test the code already
   deployed; they would overlap the E2E tests and deployments that run on every push; and they put real load on
   the shared QA apps and databases. Unit, mutation and E2E tests cover push and pull request.
+
+## 2026-11-26
+
+### Target: staging instead of the B1 QA apps (decision)
+- **Change**: `load-test.yml` now redeploys with the `staging-*.yml` workflows (given a `workflow_call` trigger) and
+  runs `run.sh` with `staging.properties`. The docs name staging as the current target.
+- **Why**: the subscription of the four B1 QA App Services ended, so they no longer answer (HTTP 403 "This web app
+  is stopped"). The staging apps use the same QA databases, and the guards already allowed them.
+- **Evidence**: `20261126T020007Z-smoke` (refused by the health check on the stopped B1 apps, no load sent) and
+  `20261126T020214Z-smoke` (staging: PASS, 39 samples, 0 errors, p95 1,569 ms).
+- **Limit**: staging is Free tier with a daily CPU quota, so only smoke runs there. The 18 Oct load, stress and spike
+  results on the B1 apps stand as recorded.
