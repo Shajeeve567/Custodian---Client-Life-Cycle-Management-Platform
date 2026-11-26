@@ -114,3 +114,12 @@ When a verdict was recomputed, the original `sla-gate.txt` is kept and the new o
   `20261126T020214Z-smoke` (staging: PASS, 39 samples, 0 errors, p95 1,569 ms).
 - **Limit**: staging is Free tier with a daily CPU quota, so only smoke runs there. The 18 Oct load, stress and spike
   results on the B1 apps stand as recorded.
+
+### Redeploy is optional in the manual workflow (decision)
+- **Change**: `load-test.yml` has a new **Redeploy the four services first** box (ticked by default). Unticked, the
+  deploy jobs are skipped and the test runs straight away on the apps as they are. The run summary records which.
+- **Why**: the first CI run (Actions run 45747553523, `20261126T031641Z-smoke`) deployed, then failed smoke on one request: the
+  Engagements list answered HTTP 200 with correct data in 4,133 ms, over the 3 s ceiling (the other loops took about
+  0.7 s). The warm-up loop also had 4 of 18 requests at 3 to 5 s. A deploy restarts the apps, and one warm-up loop
+  is not enough for a cold Free-tier app. The same apps passed smoke when warm (`20261126T020214Z-smoke`).
+- **Not changed**: the 3 s ceiling and the 0 % smoke error rule. The failed run stays recorded as a FAIL.

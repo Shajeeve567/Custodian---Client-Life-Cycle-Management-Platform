@@ -86,14 +86,14 @@ other profiles (staging is Free tier, so run only smoke there).
 | `ci.yml` (CI — Build & Test) | Unit | Yes, backend changes | Yes, backend changes | No |
 | `mutation-tests.yml` (Mutation Tests — Backend) | Mutation | Yes, backend changes: changed code only, fails below `BREAK_AT` (75%) | No | Yes: full run of every project; also Mondays 02:00 UTC |
 | `e2e-pipeline.yml` (CI — E2E Testing Pipeline (Role D)) | E2E | Build check only (browser tests need the account secrets) | Yes: smoke test (APPR01) | Yes: smoke or full suite (11 tests) |
-| `load-test.yml` (Load Test — JMeter (manual)) | Load | No | No | Yes: redeploys the four staging services, then runs the chosen profile |
+| `load-test.yml` (Load Test — JMeter (manual)) | Load | No | No | Yes: optionally redeploys the four staging services, then runs the chosen profile |
 | `deploy-*.yml` (Deploy — *Service*) | Unit, then deploy | No | `main`: build, unit tests, deploy | Yes |
 
 **Starting a run by hand:** GitHub → **Actions** → pick the workflow on the left → **Run workflow** → choose the
 branch and options. From a terminal with the GitHub CLI, for example:
 
 ```bash
-gh workflow run load-test.yml --ref main -f run_load_test=true -f profile=smoke
+gh workflow run load-test.yml --ref dev -f redeploy=false -f run_load_test=true -f profile=smoke
 ```
 
 ```bash
