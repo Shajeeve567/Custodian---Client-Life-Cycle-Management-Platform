@@ -72,12 +72,12 @@ test E2E06 (about 9 minutes) runs only with `RUN_GOLDEN_PATH_E2E=true`.
 ### Load tests
 
 ```bash
-cd tests/jmeter && ./run.sh smoke --props qa.properties
+cd tests/jmeter && ./run.sh smoke --props staging.properties
 ```
 
 About 2 minutes (health check, warm-up, test, gate). A pass ends with `RESULT: PASS` and exit code 0; the HTML
 dashboard is in `tests/jmeter/reports/latest/index.html`. Replace `smoke` with `load`, `stress` or `spike` for the
-other profiles.
+other profiles (staging is Free tier, so run only smoke there).
 
 ## The pipeline in GitHub Actions
 
@@ -86,14 +86,14 @@ other profiles.
 | `ci.yml` (CI — Build & Test) | Unit | Yes, backend changes | Yes, backend changes | No |
 | `mutation-tests.yml` (Mutation Tests — Backend) | Mutation | Yes, backend changes: changed code only, fails below `BREAK_AT` (75%) | No | Yes: full run of every project; also Mondays 02:00 UTC |
 | `e2e-pipeline.yml` (CI — E2E Testing Pipeline (Role D)) | E2E | Build check only (browser tests need the account secrets) | Yes: smoke test (APPR01) | Yes: smoke or full suite (11 tests) |
-| `load-test.yml` (Load Test — JMeter (manual)) | Load | No | No | Yes: redeploys the four services, then runs the chosen profile |
+| `load-test.yml` (Load Test — JMeter (manual)) | Load | No | No | Yes: optionally redeploys the four staging services, then runs the chosen profile |
 | `deploy-*.yml` (Deploy — *Service*) | Unit, then deploy | No | `main`: build, unit tests, deploy | Yes |
 
 **Starting a run by hand:** GitHub → **Actions** → pick the workflow on the left → **Run workflow** → choose the
 branch and options. From a terminal with the GitHub CLI, for example:
 
 ```bash
-gh workflow run load-test.yml --ref main -f run_load_test=true -f profile=smoke
+gh workflow run load-test.yml --ref dev -f redeploy=false -f run_load_test=true -f profile=smoke
 ```
 
 ```bash
@@ -167,7 +167,7 @@ One JMeter plan with four profiles: smoke (1 user), load (20 users), stress (ris
 sudden burst). `run.sh` adds a target guard, health checks, an untimed warm-up, a secret scan and an SLA gate that
 sets the exit code. Details, results and the change log are in the [load testing README](tests/jmeter/README.md).
 
-| Result (QA environment, 18 Oct 2026) | Value |
+| Result (B1 QA environment, 18 Oct 2026) | Value |
 | ------------------------------------ | ----- |
 | HTTP errors from the server | 0 in about 4,700 requests |
 | Peak sustainable throughput | 12.4 requests per second |
@@ -176,10 +176,11 @@ sets the exit code. Details, results and the change log are in the [load testing
 
 ## Test environments and safety
 
-- **QA:** the four production-sized App Services with their connection strings pointed at QA databases. Load and
-  E2E tests run here. The load-test guards (in `run.sh` and the JMeter plan) refuse any other target, and the test
-  logins exist only in QA data.
-- **Staging:** deployed from `dev` by `staging-*.yml`.
+- **Staging:** deployed from `dev` by `staging-*.yml`, on the QA databases. Load and E2E tests run here. The
+  load-test guards (in `run.sh` and the JMeter plan) refuse any other target, and the test logins exist only in QA
+  data.
+- **QA (retired):** the four production-sized B1 App Services on QA databases, used for the 18 Oct load, stress and
+  spike results. Their subscription ended in November 2026.
 - **Local:** unit and mutation tests need nothing running; E2E and load tests can also point at a local stack.
 - **Secrets** are never committed: test logins live in git-ignored files locally and in GitHub Secrets in CI.
 

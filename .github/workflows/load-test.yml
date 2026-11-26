@@ -1,12 +1,17 @@
 name: Load Test — JMeter (manual)
 
 # Runs ONLY when someone presses "Run workflow" in the Actions tab: never on push, pull request or a schedule.
-# Every run rebuilds, tests and redeploys the four services; the JMeter load test runs only if its box is ticked.
+# Two boxes: redeploy the four services first (default), and run the JMeter load test (default). Unticking the
+# redeploy tests the apps as they are: a fresh deploy restarts them, and cold Free-tier apps answer slowly at first.
 on:
   workflow_dispatch:
     inputs:
+      redeploy:
+        description: 'Redeploy the four services first (untick = test the apps as they are, already warm)'
+        type: boolean
+        default: true
       run_load_test:
-        description: 'Run the JMeter load test after the deploy (untick = only rebuild and redeploy the services)'
+        description: 'Run the JMeter load test (untick = only rebuild and redeploy the services)'
         type: boolean
         default: true
       profile:
@@ -24,25 +29,34 @@ permissions:
   contents: read
 
 jobs:
-  # 1. Rebuild, unit-test and redeploy every service: the existing deploy workflows, reused unchanged.
+  # 1. Optional: rebuild, unit-test and redeploy every service to staging (the existing staging workflows, reused
+  #    unchanged). (The B1 QA apps used for the 18 Oct runs were retired when their subscription ended.)
   deploy-identity:
-    uses: ./.github/workflows/deploy-identity.yml
+    if: ${{ inputs.redeploy }}
+    uses: ./.github/workflows/staging-identity.yml
     secrets: inherit
   deploy-workflow:
-    uses: ./.github/workflows/deploy-workflow.yml
+    if: ${{ inputs.redeploy }}
+    uses: ./.github/workflows/staging-workflow.yml
     secrets: inherit
   deploy-documents:
-    uses: ./.github/workflows/deploy-document.yml
+    if: ${{ inputs.redeploy }}
+    uses: ./.github/workflows/staging-document.yml
     secrets: inherit
   deploy-audit:
-    uses: ./.github/workflows/deploy-audit.yml
+    if: ${{ inputs.redeploy }}
+    uses: ./.github/workflows/staging-audit.yml
     secrets: inherit
 
-  # 2. Optional: load-test the freshly deployed QA target (the B1 apps re-pointed at QA databases).
+  # 2. Optional: load-test the freshly deployed staging apps (they use the QA databases).
+  #    Staging is Free tier with a daily CPU quota: use smoke there; heavier profiles measure the quota, not the code.
   load-test:
-    name: JMeter ${{ inputs.profile }} profile (QA target)
+    name: JMeter ${{ inputs.profile }} profile (staging)
     needs: [deploy-identity, deploy-workflow, deploy-documents, deploy-audit]
-    if: ${{ inputs.run_load_test }}
+    # Runs after the deploys succeed, or straight away when they were skipped (redeploy unticked). !cancelled()
+    # replaces the default "every needed job succeeded" check, which would also skip this job when they were skipped;
+    # a failed deploy still stops the test.
+    if: ${{ inputs.run_load_test && !cancelled() && !contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:
@@ -96,17 +110,19 @@ jobs:
           HEALTH_DELAY: '15'
         run: |
           set +e
-          ./run.sh "$PROFILE" --props qa.properties
+          ./run.sh "$PROFILE" --props staging.properties
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Publish the result to the job summary
         if: always()
         env:
           EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+          REDEPLOY: ${{ inputs.redeploy }}
         run: |
           latest="$(ls -1d results/*/ 2>/dev/null | sort | tail -n 1)"
           {
             echo "## Load test: profile \`$PROFILE\` - run.sh exit code ${EXIT_CODE:-none}"
+            echo "Redeployed first: $REDEPLOY (false = tested the apps as they were)"
             echo "0 pass · 1 SLA failed · 2 bad setup or secret found · 3 target refused or unhealthy · 4 JMeter failed"
             if [ -n "$latest" ]; then
               echo '```'

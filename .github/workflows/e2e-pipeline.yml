@@ -90,7 +90,7 @@ jobs:
         env:
           SELENIUM_HEADLESS: "true"
           DOTNET_ROLL_FORWARD: "Major"
-          E2E_BASE_URL: "https://custodian-blue.vercel.app"
+          E2E_BASE_URL: "https://custodian-client-life-cycle-managem.vercel.app"
           E2E_TENANT_NAME: "SE3112 E2E Testing Agency"
           E2E_OWNER_EMAIL: ${{ secrets.E2E_OWNER_EMAIL }}
           E2E_OWNER_PASSWORD: ${{ secrets.E2E_OWNER_PASSWORD }}
@@ -100,10 +100,10 @@ jobs:
           E2E_CLIENT_PASSWORD: ${{ secrets.E2E_CLIENT_PASSWORD }}
           E2E_STAGE2_CLIENT_EMAIL: ${{ secrets.E2E_STAGE2_CLIENT_EMAIL }}
           E2E_STAGE2_CLIENT_PASSWORD: ${{ secrets.E2E_STAGE2_CLIENT_PASSWORD }}
-          E2E_IDENTITY_URL: "https://custodian-identity-prod-gr-cmbqdggxh7gzevgg.southeastasia-01.azurewebsites.net"
-          E2E_WORKFLOW_URL: "https://custodian-workflow-prod-gr-fgcecrfea6cue2d6.southeastasia-01.azurewebsites.net"
-          E2E_DOCUMENTS_URL: "https://custodian-documents-prod-gr-cbc5b5bydgehb3cn.southeastasia-01.azurewebsites.net"
-          E2E_AUDIT_URL: "https://custodian-audit-prod-gr-fmfbdfcnfse9bbfz.southeastasia-01.azurewebsites.net"
+          E2E_IDENTITY_URL: "https://staging-identity-service-fbfafsbddnhnh7dw.centralindia-01.azurewebsites.net"
+          E2E_WORKFLOW_URL: "https://staging-workflow-service-hrg5czbpdvc3gta4.centralindia-01.azurewebsites.net"
+          E2E_DOCUMENTS_URL: "https://staging-document-service-gch7d3duetb8ceby.centralindia-01.azurewebsites.net"
+          E2E_AUDIT_URL: "https://staging-audit-service-e3hhf9hwgjf9h2dg.centralindia-01.azurewebsites.net"
 
       - name: Pull Request Safety Notice
         if: github.event_name == 'pull_request'

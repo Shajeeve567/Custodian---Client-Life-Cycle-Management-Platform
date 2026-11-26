@@ -16,7 +16,7 @@ public static class TestEnvironment
     private static bool _initialized;
     private static readonly object _lock = new();
 
-    public static string BaseUrl => (Environment.GetEnvironmentVariable("E2E_BASE_URL") ?? "http://localhost:3000").Trim();
+    public static string BaseUrl => NormalizeUrl(Environment.GetEnvironmentVariable("E2E_BASE_URL"), "https://custodian-client-life-cycle-managem.vercel.app");
     public static string TenantName => (Environment.GetEnvironmentVariable("E2E_TENANT_NAME") ?? "SE3112 E2E Testing Agency").Trim();
 
     public static string OwnerEmail => GetRequiredCredential("E2E_OWNER_EMAIL");
@@ -28,10 +28,25 @@ public static class TestEnvironment
     public static string Stage2ClientEmail => GetRequiredCredential("E2E_STAGE2_CLIENT_EMAIL");
     public static string Stage2ClientPassword => GetRequiredCredential("E2E_STAGE2_CLIENT_PASSWORD");
 
-    public static string IdentityApiUrl => (Environment.GetEnvironmentVariable("E2E_IDENTITY_URL") ?? "http://localhost:5281").Trim();
-    public static string WorkflowApiUrl => (Environment.GetEnvironmentVariable("E2E_WORKFLOW_URL") ?? "http://localhost:5225").Trim();
-    public static string DocumentsApiUrl => (Environment.GetEnvironmentVariable("E2E_DOCUMENTS_URL") ?? "http://localhost:5171").Trim();
-    public static string AuditApiUrl => (Environment.GetEnvironmentVariable("E2E_AUDIT_URL") ?? "http://localhost:5051").Trim();
+    public static string IdentityApiUrl => NormalizeUrl(Environment.GetEnvironmentVariable("E2E_IDENTITY_URL"), "https://staging-identity-service-fbfafsbddnhnh7dw.centralindia-01.azurewebsites.net");
+    public static string WorkflowApiUrl => NormalizeUrl(Environment.GetEnvironmentVariable("E2E_WORKFLOW_URL"), "https://staging-workflow-service-hrg5czbpdvc3gta4.centralindia-01.azurewebsites.net");
+    public static string DocumentsApiUrl => NormalizeUrl(Environment.GetEnvironmentVariable("E2E_DOCUMENTS_URL"), "https://staging-document-service-gch7d3duetb8ceby.centralindia-01.azurewebsites.net");
+    public static string AuditApiUrl => NormalizeUrl(Environment.GetEnvironmentVariable("E2E_AUDIT_URL"), "https://staging-audit-service-e3hhf9hwgjf9h2dg.centralindia-01.azurewebsites.net");
+
+    private static string NormalizeUrl(string? raw, string fallback)
+    {
+        var val = string.IsNullOrWhiteSpace(raw) ? fallback : raw.Trim();
+        if ((val.StartsWith('"') && val.EndsWith('"')) || (val.StartsWith('\'') && val.EndsWith('\'')))
+        {
+            val = val.Substring(1, val.Length - 2).Trim();
+        }
+        if (!val.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !val.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            val = "https://" + val;
+        }
+        return val.TrimEnd('/');
+    }
 
     /// <summary>
     /// Retrieves a required E2E credential from the environment.

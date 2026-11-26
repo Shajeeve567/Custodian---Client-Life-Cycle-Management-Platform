@@ -102,3 +102,24 @@ When a verdict was recomputed, the original `sla-gate.txt` is kept and the new o
 - **Why**: load tests measure the deployed environment, so a pull-request run would test the code already
   deployed; they would overlap the E2E tests and deployments that run on every push; and they put real load on
   the shared QA apps and databases. Unit, mutation and E2E tests cover push and pull request.
+
+## 2026-11-26
+
+### Target: staging instead of the B1 QA apps (decision)
+- **Change**: `load-test.yml` now redeploys with the `staging-*.yml` workflows (given a `workflow_call` trigger) and
+  runs `run.sh` with `staging.properties`. The docs name staging as the current target.
+- **Why**: the subscription of the four B1 QA App Services ended, so they no longer answer (HTTP 403 "This web app
+  is stopped"). The staging apps use the same QA databases, and the guards already allowed them.
+- **Evidence**: `20261126T020007Z-smoke` (refused by the health check on the stopped B1 apps, no load sent) and
+  `20261126T020214Z-smoke` (staging: PASS, 39 samples, 0 errors, p95 1,569 ms).
+- **Limit**: staging is Free tier with a daily CPU quota, so only smoke runs there. The 18 Oct load, stress and spike
+  results on the B1 apps stand as recorded.
+
+### Redeploy is optional in the manual workflow (decision)
+- **Change**: `load-test.yml` has a new **Redeploy the four services first** box (ticked by default). Unticked, the
+  deploy jobs are skipped and the test runs straight away on the apps as they are. The run summary records which.
+- **Why**: the first CI run (Actions run 45747553523, `20261126T031641Z-smoke`) deployed, then failed smoke on one request: the
+  Engagements list answered HTTP 200 with correct data in 4,133 ms, over the 3 s ceiling (the other loops took about
+  0.7 s). The warm-up loop also had 4 of 18 requests at 3 to 5 s. A deploy restarts the apps, and one warm-up loop
+  is not enough for a cold Free-tier app. The same apps passed smoke when warm (`20261126T020214Z-smoke`).
+- **Not changed**: the 3 s ceiling and the 0 % smoke error rule. The failed run stays recorded as a FAIL.
