@@ -76,8 +76,8 @@ start unless **all four** URLs are one of:
 
 | Target | File | Notes |
 |---|---|---|
-| Staging | `staging.properties` | `staging-*-service-*.centralindia-01.azurewebsites.net`, deployed from `dev` |
-| QA | `qa.properties` | The Sprint 4 B1 App Services with their connection strings re-pointed at **QA databases**, allowed by exact URL only. Same region, plan and configuration as production, so the numbers are realistic |
+| Staging | `staging.properties` | `staging-*-service-*.centralindia-01.azurewebsites.net`, deployed from `dev`, on the QA databases. **The current target.** Free tier (daily CPU quota): run smoke only |
+| QA (retired) | `qa.properties` | The Sprint 4 B1 App Services with their connection strings re-pointed at **QA databases**, allowed by exact URL only. Used for the 18 Oct results; the apps were removed when their subscription ended (Nov 2026) |
 | Loopback | your own file | `http://localhost:<port>` / `127.0.0.1`: a local stack or a mock |
 
 - **Fail closed.** Every HTTP request in the plan runs only if the guard passed. If the guard refuses, or setUp
@@ -94,17 +94,20 @@ start unless **all four** URLs are one of:
 From `tests/jmeter/`:
 
 ```bash
-./run.sh smoke --props qa.properties
-./run.sh load  --props qa.properties
-./run.sh stress --props qa.properties
-./run.sh spike --props qa.properties
+./run.sh smoke --props staging.properties
+./run.sh load  --props staging.properties
+./run.sh stress --props staging.properties
+./run.sh spike --props staging.properties
 ```
+
+On the Free-tier staging apps run only `smoke`: heavier profiles use up the daily CPU quota and measure the tier,
+not the code.
 
 Without `--props` the target is `staging.properties`. Anything after `--` is passed to JMeter, so every property
 below can be tuned without editing the plan:
 
 ```bash
-./run.sh load --props qa.properties -- -JloadUsers=30 -JloadHold=300
+./run.sh load --props staging.properties -- -JloadUsers=30 -JloadHold=300
 ```
 
 Before measuring, `run.sh` sends every request once in an untimed **warm-up** loop (kept in `results/<run>/warmup/`,
@@ -119,7 +122,7 @@ start on purpose.
 The same run without the script (no health check, secret scan or gate):
 
 ```bash
-jmeter -n -t custodian-load.jmx -q qa.properties -q report.properties -Jprofile=load -l results/load.jtl -j results/load.log -e -o reports/load
+jmeter -n -t custodian-load.jmx -q staging.properties -q report.properties -Jprofile=load -l results/load.jtl -j results/load.log -e -o reports/load
 ```
 
 Open the plan in the GUI to read or edit it (do not run load from the GUI):
@@ -217,17 +220,17 @@ they measure the deployed environment, so a pull-request run would test the code
 pull request's code; they would overlap the E2E tests and deployments that run on every push and skew each other's
 results; and they put real load on shared QA apps and databases. They run when someone asks for them.
 
-What happens: the four existing `deploy-*.yml` workflows run in parallel (build, unit tests, deploy). Only when
+What happens: the four existing `staging-*.yml` workflows run in parallel (build, unit tests, deploy to staging). Only when
 all four succeed, the JMeter job installs JMeter 5.6.3 (checksum verified), writes `data/accounts.csv` from
-secrets, waits for the apps to come up, and runs `./run.sh <profile> --props qa.properties`. The SLA table
+secrets, waits for the apps to come up, and runs `./run.sh <profile> --props staging.properties`. The SLA table
 appears on the run's summary page and the results and dashboard are kept for 30 days as an artifact. The job is
 green only if `run.sh` exits 0. Only one run at a time is allowed.
 
 Required repository secrets (GitHub → Settings → Secrets and variables → Actions): `QA_EMAIL` and `QA_PASSWORD`
-(the QA-only login), plus the existing `AZURE_<SERVICE>_APP_NAME` / `_PUBLISH_PROFILE` used by the deploy
-workflows.
+(the QA-only login), plus the existing `AZURE_<SERVICE>_STAGING_APP_NAME` / `_STAGING_PUBLISH_PROFILE` used by the
+staging deploy workflows. Run the workflow from `dev` so staging gets `dev`'s code, as it does on push.
 
-GitHub's runners are far from Azure Southeast Asia, so every request from CI includes extra network time. Smoke
+GitHub's runners are far from Azure Central India, so every request from CI includes extra network time. Smoke
 results from CI are reliable; for load, stress and spike figures, run `run.sh` from a machine close to the target.
 
 ## Troubleshooting
