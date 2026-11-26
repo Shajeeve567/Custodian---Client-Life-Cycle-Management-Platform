@@ -199,14 +199,17 @@ node sla-gate.js --profile spike --jtl results/<run>/results.jtl
 `.github/workflows/load-test.yml` runs **only** when someone presses **Run workflow**: never on push, pull
 request or a schedule. In GitHub: **Actions → Load Test — JMeter (manual) → Run workflow**, then choose:
 
-- **Run the JMeter load test after the deploy**: ticked = deploy, then test. Unticked = only rebuild, unit-test
-  and redeploy the four services.
-- **Load-test profile**: smoke, load, stress or spike.
+- **Branch**: `dev` (staging runs `dev`'s code).
+- **Redeploy the four services first**: ticked = rebuild, unit-test and redeploy, then test. Unticked = test the
+  apps as they are. A deploy restarts the apps, and a cold Free-tier app can take several seconds per request for
+  its first minutes, which breaks the 3 s ceiling: untick this to measure warm apps.
+- **Run the JMeter load test**: unticked = only rebuild and redeploy.
+- **Load-test profile**: smoke, load, stress or spike (only smoke on Free-tier staging).
 
 The same run from a terminal with the GitHub CLI (then follow it live):
 
 ```bash
-gh workflow run load-test.yml --ref main -f run_load_test=true -f profile=smoke
+gh workflow run load-test.yml --ref dev -f redeploy=false -f run_load_test=true -f profile=smoke
 ```
 
 ```bash
@@ -220,8 +223,8 @@ they measure the deployed environment, so a pull-request run would test the code
 pull request's code; they would overlap the E2E tests and deployments that run on every push and skew each other's
 results; and they put real load on shared QA apps and databases. They run when someone asks for them.
 
-What happens: the four existing `staging-*.yml` workflows run in parallel (build, unit tests, deploy to staging). Only when
-all four succeed, the JMeter job installs JMeter 5.6.3 (checksum verified), writes `data/accounts.csv` from
+What happens: if redeploy is ticked, the four existing `staging-*.yml` workflows run in parallel (build, unit
+tests, deploy to staging), and the test starts only when all four succeed. Then the JMeter job installs JMeter 5.6.3 (checksum verified), writes `data/accounts.csv` from
 secrets, waits for the apps to come up, and runs `./run.sh <profile> --props staging.properties`. The SLA table
 appears on the run's summary page and the results and dashboard are kept for 30 days as an artifact. The job is
 green only if `run.sh` exits 0. Only one run at a time is allowed.
